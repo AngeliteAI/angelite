@@ -1,6 +1,7 @@
 [package]
 name = "fast"
-version = "0.0.0"
+version = "0.0.1"
+readme = "../../README.md"
 edition = "2024"
 description = "High-performance SIMD mathematics, optimized GPU computation, and vectorized algorithms"
 authors = ["Sol Midnight <sol@blockglow.com>"]
