@@ -220,8 +220,8 @@ pub mod math {
     }
 
     pub mod swizzle {
-        use crate::Pattern;
-        bolt_macro::swizzle!();
+        use crate::math::Pattern;
+        fast_macro::swizzle!();
     }
 
     pub mod shuffle {

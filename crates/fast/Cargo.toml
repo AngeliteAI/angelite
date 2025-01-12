@@ -10,7 +10,7 @@ keywords = ["simd", "math", "gpu", "vector"]
 categories = ["mathematics", "science", "algorithms"]
 
 [dependencies]
-fast-macro = { path = "../fast-macro"}
+fast-macro = { path = "../fast-macro", version = "0.0.0" }
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
 num-traits = "0.2.19"
 paste = "1.0.15"
