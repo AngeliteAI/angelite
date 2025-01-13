@@ -182,7 +182,7 @@ impl<const N: usize, T: Num + Copy + WrappingAdd> Vector<N, T> {
 }
 
 pub mod swizzle {
-    use crate::math::Pattern;
+    use crate::math::vector::Pattern;
     fast_macro::swizzle!();
 }
 
