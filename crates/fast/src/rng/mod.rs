@@ -1,4 +1,8 @@
-use std::{intrinsics::type_id, ops::Bound};
+use std::{
+    intrinsics::type_id,
+    ops::{Bound, RangeBounds},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub trait Rng = Iterator<Item = u128>;
 
@@ -120,6 +124,7 @@ impl Id {
 
 pub use range::Range;
 mod range {
+    use super::Random;
     use core::fmt;
     use num_traits::{
         Bounded, Float, Num, NumCast, PrimInt, WrappingAdd, clamp_max, clamp_min, real::Real,
@@ -589,7 +594,7 @@ mod pcg {
         weyl: Vector<LANES, u128>, // Add Weyl sequence for better mixing
     }
 
-    const fn pcg_init_state(index: usize) -> u128 {
+    const fn pcg_init_state_index(index: usize) -> u128 {
         let base = match index % 4 {
             0 => 0xcafef00dd15ea5e5,
             1 => 0xdeadbeefcafebeef,
@@ -600,7 +605,7 @@ mod pcg {
         base ^ (PHI.wrapping_mul(index as u128 + 1)) // Better initialization mixing
     }
 
-    const fn pcg_init_increment(index: usize) -> u128 {
+    const fn pcg_init_increment_index(index: usize) -> u128 {
         let base = match index % 4 {
             0 => 0xa02891feed15ea5e,
             1 => 0xc0ffeed15ebabe5c,
@@ -611,26 +616,30 @@ mod pcg {
         (base | 1) ^ (WEYL.wrapping_mul(index as u128 + 1)) // Ensure odd & mix
     }
 
-    impl<const LANES: usize> Gen<LANES> {
-        const STATE: Vector<LANES, u128> = const {
-            let mut state = [0u128; LANES];
-            let mut i = 0;
-            while i < LANES {
-                state[i] = pcg_init_state(i);
-                i += 1;
-            }
-            Vector(Array(state))
-        };
+    const fn pcg_init_state<const LANES: usize>() -> Vector<LANES, u128> {
+        let mut state = [0u128; LANES];
+        let mut i = 0;
+        while i < LANES {
+            state[i] = pcg_init_state_index(i);
+            i += 1;
+        }
+        Vector(Array(state))
+    }
 
-        const INCREMENT: Vector<LANES, u128> = const {
-            let mut state = [0u128; LANES];
-            let mut i = 0;
-            while i < LANES {
-                state[i] = pcg_init_increment(i);
-                i += 1;
-            }
-            Vector(Array(state))
-        };
+    const fn pcg_init_increment<const LANES: usize>() -> Vector<LANES, u128> {
+        let mut increment = [0u128; LANES];
+        let mut i = 0;
+        while i < LANES {
+            increment[i] = pcg_init_increment_index(i);
+            i += 1;
+        }
+        Vector(Array(increment))
+    }
+
+    impl<const LANES: usize> Gen<LANES> {
+        const STATE: Vector<LANES, u128> = pcg_init_state::<LANES>();
+
+        const INCREMENT: Vector<LANES, u128> = pcg_init_increment::<LANES>();
 
         pub fn new(seed: Vector<LANES, u128>) -> Self {
             let mut this = Self {
