@@ -1,5 +1,5 @@
 # FAST
-Zero-cost, hyper-optimized mathematics and computation.
+Zero-cost, hyper-optimized computation.
 
 ## Features
 ### Requires nightly rust.
@@ -7,16 +7,18 @@ Zero-cost, hyper-optimized mathematics and computation.
 - ⚡️ Zero-overhead abstractions
 - 🚀 SIMD-first design
 - 🎯 Cache-optimal algorithms
-- 🧮 Vectorized mathematics
+- 🧮 Vectorized operations
+- 🎲 Flexible random number generation
 - 🛡️ Compile-time validation
 
 ## Performance
 
-Raw computational speed is our obsession:
+Raw computational speed is a core principle:
 - Direct SIMD mapping
 - Cache-line alignment
-- Vectorized operations
-- Zero runtime overhead
+- Vectorized processing
+- Minimal runtime overhead
+- Deterministic and repeatable results
 
 ## Installation
 
@@ -24,6 +26,16 @@ Raw computational speed is our obsession:
 [dependencies]
 fast = "0.1.0"
 ```
+## Why Fast?
+*   **SIMD Vectorization:** Leverages SIMD intrinsics for parallel operations on data arrays, boosting performance by processing multiple elements simultaneously.
+
+*   **Compile-Time Shuffle:** Utilizes compile-time constants and `const fn` to define SIMD data shuffle patterns, minimizing runtime overhead.
+
+*  **PCG Randomness:** Employs a SIMD-optimized PCG generator for fast, high-quality pseudorandom number generation. Weyl sequences are added for increased entropy.
+
+*   **Probability Distributions:** Provides optimized sampling for Normal, Exponential, Gamma, Poisson, and Beta distributions using math intrinsics.
+
+*   **Distribution Transforms:** Enables composition of distributions via transforms, additions, mixes, and multiplies allowing for the building of complex simulations.
 
 ## Requirements
 
@@ -45,7 +57,7 @@ fast = "0.1.0"
 
 ## Contributing
 
-FAST is focused on being the fastest possible mathematics library for Rust. We welcome:
+FAST is a low-level crate for high-performance computation. We welcome:
 
 1. Performance improvements
 2. Architecture optimizations
@@ -64,10 +76,16 @@ Apache 2.0 / MIT dual license
 - **Zero Cost:** No runtime overhead
 - **SIMD First:** Built for vector instructions
 - **Cache Optimal:** Memory layout tuned
+- **Repeatable:** Results are deterministic given the same inputs.
 
 ### FAST vs Others?
 
 - Focus on raw performance
 - SIMD by default
-- GPU acceleration
+- Designed for low-level control
 - Minimal abstractions
+
+### What about random numbers?
+
+- Provides flexible and performant random number generation
+- Useful for simulation and statistical applications
