@@ -1,0 +1,18 @@
+[package]
+name = "fast"
+version = "0.1.0"
+readme = "../../README.md"
+edition = "2024"
+description = "High-performance SIMD vectorized algorithms"
+authors = ["Sol Midnight <sol@blockglow.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/blockglow/fast"
+keywords = ["simd", "math", "vector"]
+categories = ["mathematics", "science", "algorithms"]
+
+[dependencies]
+fast-macro = { path = "../fast-macro", version = "0.0.0" }
+derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
+num-traits = "0.2.19"
+paste = "1.0.15"
+pin-project = "1.1.8"
