@@ -31,9 +31,6 @@ dependencies = [
 [[package]]
 name = "editor"
 version = "1.0.0"
-dependencies = [
- "fast 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
 
 [[package]]
 name = "editor"
@@ -41,7 +38,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c0eefa168a19f0d374479c9edb8fd7a36ca0e0abfd53bf87bef02d199e7e9af"
 dependencies = [
- "fast 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fast 0.1.0",
 ]
 
 [[package]]
@@ -53,17 +50,6 @@ checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 [[package]]
 name = "fast"
 version = "0.1.0"
-dependencies = [
- "derive_more",
- "fast-macro 0.0.0",
- "num-traits",
- "paste",
- "pin-project",
-]
-
-[[package]]
-name = "fast"
-version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "351b6a37769e6d93becd10fedab4da342617e87ff2857f470d302bfe55dbf6a8"
 dependencies = [
@@ -71,6 +57,17 @@ dependencies = [
  "fast-macro 0.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits",
  "paste",
+]
+
+[[package]]
+name = "fast"
+version = "0.1.1"
+dependencies = [
+ "derive_more",
+ "fast-macro 0.0.0",
+ "num-traits",
+ "paste",
+ "pin-project",
 ]
 
 [[package]]
@@ -97,7 +94,7 @@ dependencies = [
 name = "fast-test"
 version = "0.1.0"
 dependencies = [
- "fast 0.1.0",
+ "fast 0.1.1",
 ]
 
 [[package]]
@@ -161,6 +158,10 @@ checksum = "0e4dccaaaf89514f546c693ddc140f729f958c247918a13380cccc6078391acc"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "span"
+version = "0.1.0"
 
 [[package]]
 name = "syn"
