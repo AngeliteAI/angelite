@@ -1,6 +1,6 @@
 [package]
 name = "editor"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 license-file = "../../LICENSE"
 description = "Next-gen integrated development engine and environment"
@@ -9,4 +9,4 @@ repository = "https://github.com/blockglow/techkit"
 readme = "../../README.md"
 
 [dependencies]
-span = "0.0.3"
+span = "0.1.0"

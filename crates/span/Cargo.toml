@@ -1,9 +1,9 @@
 [package]
 name = "span"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license-file = "../../LICENSE"
-description = "Next-gen integrated development engine and environment"
+description = "Next-gen integrated entity component system"
 homepage = "https://techkit.dev"
 repository = "https://github.com/blockglow/techkit"
 
