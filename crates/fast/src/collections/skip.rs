@@ -51,14 +51,19 @@ pub mod list {
     }
     impl<T> Node<T> {
         fn new(value: Option<T>, level: usize) -> Self {
+            // Ensure at least one level and no more than requested
+            let level = level.max(1);
+            // Pre-allocate the vector with exact capacity
+            let mut next = Vec::with_capacity(level);
+            // Initialize all levels with null pointers
+            next.extend((0..level).map(|_| AtomicPtr::new(ptr::null_mut())));
+
             Self {
                 value,
-                version: 0.into(),
-                lock: false.into(),
-                next: iter::repeat_with(|| AtomicPtr::new(ptr::null_mut()))
-                    .take(level)
-                    .collect(),
-                level,
+                version: AtomicU64::new(0),
+                lock: AtomicBool::new(false),
+                next,
+                level: level - 1, // Store 0-based level
             }
         }
     }
