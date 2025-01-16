@@ -37,7 +37,7 @@ impl<T> Default for Queue<T> {
     fn default() -> Self {
         Self {
             count: Arc::new(AtomicUsize::new(0)),
-            list: List::default(),
+            list: List::new(),
         }
     }
 }
