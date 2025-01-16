@@ -43,28 +43,22 @@ pub mod list {
     }
 
     struct Node<T> {
-        value: T,
+        value: Option<T>,
         version: AtomicU64,
         lock: AtomicBool,
         next: Vec<AtomicPtr<Node<T>>>,
         level: usize,
     }
-
     impl<T> Node<T> {
-        fn new(value: T, level: usize) -> Self {
-            // Ensure level is within bounds and initialize next pointers
-            let level = level.max(1);
-            let mut next = Vec::with_capacity(level);
-            for _ in 0..level {
-                next.push(AtomicPtr::new(ptr::null_mut()));
-            }
-
+        fn new(value: Option<T>, level: usize) -> Self {
             Self {
                 value,
-                version: AtomicU64::new(0),
-                lock: AtomicBool::new(false),
-                next,
-                level: level - 1,
+                version: 0.into(),
+                lock: false.into(),
+                next: iter::repeat_with(|| AtomicPtr::new(ptr::null_mut()))
+                    .take(level)
+                    .collect(),
+                level,
             }
         }
     }
@@ -74,10 +68,9 @@ pub mod list {
 
     impl<T: PartialOrd, const L: usize> List<T, L> {
         pub fn new() -> Self {
-            // Create sentinel head node
+            // Create sentinel head node with maximum level
             let head = Box::new(Node::new(
-                unsafe { std::mem::zeroed() },
-                1, // Start with single level
+                None, L, // Always use max level for head
             ));
             let head_ptr = Box::into_raw(head);
 
@@ -125,19 +118,56 @@ pub mod list {
                         break;
                     }
 
-                    match next_node.value.partial_cmp(value) {
+                    match next_node.value.as_ref().unwrap().partial_cmp(value) {
                         Some(Ordering::Less) => {
                             current = next_ptr;
                             continue;
                         }
-                        Some(Ordering::Equal) => return Some(&next_node.value),
+                        Some(Ordering::Equal) => return Some(next_node.value.as_ref().unwrap()),
                         Some(Ordering::Greater) | None => break,
                     }
                 }
             }
             None
         }
+        pub async fn insert(&self, value: T) -> Option<T> {
+            // Calculate random level with fixed bounds
+            let mut level = 0;
+            for i in 0..L - 1 {
+                // L-1 since we're 0-indexed
+                if random::<bool>().await.unwrap_or_default() {
+                    level = i;
+                }
+            }
 
+            // Create new node with Some(value)
+            let node = Arc::new(Node::new(Some(value), level + 1));
+            let backoff = Backoff::with_step(Duration::<Millis>::from(5));
+
+            loop {
+                // Find insertion path or existing node
+                let (prev_value, path) = match self.find_path(&node.value.as_ref().unwrap()).await {
+                    // Found existing node - remove it first
+                    Ok(found_path) => {
+                        let prev = self.remove(&node.value.as_ref().unwrap()).await;
+                        (prev, found_path)
+                    }
+                    // No existing node - use found path
+                    Err(not_found_path) => (None, not_found_path),
+                };
+
+                // Try to insert at found path
+                match self.try_insert(&node, &path, level).await {
+                    Ok(_) => return prev_value,
+                    Err(_) => {
+                        backoff().await;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Adjust comparisons to handle Option
         async fn find_path(&self, value: &T) -> Result<Vec<*mut Node<T>>, Vec<*mut Node<T>>> {
             let mut update = vec![ptr::null_mut(); L];
             let mut current = self.head.load(Acquire);
@@ -179,20 +209,25 @@ pub mod list {
                         break;
                     }
 
-                    match next_node.value.partial_cmp(value) {
-                        Some(Ordering::Less) => {
-                            current = next_ptr;
-                            continue;
-                        }
-                        Some(Ordering::Equal) => {
-                            // Found exact match
-                            for l in 0..=level {
-                                update[l] = current;
+                    match &next_node.value {
+                        Some(next_value) => match next_value.partial_cmp(value) {
+                            Some(Ordering::Less) => {
+                                current = next_ptr;
+                                continue;
                             }
-                            update[level] = next_ptr;
-                            return Ok(update);
-                        }
-                        Some(Ordering::Greater) | None => {
+                            Some(Ordering::Equal) => {
+                                for l in 0..=level {
+                                    update[l] = current;
+                                }
+                                update[level] = next_ptr;
+                                return Ok(update);
+                            }
+                            Some(Ordering::Greater) | None => {
+                                update[level] = current;
+                                break;
+                            }
+                        },
+                        None => {
                             update[level] = current;
                             break;
                         }
@@ -240,7 +275,7 @@ pub mod list {
                         break;
                     }
 
-                    match next_node.value.partial_cmp(value) {
+                    match next_node.value.as_ref().unwrap().partial_cmp(value) {
                         Some(Ordering::Less) => {
                             current = next_ptr;
                             continue;
@@ -262,27 +297,24 @@ pub mod list {
         ) -> Result<(), Contention> {
             let new_version = self.version.fetch_add(1, Release);
 
-            // Update versions
-            for &ptr in update.iter().take(level + 1) {
-                unsafe {
-                    (*ptr).version.store(new_version, Release);
-                }
-            }
-
+            // SAFETY: We already validate update path in find_path
+            // Don't validate pointers again - they're already checked
             node.version.store(new_version, Release);
 
             // Try to insert at each level
             for current_level in 0..=level {
+                // SAFETY: We know update[current_level] is valid from find_path
                 let update_node = unsafe { &*update[current_level] };
-
                 let next = update_node.next[current_level].load(Acquire);
 
+                // Store next pointer in new node
                 if let Some(node_next) = node.next.get(current_level) {
                     node_next.store(next, Release);
                 } else {
                     return Err(Contention);
                 }
 
+                // Try to link new node
                 if update_node.next[current_level]
                     .compare_exchange(next, Arc::into_raw(node.clone()) as *mut _, AcqRel, Acquire)
                     .is_err()
@@ -294,35 +326,6 @@ pub mod list {
             self.len.fetch_add(1, Release);
             self.level.fetch_max(level, Release);
             Ok(())
-        }
-        pub async fn insert(&self, value: T) -> Option<T> {
-            let mut level = 0;
-            for i in 0..L {
-                if random::<bool>().await.unwrap_or_default() {
-                    level = i;
-                }
-            }
-
-            let node = Arc::new(Node::new(value, level + 1));
-            let backoff = Backoff::with_step(Duration::<Millis>::from(5));
-
-            loop {
-                let mut path = match self.find_path(&node.value).await {
-                    Ok(found_path) => {
-                        let prev_value = self.remove(&node.value).await;
-                        (prev_value, found_path)
-                    }
-                    Err(not_found_path) => (None, not_found_path),
-                };
-
-                match self.try_insert(&node, &path.1, level).await {
-                    Ok(_) => return path.0,
-                    Err(_) => {
-                        backoff().await;
-                        continue;
-                    }
-                }
-            }
         }
 
         pub async fn remove(&self, value: &T) -> Option<T> {
@@ -340,7 +343,7 @@ pub mod list {
                 }
 
                 let node = unsafe { &*node_ptr };
-                if node.value != *value {
+                if node.value.as_ref() != Some(value) {
                     return None;
                 }
 
@@ -395,7 +398,7 @@ pub mod list {
             }
 
             self.len.fetch_sub(1, Release);
-            Ok(unsafe { Box::from_raw(node_ptr).value })
+            Ok(unsafe { Box::from_raw(node_ptr).value.unwrap() })
         }
 
         pub fn len(&self) -> usize {
@@ -486,7 +489,11 @@ pub mod list {
                     self.level.fetch_min(new_max, Release);
                 }
 
-                return Some(unsafe { Box::from_raw(last_ptr as *mut Node<T>) }.value);
+                return Some(
+                    unsafe { Box::from_raw(last_ptr as *mut Node<T>) }
+                        .value
+                        .unwrap(),
+                );
             }
         }
         pub fn remove_first(&self) -> Option<T> {
@@ -560,7 +567,7 @@ pub mod list {
                     self.level.fetch_min(new_max, Release);
                 }
 
-                return Some(unsafe { Box::from_raw(first_ptr) }.value);
+                return Some(unsafe { Box::from_raw(first_ptr) }.value.unwrap());
             }
         }
     }
@@ -611,7 +618,7 @@ pub mod list {
             // Advance to next node
             self.curr = next;
 
-            Some(&node.value)
+            Some(node.value.as_ref().unwrap())
         }
     }
 
