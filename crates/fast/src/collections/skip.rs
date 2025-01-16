@@ -88,27 +88,17 @@ pub mod list {
                 return None;
             }
 
-            // Check if exists in bottom level first
-            if let Some(succ) = unsafe { succs[0].as_ref() } {
-                if !succ.marked[0].load(Acquire) {
-                    if let Some(_) = &succ.value {
-                        if let Some(succ_value) = unsafe { (*new_node).value.take() } {
-                            return Some(Some(succ_value)); // Already exists
-                        }
-                    }
-                }
-            }
-
             // Try insert at bottom level first
             unsafe {
                 let pred = &*preds[0];
-                (*new_node).next[0].store(succs[0], Release);
+                let succ = succs[0]; // This could be null for first insert
+                (*new_node).next[0].store(succ, Release);
 
                 if pred.next[0]
-                    .compare_exchange(succs[0], new_node, AcqRel, Acquire)
+                    .compare_exchange(succ, new_node, AcqRel, Acquire)
                     .is_err()
                 {
-                    return None; // Retry if bottom level insertion fails
+                    return None;
                 }
             }
 
@@ -117,31 +107,30 @@ pub mod list {
                 loop {
                     unsafe {
                         let pred = &*preds[level];
-                        let succ = succs[level];
+                        let succ = succs[level]; // Could be null
 
                         (*new_node).next[level].store(succ, Release);
 
-                        if pred.next[level]
-                            .compare_exchange(succ, new_node, AcqRel, Acquire)
-                            .is_ok()
-                        {
-                            break; // Success at this level
-                        }
-
-                        // Find new position if CAS failed
-                        if !self.find_node(
-                            (*new_node).value.as_ref().unwrap(),
-                            &mut preds,
-                            &mut succs,
-                        ) {
-                            return None;
+                        // Handle both null and non-null cases
+                        match pred.next[level].compare_exchange(succ, new_node, AcqRel, Acquire) {
+                            Ok(_) => break, // Success at this level
+                            Err(_) => {
+                                // Find new position if CAS failed
+                                if !self.find_node(
+                                    (*new_node).value.as_ref().unwrap(),
+                                    &mut preds,
+                                    &mut succs,
+                                ) {
+                                    return None;
+                                }
+                            }
                         }
                     }
                 }
             }
 
             self.len.fetch_add(1, Release);
-            Some(None) // Successful insertion
+            Some(None)
         }
 
         pub fn remove_first(&self) -> Option<T> {
