@@ -8,3 +8,4 @@ homepage = "https://techkit.dev"
 repository = "https://github.com/blockglow/techkit"
 
 [dependencies]
+fast = "0.1.1"

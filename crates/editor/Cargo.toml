@@ -9,3 +9,4 @@ repository = "https://github.com/blockglow/techkit"
 readme = "../../README.md"
 
 [dependencies]
+span = "0.0.3"
