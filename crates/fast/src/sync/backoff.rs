@@ -92,10 +92,10 @@ impl Future for Wait {
             let spread = rng()
                 .await
                 .map(|x| {
-                    x.sample::<Duration<Millis>>(&Temporal::new(
-                        Exponential::new(self.spread.get().into_inner() as _),
+                    dbg!(x.sample::<Duration<Millis>>(&Temporal::new(
+                        Exponential::new(dbg!(self.spread.get().into_inner() as f64 + 1.)),
                         10.0,
-                    ))
+                    )))
                 })
                 .unwrap_or(Duration::INSTANT.into::<Millis>());
             yield_until(start + step * count + spread).await;

@@ -17,91 +17,273 @@ pub mod list {
         time::{Duration, Millis},
     };
 
-    pub struct List<T, const LEVEL: usize = 32> {
+    pub struct List<T, const L: usize = 32> {
         version: Arc<AtomicU64>,
         head: Arc<AtomicPtr<Node<T>>>,
         level: Arc<AtomicUsize>,
         len: Arc<AtomicUsize>,
     }
 
-    impl<T, const L: usize> Default for List<T, L> {
+    impl<T: PartialOrd, const L: usize> Default for List<T, L> {
         fn default() -> Self {
-            Self {
-                version: Arc::new(AtomicU64::new(0)),
-                head: Arc::new(AtomicPtr::new(ptr::null_mut())),
-                level: Arc::new(AtomicUsize::new(0)),
-                len: Arc::new(AtomicUsize::new(0)),
+            Self::new()
+        }
+    }
+
+    // Safe cleanup
+    impl<T, const L: usize> Drop for List<T, L> {
+        fn drop(&mut self) {
+            let mut current = self.head.load(Acquire);
+            while !current.is_null() {
+                let next = unsafe { (*current).next[0].load(Acquire) };
+                unsafe { drop(Box::from_raw(current)) };
+                current = next;
             }
         }
     }
 
-    type Level = usize;
-
-    pub async fn random_level<const MAX: usize>() -> Level {
-        for i in 0..MAX {
-            if random::<bool>().await.unwrap_or_default() {
-                return i;
-            }
-        }
-        return MAX;
-    }
-
-    pub struct Node<T> {
+    struct Node<T> {
         value: T,
         version: AtomicU64,
         lock: AtomicBool,
         next: Vec<AtomicPtr<Node<T>>>,
-        level: Level,
+        level: usize,
     }
+
     impl<T> Node<T> {
-        pub fn new(value: T, level: Level) -> Self {
-            let mut next = Vec::with_capacity(level + 1);
-            for _ in 0..=level {
+        fn new(value: T, level: usize) -> Self {
+            // Ensure level is within bounds and initialize next pointers
+            let level = level.max(1);
+            let mut next = Vec::with_capacity(level);
+            for _ in 0..level {
                 next.push(AtomicPtr::new(ptr::null_mut()));
             }
+
             Self {
                 value,
-                version: 0.into(),
-                lock: false.into(),
+                version: AtomicU64::new(0),
+                lock: AtomicBool::new(false),
                 next,
-                level,
+                level: level - 1,
             }
         }
     }
+
+    #[derive(Debug)]
     pub struct Contention;
 
-    impl<T: PartialOrd, const L: usize> List<T, L>
-    where
-        [(); L + 1]: Sized,
-    {
-        pub fn is_empty(&self) -> bool {
-            self.head.load(Acquire).is_null()
+    impl<T: PartialOrd, const L: usize> List<T, L> {
+        pub fn new() -> Self {
+            // Create sentinel head node
+            let head = Box::new(Node::new(
+                unsafe { std::mem::zeroed() },
+                1, // Start with single level
+            ));
+            let head_ptr = Box::into_raw(head);
+
+            Self {
+                version: Arc::new(AtomicU64::new(0)),
+                head: Arc::new(AtomicPtr::new(head_ptr)),
+                level: Arc::new(AtomicUsize::new(0)),
+                len: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        pub async fn get(&self, value: &T) -> Option<&T> {
+            let mut current = self.head.load(Acquire);
+            if current.is_null() {
+                return None;
+            }
+
+            let max_level = self.level.load(Acquire).min(L - 1);
+
+            for level in (0..=max_level).rev() {
+                loop {
+                    // Safety check - validate current pointer
+                    let current_node = match unsafe { current.as_ref() } {
+                        Some(node) => node,
+                        None => break,
+                    };
+
+                    // Bounds check for current node's next array
+                    if level >= current_node.next.len() {
+                        break;
+                    }
+
+                    let next_ptr = current_node.next[level].load(Acquire);
+                    if next_ptr.is_null() {
+                        break;
+                    }
+
+                    // Safety check - validate next pointer
+                    let next_node = match unsafe { next_ptr.as_ref() } {
+                        Some(node) => node,
+                        None => break,
+                    };
+
+                    if next_node.lock.load(Acquire) {
+                        break;
+                    }
+
+                    match next_node.value.partial_cmp(value) {
+                        Some(Ordering::Less) => {
+                            current = next_ptr;
+                            continue;
+                        }
+                        Some(Ordering::Equal) => return Some(&next_node.value),
+                        Some(Ordering::Greater) | None => break,
+                    }
+                }
+            }
+            None
+        }
+
+        async fn find_path(&self, value: &T) -> Result<Vec<*mut Node<T>>, Vec<*mut Node<T>>> {
+            let mut update = vec![ptr::null_mut(); L];
+            let mut current = self.head.load(Acquire);
+
+            if current.is_null() {
+                return Err(update);
+            }
+
+            let max_level = self.level.load(Acquire).min(L - 1);
+
+            for level in (0..=max_level).rev() {
+                loop {
+                    let current_node = match unsafe { current.as_ref() } {
+                        Some(node) => node,
+                        None => break,
+                    };
+
+                    if level >= current_node.next.len() {
+                        update[level] = current;
+                        break;
+                    }
+
+                    let next_ptr = current_node.next[level].load(Acquire);
+                    if next_ptr.is_null() {
+                        update[level] = current;
+                        break;
+                    }
+
+                    let next_node = match unsafe { next_ptr.as_ref() } {
+                        Some(node) => node,
+                        None => {
+                            update[level] = current;
+                            break;
+                        }
+                    };
+
+                    if next_node.lock.load(Acquire) {
+                        update[level] = current;
+                        break;
+                    }
+
+                    match next_node.value.partial_cmp(value) {
+                        Some(Ordering::Less) => {
+                            current = next_ptr;
+                            continue;
+                        }
+                        Some(Ordering::Equal) => {
+                            // Found exact match
+                            for l in 0..=level {
+                                update[l] = current;
+                            }
+                            update[level] = next_ptr;
+                            return Ok(update);
+                        }
+                        Some(Ordering::Greater) | None => {
+                            update[level] = current;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            Err(update)
+        }
+
+        pub async fn exists(&self, value: &T) -> bool {
+            let mut current = self.head.load(Acquire);
+            if current.is_null() {
+                return false;
+            }
+
+            let max_level = self.level.load(Acquire).min(L - 1);
+
+            for level in (0..=max_level).rev() {
+                loop {
+                    // Safety check - validate current pointer
+                    let current_node = match unsafe { current.as_ref() } {
+                        Some(node) => node,
+                        None => break,
+                    };
+
+                    // Bounds check for current node's next array
+                    if level >= current_node.next.len() {
+                        break;
+                    }
+
+                    let next_ptr = current_node.next[level].load(Acquire);
+                    if next_ptr.is_null() {
+                        break;
+                    }
+
+                    // Safety check - validate next pointer
+                    let next_node = match unsafe { next_ptr.as_ref() } {
+                        Some(node) => node,
+                        None => break,
+                    };
+
+                    // Skip locked nodes
+                    if next_node.lock.load(Acquire) {
+                        break;
+                    }
+
+                    match next_node.value.partial_cmp(value) {
+                        Some(Ordering::Less) => {
+                            current = next_ptr;
+                            continue;
+                        }
+                        Some(Ordering::Equal) => return true,
+                        Some(Ordering::Greater) | None => break,
+                    }
+                }
+            }
+
+            false
         }
 
         async fn try_insert(
             &self,
             node: &Arc<Node<T>>,
-            update: &mut [*mut Node<T>],
+            update: &[*mut Node<T>],
             level: usize,
         ) -> Result<(), Contention> {
             let new_version = self.version.fetch_add(1, Release);
 
-            // Update versions of affected nodes in the update path
-            for level in 0..=level {
-                if let Some(update_node) = unsafe { update[level].as_ref() } {
-                    update_node.version.store(new_version, Release);
+            // Update versions
+            for &ptr in update.iter().take(level + 1) {
+                unsafe {
+                    (*ptr).version.store(new_version, Release);
                 }
             }
 
             node.version.store(new_version, Release);
 
-            for level in 0..=level {
-                let update_node = unsafe { &*update[level] };
-                let next = update_node.next[level].load(Acquire);
+            // Try to insert at each level
+            for current_level in 0..=level {
+                let update_node = unsafe { &*update[current_level] };
 
-                node.next[level].store(next, Release);
+                let next = update_node.next[current_level].load(Acquire);
 
-                if update_node.next[level]
+                if let Some(node_next) = node.next.get(current_level) {
+                    node_next.store(next, Release);
+                } else {
+                    return Err(Contention);
+                }
+
+                if update_node.next[current_level]
                     .compare_exchange(next, Arc::into_raw(node.clone()) as *mut _, AcqRel, Acquire)
                     .is_err()
                 {
@@ -113,171 +295,72 @@ pub mod list {
             self.level.fetch_max(level, Release);
             Ok(())
         }
-
-        pub async fn get(&self, value: &T) -> Option<&T> {
-            let mut current = self.head.load(Acquire);
-            if current.is_null() {
-                return None;
-            }
-
-            let max_level = self.level.load(Acquire);
-            let mut level = max_level;
-
-            loop {
-                // Safety check for current node's level
-                let current_node = unsafe { &*current };
-                if current_node.next.len() <= level {
-                    // If current node doesn't have this level, move down
-                    if level == 0 {
-                        return None;
-                    }
-                    level -= 1;
-                    continue;
-                }
-
-                let next_ptr = current_node.next[level].load(Acquire);
-                if next_ptr.is_null() {
-                    if level == 0 {
-                        return None;
-                    }
-                    level -= 1;
-                    continue;
-                }
-
-                // Safety: we checked for null above
-                let next = unsafe { &*next_ptr };
-
-                // Bounds check for next node's level
-                if next.next.len() <= level {
-                    if level == 0 {
-                        return None;
-                    }
-                    level -= 1;
-                    continue;
-                }
-
-                if next.lock.load(Acquire) {
-                    // Node is being modified, try again at same level
-                    continue;
-                }
-
-                match next
-                    .value
-                    .partial_cmp(value)
-                    .expect("failed to compare nodes")
-                {
-                    Ordering::Less => {
-                        current = next_ptr;
-                    }
-                    Ordering::Equal => return Some(&next.value),
-                    Ordering::Greater => {
-                        if level == 0 {
-                            return None;
-                        }
-                        level -= 1;
-                    }
-                }
-            }
-        }
-
         pub async fn insert(&self, value: T) -> Option<T> {
-            let level = random_level::<L>().await;
-            let node = Arc::new(Node::new(value, level));
-            let backoff = Backoff::with_step(Duration::<Millis>::from(5));
-            let (prev, mut path) = match self.find_path(&node.value).await {
-                Ok(path) => {
-                    let prev = self.remove(&node.value).await;
-                    (prev, path)
+            let mut level = 0;
+            for i in 0..L {
+                if random::<bool>().await.unwrap_or_default() {
+                    level = i;
                 }
-                Err(path) => (None, path),
-            };
+            }
+
+            let node = Arc::new(Node::new(value, level + 1));
+            let backoff = Backoff::with_step(Duration::<Millis>::from(5));
 
             loop {
-                match self.try_insert(&node, &mut path, level).await {
-                    Ok(_) => return prev,
+                let mut path = match self.find_path(&node.value).await {
+                    Ok(found_path) => {
+                        let prev_value = self.remove(&node.value).await;
+                        (prev_value, found_path)
+                    }
+                    Err(not_found_path) => (None, not_found_path),
+                };
+
+                match self.try_insert(&node, &path.1, level).await {
+                    Ok(_) => return path.0,
                     Err(_) => {
-                        (backoff)().await;
+                        backoff().await;
                         continue;
                     }
                 }
             }
         }
 
-        pub async fn exists(&self, value: &T) -> bool {
-            let mut current = self.head.load(Acquire);
-
-            for level in (0..=self.level.load(Acquire)).rev() {
-                while let Some(next) = unsafe { (*current).next[level].load(Acquire).as_mut() } {
-                    if !next.lock.load(Acquire) {
-                        match next
-                            .value
-                            .partial_cmp(value)
-                            .expect("failed to compare nodes")
-                        {
-                            Ordering::Less => current = next,
-                            Ordering::Equal => return true,
-                            Ordering::Greater => break,
-                        }
-                    }
-                }
-            }
-            false
-        }
-
-        pub async fn find_path(
-            &self,
-            value: &T,
-        ) -> Result<[*mut Node<T>; { L + 1 }], [*mut Node<T>; { L + 1 }]> {
-            let mut update = [ptr::null_mut::<Node<T>>(); { L + 1 }];
-            let mut current = self.head.load(Acquire);
-            let mut level = self.level.load(Acquire);
+        pub async fn remove(&self, value: &T) -> Option<T> {
+            let backoff = Backoff::with_step(Duration::<Millis>::from(5));
 
             loop {
-                let curr_next = unsafe { (*current).next[level].load(Acquire) };
-                if curr_next.is_null() {
-                    update[level] = current;
-                    if level == 0 {
-                        break Err(update);
-                    }
-                    level -= 1;
-                    continue;
+                let path = match self.find_path(value).await {
+                    Ok(path) => path,
+                    Err(_) => return None,
+                };
+
+                let node_ptr = path[0];
+                if node_ptr.is_null() {
+                    return None;
                 }
 
-                let next = unsafe { &*curr_next };
-                if next.lock.load(Acquire) {
-                    continue;
+                let node = unsafe { &*node_ptr };
+                if node.value != *value {
+                    return None;
                 }
 
-                match next
-                    .value
-                    .partial_cmp(value)
-                    .expect("failed to compare nodes")
-                {
-                    Ordering::Less => current = curr_next,
-                    Ordering::Equal => {
-                        update[level..=next.level].fill(curr_next);
-                        update[..level].fill(current);
-                        break Ok(update);
-                    }
-                    Ordering::Greater => {
-                        update[level] = current;
-                        if level == 0 {
-                            break Err(update);
-                        }
-                        level -= 1;
+                match self.try_remove(node_ptr, &path).await {
+                    Ok(value) => return Some(value),
+                    Err(_) => {
+                        backoff().await;
+                        continue;
                     }
                 }
             }
         }
 
-        pub async fn try_remove(
+        async fn try_remove(
             &self,
             node_ptr: *mut Node<T>,
             update: &[*mut Node<T>],
         ) -> Result<T, Contention> {
             let node = unsafe { &*node_ptr };
 
-            // First try to acquire lock
             if !node
                 .lock
                 .compare_exchange(false, true, AcqRel, Acquire)
@@ -288,10 +371,12 @@ pub mod list {
 
             let new_version = self.version.fetch_add(1, Release);
 
-            // Update versions of affected nodes in the update path
             for level in 0..=node.level {
                 if let Some(update_node) = unsafe { update[level].as_ref() } {
                     update_node.version.store(new_version, Release);
+                } else {
+                    node.lock.store(false, Release);
+                    return Err(Contention);
                 }
             }
 
@@ -304,7 +389,6 @@ pub mod list {
                         .compare_exchange(node_ptr, next, AcqRel, Acquire)
                         .is_err()
                 } {
-                    // If any level fails, unlock and return error
                     node.lock.store(false, Release);
                     return Err(Contention);
                 }
@@ -314,81 +398,173 @@ pub mod list {
             Ok(unsafe { Box::from_raw(node_ptr).value })
         }
 
-        pub async fn remove(&self, value: &T) -> Option<T> {
-            let backoff = Backoff::with_step(Duration::<Millis>::from(5));
-
-            loop {
-                let update = self.find_path(value).await.ok()?;
-                let node_ptr = update[0];
-
-                // Check if we found the node
-                if unsafe { (*node_ptr).value != *value } {
-                    return None;
-                }
-
-                match self.try_remove(node_ptr, &update).await {
-                    Ok(value) => return Some(value),
-                    Err(_) => {
-                        (backoff)().await;
-                        continue;
-                    }
-                }
-            }
-        }
         pub fn len(&self) -> usize {
             self.len.load(Acquire)
         }
 
-        pub fn remove_first(&self) -> Option<T> {
-            let mut current = self.head.load(Acquire);
-            if current.is_null() {
-                return None;
-            }
-
-            let first_node = unsafe { &*current };
-            for level in 0..=first_node.level {
-                let next = first_node.next[level].load(Acquire);
-                self.head.store(next, Release);
-            }
-
-            self.len.fetch_sub(1, Release);
-            Some(unsafe { Box::from_raw(current).value })
+        pub fn is_empty(&self) -> bool {
+            self.len() == 0
         }
 
         pub fn remove_last(&self) -> Option<T> {
-            let mut current = self.head.load(Acquire);
-            if current.is_null() {
-                return None;
-            }
+            loop {
+                let mut current = self.head.load(Acquire);
+                let mut prev = ptr::null_mut();
+                let mut last_ptr = ptr::null_mut();
 
-            let mut prev = ptr::null_mut();
-            let mut level = self.level.load(Acquire);
-
-            while level > 0 {
-                while let Some(next) = unsafe { (*current).next[level].load(Acquire).as_mut() } {
-                    prev = current;
-                    current = next;
+                // Find the last node
+                while let Some(current_node) = unsafe { current.as_ref() } {
+                    match unsafe { current_node.next[0].load(Acquire).as_ref() } {
+                        Some(_) => {
+                            prev = current;
+                            current = current_node.next[0].load(Acquire);
+                        }
+                        None => {
+                            last_ptr = current;
+                            break;
+                        }
+                    }
                 }
-                level -= 1;
-            }
 
-            while let Some(next) = unsafe { (*current).next[0].load(Acquire).as_mut() } {
-                prev = current;
-                current = next;
-            }
-
-            if prev.is_null() {
-                self.head.store(ptr::null_mut(), Release);
-            } else {
-                for level in 0..=unsafe { &*current }.level {
-                    unsafe { &*prev }.next[level].store(ptr::null_mut(), Release);
+                // No nodes or only sentinel
+                if last_ptr.is_null() || prev.is_null() {
+                    return None;
                 }
-            }
 
-            self.len.fetch_sub(1, Release);
-            Some(unsafe { Box::from_raw(current).value })
+                let last = unsafe { &*last_ptr };
+
+                // Try to acquire lock
+                if !last
+                    .lock
+                    .compare_exchange(false, true, AcqRel, Acquire)
+                    .is_ok()
+                {
+                    continue;
+                }
+
+                let prev_node = unsafe { &*prev };
+                let max_level = last.level;
+                let mut success = true;
+
+                // Update all levels
+                for level in 0..=max_level {
+                    if level >= prev_node.next.len() {
+                        success = false;
+                        break;
+                    }
+
+                    if prev_node.next[level]
+                        .compare_exchange(last_ptr, ptr::null_mut(), AcqRel, Acquire)
+                        .is_err()
+                    {
+                        success = false;
+                        break;
+                    }
+                }
+
+                if !success {
+                    last.lock.store(false, Release);
+                    continue;
+                }
+
+                self.len.fetch_sub(1, Release);
+
+                // Update max level if needed
+                if max_level == self.level.load(Acquire) {
+                    let mut new_max = 0;
+                    let mut scan = self.head.load(Acquire);
+
+                    while let Some(node) = unsafe { scan.as_ref() } {
+                        new_max = new_max.max(node.level);
+                        if let Some(next_ptr) = unsafe { node.next[0].load(Acquire).as_ref() } {
+                            scan = node.next[0].load(Acquire);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    self.level.fetch_min(new_max, Release);
+                }
+
+                return Some(unsafe { Box::from_raw(last_ptr as *mut Node<T>) }.value);
+            }
+        }
+        pub fn remove_first(&self) -> Option<T> {
+            loop {
+                let head = self.head.load(Acquire);
+                if head.is_null() {
+                    return None;
+                }
+
+                // Get first real node (after sentinel)
+                let head_node = unsafe { &*head };
+                let first_ptr = head_node.next[0].load(Acquire);
+
+                // Empty list (only sentinel)
+                if first_ptr.is_null() {
+                    return None;
+                }
+
+                let first = unsafe { &*first_ptr };
+
+                // Try to acquire lock
+                if !first
+                    .lock
+                    .compare_exchange(false, true, AcqRel, Acquire)
+                    .is_ok()
+                {
+                    continue;
+                }
+
+                let max_level = first.level;
+                let mut success = true;
+
+                // Update all levels of the head node
+                for level in 0..=max_level {
+                    if level >= head_node.next.len() {
+                        success = false;
+                        break;
+                    }
+
+                    let next = first.next[level].load(Acquire);
+                    if head_node.next[level]
+                        .compare_exchange(first_ptr, next, AcqRel, Acquire)
+                        .is_err()
+                    {
+                        success = false;
+                        break;
+                    }
+                }
+
+                if !success {
+                    first.lock.store(false, Release);
+                    continue;
+                }
+
+                self.len.fetch_sub(1, Release);
+
+                // Update max level if needed
+                if max_level == self.level.load(Acquire) {
+                    let mut new_max = 0;
+                    let mut scan = self.head.load(Acquire);
+
+                    while let Some(node) = unsafe { scan.as_ref() } {
+                        new_max = new_max.max(node.level);
+                        if let Some(next_ptr) = unsafe { node.next[0].load(Acquire).as_ref() } {
+                            scan = node.next[0].load(Acquire);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    self.level.fetch_min(new_max, Release);
+                }
+
+                return Some(unsafe { Box::from_raw(first_ptr) }.value);
+            }
         }
     }
+
     #[derive(Clone)]
     pub struct Iter<'a, T, const L: usize> {
         list: &'a List<T, L>,

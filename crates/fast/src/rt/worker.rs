@@ -13,7 +13,7 @@ use crate::{
     collections::{bi::BiMap, queue::Queue, skip::Map},
     prelude::Vector,
     rng::{Branch, Pcg, Random, Range, rng},
-    sync::thread_local,
+    sync::{barrier::Barrier, thread_local},
 };
 
 use super::{Key, Local, Remote, Task, Work, block_on};
@@ -43,7 +43,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    async fn work() {
+    pub async fn work() {
         let Some(mut work) = next_work().await else {
             thread::yield_now();
             return;
@@ -61,8 +61,9 @@ impl Worker {
     }
 }
 
-pub async fn start(seed: Vector<4, u128>, count: usize) {
+pub async fn start(seed: Vector<4, u128>, count: usize) -> Arc<Barrier> {
     let mut rng = Pcg::<4>::new(seed);
+    let start = Arc::new(Barrier::new(count + 1));
     thread::current()
         .register(Worker {
             rng: rng.branch(),
@@ -72,11 +73,14 @@ pub async fn start(seed: Vector<4, u128>, count: usize) {
             remote: Queue::default(),
         })
         .await;
-    dbg!("yo3");
 
     for worker in (0..count).map(|x| x + 1).map(WorkerId) {
-        let handle = thread::spawn(|| {
-            block_on(Worker::work());
+        let start = start.clone();
+        let handle = thread::spawn(move || {
+            block_on(async {
+                start.wait().await;
+                Worker::work().await;
+            })
         });
         handle
             .thread()
@@ -89,6 +93,8 @@ pub async fn start(seed: Vector<4, u128>, count: usize) {
             })
             .await;
     }
+
+    start
 }
 
 async fn next_work() -> Option<Work> {

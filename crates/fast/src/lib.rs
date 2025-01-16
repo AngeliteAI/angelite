@@ -17,7 +17,10 @@ use derive_more::derive::{Deref, DerefMut};
 use num_traits::{Num, WrappingAdd};
 use paste::paste;
 use prelude::Vector;
-use rt::{Act, Local, Task, block_on, worker::next_local_key};
+use rt::{
+    Act, Local, Task, block_on,
+    worker::{Worker, next_local_key},
+};
 use std::{intrinsics::simd::*, ops::*};
 
 #[repr(simd)]
@@ -71,7 +74,7 @@ pub use fast_macro::main;
 pub fn run(main_fn: impl Future<Output = ()> + 'static) {
     block_on(async {
         dbg!("yo1");
-        rt::worker::start(Vector::splat(0), 10).await;
+        let start = rt::worker::start(Vector::splat(0), 10).await;
         dbg!("yo2");
         rt::worker::current_worker()
             .await
@@ -81,5 +84,10 @@ pub fn run(main_fn: impl Future<Output = ()> + 'static) {
                 key: next_local_key().await,
                 act: Some(Act::Fut(Box::pin(main_fn) as _)),
             });
+        block_on(start.wait());
+        loop {
+            dbg!("yo3");
+            block_on(Worker::work());
+        }
     })
 }

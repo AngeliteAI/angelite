@@ -142,6 +142,10 @@ impl Instant {
     pub fn as_u128(&self) -> u128 {
         self.0
     }
+
+    pub(crate) fn elapsed(&self) -> Duration<Nanos> {
+        Self::now() - *self
+    }
 }
 
 // Duration arithmetic
