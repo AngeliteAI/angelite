@@ -3,10 +3,20 @@ use std::{
     ops::{Bound, RangeBounds},
     time::{SystemTime, UNIX_EPOCH},
 };
-
 pub trait Rng = Iterator<Item = u128>;
 
-use pcg::Pcg;
+pub async fn rng() -> Option<&'static mut impl Rng> {
+    worker::current_worker().await.map(|x| &mut x.rng)
+}
+
+pub async fn random<T>() -> Option<T>
+where
+    Standard: Distribution<T>,
+{
+    rng().await.map(|x| x.sample(&Standard))
+}
+
+pub use pcg::Pcg;
 pub use standard::Standard;
 mod standard {
     use super::{Distribution, Rng};
@@ -102,6 +112,18 @@ mod standard {
         }
     }
 
+    impl StandardSample for usize {
+        fn sample(random: u128) -> Self {
+            random as usize
+        }
+    }
+
+    impl StandardSample for isize {
+        fn sample(random: u128) -> Self {
+            random as isize
+        }
+    }
+
     #[derive(Clone, Copy)]
     pub struct Standard;
 
@@ -141,16 +163,7 @@ mod range {
     #[derive(Clone, Copy)]
     pub struct Range<T, R: RangeBounds<T>>(R, PhantomData<T>);
     impl<
-        T: fmt::Debug
-            + 'static
-            + Num
-            + Copy
-            + NumCast
-            + PartialOrd
-            + Neg<Output = T>
-            + Bounded
-            + Copy
-            + NumCast,
+        T: fmt::Debug + 'static + Num + Copy + NumCast + PartialOrd + Bounded + Copy + NumCast,
         U: RangeBounds<T>,
     > Distribution<T> for Range<T, U>
     where
@@ -221,33 +234,28 @@ mod range {
                         return raw;
                     }
 
-                    dbg!(raw, low, high);
                     let mut add = (raw % (high - low));
 
-                    if add < T::one() {
-                        add = -add;
-                    }
-
-                    // Otherwise map it into range
-                    low + add
+                    if add < T::one() { low - add } else { low + add }
                 }
 
                 // Floating point
                 F32 | F64 => {
                     let mut low = match range.start_bound() {
                         Bound::Included(&x) | Bound::Excluded(&x) => x,
-                        Bound::Unbounded => -T::max_value(),
+                        Bound::Unbounded => T::min_value(),
                     };
                     let mut high = match range.end_bound() {
                         Bound::Included(&x) | Bound::Excluded(&x) => x,
                         Bound::Unbounded => T::max_value(),
                     };
-                    let bound = T::from(1e+107 as u128).unwrap();
-                    if low < -bound {
-                        low = -bound;
+                    let high_bound = T::from(1e+107 as u128).unwrap();
+                    let low_bound = T::from(-1e+107 as u128).unwrap();
+                    if low < low_bound {
+                        low = low_bound;
                     }
-                    if high > bound {
-                        high = bound;
+                    if high > high_bound {
+                        high = high_bound;
                     }
                     let range = high - low;
                     low + rng.sample(&Standard) * range
@@ -333,6 +341,140 @@ mod exponential {
         fn sample(&self, rng: &mut impl Rng) -> T {
             let u: T = rng.sample(&Standard);
             -u.ln() / T::from(self.lambda).unwrap()
+        }
+    }
+}
+
+pub use temporal::Temporal;
+mod temporal {
+    use std::marker::PhantomData;
+
+    use num_traits::{AsPrimitive, Num};
+
+    use crate::time::{Duration, Millis, Nanos, Seconds, TimeUnit};
+
+    use super::{Distribution, Rng, Standard, standard::StandardSample};
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct Temporal<D, T = f64>
+    where
+        D: Distribution<T>,
+        Standard: Distribution<T>,
+    {
+        base: D,
+        scalar: f64,
+        phantom: PhantomData<T>,
+    }
+
+    impl<D: Distribution<f64>> Temporal<D, f64> {
+        pub fn new(base: D, scalar: f64) -> Self {
+            assert!(scalar > 0.0, "Duration scalar must be a positive number");
+            Self {
+                base,
+                scalar,
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    impl<D, T, U: TimeUnit> Distribution<Duration<U>> for Temporal<D, T>
+    where
+        D: Distribution<T>,
+        T: StandardSample + Num + AsPrimitive<f64> + Copy,
+    {
+        fn sample(&self, rng: &mut impl Rng) -> Duration<U> {
+            let sample = self.base.sample(rng);
+            Duration::from((sample.as_() * self.scalar) as u128)
+        }
+    }
+
+    #[test]
+    fn temporal_example() {
+        use super::Random;
+        use crate::{
+            math::vector::Vector,
+            rng::{Distribution, Exponential, Normal, Pcg, Range, transform::Transform},
+            time::{Duration, Instant},
+        };
+        let nanos = Instant::now().as_u128();
+        let mut rng = Pcg::<32>::new(Vector::splat(nanos));
+
+        // 1. Basic Exponential Temporal Distribution
+        let exp_dist = Exponential::new(50.).map(|x: f64| x + 1.);
+        let temporal_exp = Temporal::new(exp_dist, 100.0);
+        for i in 0..100 {
+            let duration_exp: Duration<Millis> = rng.sample(&temporal_exp);
+            println!("Exponential Duration: {:?}", duration_exp);
+            assert!(duration_exp > Duration::INSTANT);
+        }
+
+        // 2. Range Temporal Distribution
+        let range_dist = Range::new(10.0..50.0);
+        let temporal_range = Temporal::new(range_dist, 20.0);
+        let duration_range: Duration<Seconds> = rng.sample(&temporal_range);
+        println!("Range Duration: {:?}", duration_range);
+        assert!(duration_range > Duration::INSTANT);
+
+        // 3. Transformed Temporal Distribution
+        let normal_dist = Normal::new(10.0, 2.0);
+        use super::transform::DistributionTransform;
+        let transformed_normal = normal_dist.map(|x: f64| x.abs());
+        let temporal_transformed = Temporal::new(transformed_normal, 50.0);
+        let duration_transformed: Duration<Nanos> = rng.sample(&temporal_transformed);
+        println!("Transformed Duration: {:?}", duration_transformed);
+        assert!(duration_transformed > Duration::INSTANT);
+    }
+}
+
+pub use mix::Mix;
+mod mix {
+    use crate::rng::{Distribution, Random, Rng, Standard};
+    use std::marker::PhantomData;
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct Mix<T, D1, D2>
+    where
+        D1: Distribution<T>,
+        D2: Distribution<T>,
+    {
+        dist1: D1,
+        dist2: D2,
+        weight: f64,
+        phantom: PhantomData<T>,
+    }
+
+    impl<T, D1, D2> Mix<T, D1, D2>
+    where
+        D1: Distribution<T>,
+        D2: Distribution<T>,
+    {
+        pub fn new(dist1: D1, dist2: D2, weight: f64) -> Self {
+            assert!(
+                weight >= 0.0 && weight <= 1.0,
+                "Weight must be between 0 and 1"
+            );
+            Self {
+                dist1,
+                dist2,
+                weight,
+                phantom: PhantomData,
+            }
+        }
+    }
+
+    impl<T, D1, D2> Distribution<T> for Mix<T, D1, D2>
+    where
+        T: Send + Sync,
+        D1: Distribution<T>,
+        D2: Distribution<T>,
+        Standard: Distribution<f64>,
+    {
+        fn sample(&self, rng: &mut impl Rng) -> T {
+            if rng.sample::<f64>(&Standard) < self.weight {
+                self.dist1.sample(rng)
+            } else {
+                self.dist2.sample(rng)
+            }
         }
     }
 }
@@ -442,7 +584,7 @@ mod poisson {
 
 pub use beta::Beta;
 
-use crate::math::vector::Vector;
+use crate::{math::vector::Vector, rt::worker};
 mod beta {
     use super::Random;
     use crate::rng::{Distribution, Gamma, Rng, Standard};
@@ -539,18 +681,18 @@ pub mod transform {
         T: Float + Send + Sync,
         D1: Distribution<T>,
         D2: Distribution<T>,
-        Standard: Distribution<T>,
     {
         fn sample(&self, rng: &mut impl Rng) -> T {
             match self {
                 Self::Add(d1, d2, _) => d1.sample(rng) + d2.sample(rng),
                 Self::Mul(d1, d2, _) => d1.sample(rng) * d2.sample(rng),
                 Self::Mix(d1, d2, w, _) => {
-                    if rng.sample(&Standard) < T::from(*w).unwrap() {
-                        d1.sample(rng)
-                    } else {
-                        d2.sample(rng)
-                    }
+                    todo!()
+                    //if rng.sample(&Standard) < T::from(*w).unwrap() {
+                    //    d1.sample(rng)
+                    //} else {
+                    //    d2.sample(rng)
+                    //}
                 }
                 Self::Map(d1, t) => t.transform(d1.sample(rng)),
             }
@@ -574,13 +716,19 @@ pub trait Random: Rng {
     }
 }
 
-impl<R: Rng> Random for R {}
+impl<T: Rng> Random for T {}
+
+pub trait Branch: Random {
+    fn branch(&mut self) -> Self;
+}
 
 mod pcg {
     use crate::{
         Array,
         math::vector::{Vector, shuffle::Perfect},
     };
+
+    use super::{Branch, Random};
 
     const MULTIPLIER: u128 = 0x2360ED051FC65DA44385DF649FCCF645;
     const PHI: u128 = 0x9E3779B97F4A7C15F39CC0605CEDC834;
@@ -636,6 +784,16 @@ mod pcg {
         Vector(Array(increment))
     }
 
+    impl<const LANES: usize> Branch for Pcg<LANES> {
+        fn branch(&mut self) -> Self {
+            Self {
+                state: self.state.branch(),
+                index: 0,
+                buf: None,
+            }
+        }
+    }
+
     impl<const LANES: usize> Gen<LANES> {
         const STATE: Vector<LANES, u128> = pcg_init_state::<LANES>();
 
@@ -653,6 +811,20 @@ mod pcg {
             this
         }
 
+        fn branch(&mut self) -> Self {
+            self.avalanche();
+
+            let new_inc = self.increment * self.state + 0xda3e39cb94b95bdb;
+
+            // Create perturbed state for new branch
+            let new_state = self.state * new_inc + self.increment;
+
+            Self {
+                state: new_state,
+                increment: new_inc | 1, // Ensure odd increment
+                weyl: Vector::splat(WEYL),
+            }
+        }
         #[inline(always)]
         fn avalanche(&mut self) {
             const ROUNDS: u128 = 3;
@@ -882,7 +1054,6 @@ fn test_range_distribution() {
     }
 }
 
-#[test]
 fn simulate_network_conditions() {
     use std::f64::consts::PI;
     use transform::*;

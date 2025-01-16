@@ -1,5 +1,5 @@
 # FAST
-Zero-cost, hyper-optimized computation.
+Zero-cost, hyper-optimized deterministic computation.
 
 ## Features
 ### Requires nightly rust.

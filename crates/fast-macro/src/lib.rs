@@ -3,6 +3,25 @@ use proc_macro::{Span, TokenStream};
 use quote::quote;
 use syn::*;
 
+#[proc_macro_attribute]
+pub fn main(_: TokenStream, input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as ItemFn);
+
+    assert!(input.sig.asyncness.is_some(), "Main must be async");
+
+    let block = input.block;
+
+    let output = quote! {
+        fn main() {
+            fast::run(async move {
+                #block
+            })
+        }
+    };
+
+    output.into()
+}
+
 #[proc_macro]
 pub fn swizzle(_: TokenStream) -> TokenStream {
     let pattern = |swizzle: [char; 4]| {

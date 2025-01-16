@@ -1,0 +1,217 @@
+#![allow(internal_features)]
+#![feature(repr_simd, try_blocks, core_intrinsics)]
+
+use derive_more::derive::{Deref, DerefMut};
+use num_traits::{Float, Num, PrimInt};
+use paste::paste;
+use std::{intrinsics::simd::*, ops::*};
+
+#[repr(simd)]
+#[derive(Deref, DerefMut, Clone, Copy, Debug, PartialEq, Eq)]
+struct Array<const N: usize, T: Num>([T; N]);
+
+impl<const N: usize, T: Num + Copy> FromIterator<T> for Array<N, T> {
+    fn from_iter<I: IntoIterator<Item = T>>(data: I) -> Self {
+        let mut iter = data.into_iter();
+        let mut data = [T::zero(); N];
+
+        #[allow(clippy::needless_range_loop)]
+        //Loop is not needless, writing it this way ensures the iterator is the exact size
+        let right_sized: Option<()> = try {
+            for i in 0..N {
+                data[i] = iter.next()?;
+            }
+            iter.next().is_none().then_some(())?
+        };
+        assert!(right_sized.is_some());
+
+        Self::from_array(data)
+    }
+}
+
+impl<const N: usize, T: Num + Copy> Array<N, T> {
+    fn from_array(data: [T; N]) -> Self {
+        Self(data)
+    }
+}
+
+macro_rules! vector {
+    ($tokens:ty; $impl:tt) => {
+        impl<const N: usize, T: Num + Copy> $tokens for Vector<N, T>
+        $impl
+    }
+}
+
+macro_rules! vector_op {
+    ($impl:ty; $fn:ident; $simd:ident) => {
+        impl<const N: usize, T: Num + Copy> $impl for Vector<N, T> {
+            type Output = Self;
+            fn $fn(self, rhs: Self) -> Self::Output {
+                let (Self(a), Self(b)) = (self, rhs);
+                let c = unsafe { $simd(a, b) };
+                Self(c)
+            }
+        }
+
+        paste! {
+            impl<const N: usize, T: Num + Copy> [<$impl Assign>] for Vector<N, T> {
+                fn [<$fn _assign>](&mut self, rhs: Self) {
+                    let (Self(a), Self(b)) = (*self, rhs);
+                    let c = unsafe { $simd(a, b) };
+                    *self = Self(c);
+                }
+            }
+        }
+    };
+}
+
+#[repr(transparent)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Vector<const N: usize, T: Num + Copy = f32>(Array<N, T>);
+
+impl<const N: usize, T: Num + Copy> Vector<N, T> {
+    pub fn from_array(data: [T; N]) -> Self {
+        Self(Array::from_array(data))
+    }
+}
+
+impl<const N: usize, T: Num + Copy> Vector<N, T> {
+    pub fn new(data: impl IntoIterator<Item = T, IntoIter = impl ExactSizeIterator>) -> Self {
+        Self::from_iter(data)
+    }
+}
+
+vector!(FromIterator<T>; {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+});
+
+vector_op!(Add; add; simd_add);
+vector_op!(Sub; sub; simd_sub);
+vector_op!(Mul; mul; simd_mul);
+vector_op!(Div; div; simd_div);
+
+pub trait Mask {
+    const M;
+
+}
+
+impl<const N: usize, T: Num + Copy> Neg for Vector<N, T> {
+    type Output = Self;
+    fn neg(self) -> Self::Output {
+        let Self(a) = self;
+        let b = unsafe { simd_neg(a) };
+        Self(b)
+    }
+}
+
+impl<const N: usize, T: Num + Copy> Vector<N, T> {
+    /// Shuffle elements according to indices in mask
+    /// Mask indices must be < N
+    /// Output vector size M can differ from input size N
+    /// M: output size
+    /// F: const fn that generates indices
+    #[inline(always)]
+    pub fn shuffle<const M: usize, F>(self, indices: F) -> Vector<M, T>
+    where
+        F: Mask,
+    {
+        let Self(input) = self;
+
+        // Generate indices array at compile time
+        let mut idx_array = [0u32; M];
+        let _ = const_for!(i in 0..M => {
+            // Bounds check each index
+            let idx = indices(i);
+            assert!(idx < N as u32, "Shuffle index out of bounds");
+            idx_array[i] = idx;
+        });
+
+        // Safe because we validated bounds at compile time
+        let output = unsafe { simd_shuffle::<_, M>(input, input, idx_array) };
+        Vector(Array::from_array(output))
+    }
+}
+
+mod test {
+    #[test]
+    fn add() {
+        let a = super::Vector::from_array([0.0, 1.0, 2.0]);
+        let b = super::Vector::from_array([3.0, 4.0, 5.0]);
+        let c = a + b;
+        assert_eq!(c, super::Vector::from_array([3.0, 5.0, 7.0]));
+    }
+}
+
+#[proc_macro]
+pub fn generate_swizzles(_: TokenStream) -> TokenStream {
+    let components = ['x', 'y', 'z', 'w'];
+    let mut output = Vec::new();
+    let mut aliases = Vec::new();
+
+    // Generate XYZW patterns
+    for len in 1..=4 {
+        generate_patterns(&components, len, &mut String::new(), &mut output);
+    }
+
+    let patterns = output.iter().map(|pattern| {
+        let name = syn::Ident::new(
+            &(pattern[..1].to_uppercase() + &pattern[1..]),
+            Span::call_site()
+        );
+
+        // Generate RGBA alias for this pattern
+        let rgba_pattern: String = pattern.chars().map(|c| match c {
+            'x' => 'r',
+            'y' => 'g',
+            'z' => 'b',
+            'w' => 'a',
+            _ => unreachable!(),
+        }).collect();
+        let rgba_name = syn::Ident::new(
+            &(rgba_pattern[..1].to_uppercase() + &rgba_pattern[1..]),
+            Span::call_site()
+        );
+        aliases.push(quote! {
+            pub type #rgba_name = #name;
+        });
+
+        let indices: Vec<u32> = pattern.chars().map(|c| match c {
+            'x' => 0,
+            'y' => 1,
+            'z' => 2,
+            'w' => 3,
+            _ => unreachable!(),
+        }).collect();
+        let len = indices.len();
+
+        quote! {
+            pub struct #name;
+            impl Pattern for #name {
+                type Indices = [u32; #len];
+                const MASK: Self::Indices = [#(#indices),*];
+            }
+        }
+    });
+
+    quote! {
+        #(#patterns)*
+        #(#aliases)*
+    }.into()
+}
+
+#[test]
+fn test_swizzles() {
+    let v = Vector::from_array([0.0, 1.0, 2.0, 3.0]);
+
+    let v1 = v.shuffle::<Xyzw, 4>();
+    let v2 = v.shuffle::<Rgba, 4>();  // Auto-generated alias
+    assert_eq!(v1, v2);
+    assert_eq!(v1, Vector::from_array([0.0, 1.0, 2.0, 3.0]));
+
+    let v3 = v.shuffle::<Wzyx, 4>();
+    let v4 = v.shuffle::<Bgra, 4>();  // Auto-generated alias
+    assert_eq!(v3, v4);
+    assert_eq!(v3, Vector::from_array([3.0, 2.0, 1.0, 0.0]));
+}

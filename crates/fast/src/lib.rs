@@ -6,12 +6,18 @@
     generic_const_exprs,
     trait_alias,
     impl_trait_in_assoc_type,
-    const_type_id
+    const_type_id,
+    async_fn_traits,
+    unboxed_closures,
+    thread_id_value,
+    negative_impls
 )]
 
 use derive_more::derive::{Deref, DerefMut};
 use num_traits::{Num, WrappingAdd};
 use paste::paste;
+use prelude::Vector;
+use rt::{Act, Local, Task, block_on, worker::next_local_key};
 use std::{intrinsics::simd::*, ops::*};
 
 #[repr(simd)]
@@ -53,5 +59,27 @@ pub mod prelude {
     };
 }
 
+pub mod collections;
 pub mod math;
 pub mod rng;
+pub mod rt;
+pub mod sync;
+pub mod time;
+
+pub use fast_macro::main;
+
+pub fn run(main_fn: impl Future<Output = ()> + 'static) {
+    block_on(async {
+        dbg!("yo1");
+        rt::worker::start(Vector::splat(0), 10).await;
+        dbg!("yo2");
+        rt::worker::current_worker()
+            .await
+            .unwrap()
+            .local
+            .enqueue(Task::<Local> {
+                key: next_local_key().await,
+                act: Some(Act::Fut(Box::pin(main_fn) as _)),
+            });
+    })
+}
