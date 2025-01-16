@@ -53,6 +53,21 @@ pub mod list {
         next: Vec<AtomicPtr<Node<T>>>,
         level: Level,
     }
+    impl<T> Node<T> {
+        pub fn new(value: T, level: Level) -> Self {
+            let mut next = Vec::with_capacity(level + 1);
+            for _ in 0..=level {
+                next.push(AtomicPtr::new(ptr::null_mut()));
+            }
+            Self {
+                value,
+                version: 0.into(),
+                lock: false.into(),
+                next,
+                level,
+            }
+        }
+    }
     pub struct Contention;
 
     impl<T: PartialOrd, const L: usize> List<T, L>
@@ -101,34 +116,73 @@ pub mod list {
 
         pub async fn get(&self, value: &T) -> Option<&T> {
             let mut current = self.head.load(Acquire);
+            if current.is_null() {
+                return None;
+            }
 
-            for level in (0..=self.level.load(Acquire)).rev() {
-                while let Some(next) = unsafe { (*current).next[level].load(Acquire).as_mut() } {
-                    if !next.lock.load(Acquire) {
-                        match next
-                            .value
-                            .partial_cmp(value)
-                            .expect("failed to compare nodes")
-                        {
-                            Ordering::Less => current = next,
-                            Ordering::Equal => return Some(&next.value),
-                            Ordering::Greater => break,
+            let max_level = self.level.load(Acquire);
+            let mut level = max_level;
+
+            loop {
+                // Safety check for current node's level
+                let current_node = unsafe { &*current };
+                if current_node.next.len() <= level {
+                    // If current node doesn't have this level, move down
+                    if level == 0 {
+                        return None;
+                    }
+                    level -= 1;
+                    continue;
+                }
+
+                let next_ptr = current_node.next[level].load(Acquire);
+                if next_ptr.is_null() {
+                    if level == 0 {
+                        return None;
+                    }
+                    level -= 1;
+                    continue;
+                }
+
+                // Safety: we checked for null above
+                let next = unsafe { &*next_ptr };
+
+                // Bounds check for next node's level
+                if next.next.len() <= level {
+                    if level == 0 {
+                        return None;
+                    }
+                    level -= 1;
+                    continue;
+                }
+
+                if next.lock.load(Acquire) {
+                    // Node is being modified, try again at same level
+                    continue;
+                }
+
+                match next
+                    .value
+                    .partial_cmp(value)
+                    .expect("failed to compare nodes")
+                {
+                    Ordering::Less => {
+                        current = next_ptr;
+                    }
+                    Ordering::Equal => return Some(&next.value),
+                    Ordering::Greater => {
+                        if level == 0 {
+                            return None;
                         }
+                        level -= 1;
                     }
                 }
             }
-            None
         }
 
         pub async fn insert(&self, value: T) -> Option<T> {
             let level = random_level::<L>().await;
-            let node = Arc::new(Node {
-                level,
-                value,
-                lock: false.into(),
-                next: vec![].into(),
-                version: 0.into(),
-            });
+            let node = Arc::new(Node::new(value, level));
             let backoff = Backoff::with_step(Duration::<Millis>::from(5));
             let (prev, mut path) = match self.find_path(&node.value).await {
                 Ok(path) => {
