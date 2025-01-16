@@ -5,7 +5,7 @@ edition = "2024"
 license-file = "../../LICENSE"
 description = "Next-gen integrated development engine and environment"
 homepage = "https://techkit.dev"
-repository = "https://git.techkit.dev"
+repository = "https://github.com/blockglow/techkit"
 readme = "../../README.md"
 
 [dependencies]
