@@ -55,7 +55,7 @@ name = "fast"
 version = "0.1.1"
 dependencies = [
  "derive_more",
- "fast-macro 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fast-macro 0.0.1",
  "num-traits",
  "paste",
  "pin-project",
@@ -68,7 +68,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf4dec231e4e43d99bf3d3ce152b1db179add0a654a62e9230d392f486fe0bf9"
 dependencies = [
  "derive_more",
- "fast-macro 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fast-macro 0.0.1",
  "num-traits",
  "paste",
  "pin-project",
@@ -77,6 +77,8 @@ dependencies = [
 [[package]]
 name = "fast-macro"
 version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fa0418586b4bc53d538a41d923d0445c8e8fbb96831bfef5f95a0d8698088d"
 dependencies = [
  "itertools",
  "quote",
@@ -85,9 +87,7 @@ dependencies = [
 
 [[package]]
 name = "fast-macro"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79fa0418586b4bc53d538a41d923d0445c8e8fbb96831bfef5f95a0d8698088d"
+version = "0.0.2"
 dependencies = [
  "itertools",
  "quote",
