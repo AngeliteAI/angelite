@@ -1,4 +1,5 @@
 # Techkit: Universal IDE
+## Code at lightning speed
 
 Welcome to Techkit! This project aims to create a powerful and efficient Integrated Development Environment (IDE) for any type of software development.
 
