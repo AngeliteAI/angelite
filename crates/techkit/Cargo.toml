@@ -1,0 +1,11 @@
+[package]
+name = "techkit"
+version = "0.0.0"
+edition = "2024"
+license-file = "../../LICENSE"
+description = "Next-gen integrated development engine and environment"
+homepage = "https://techkit.dev"
+repository = "https://git.techkit.dev"
+readme = "../../README.md"
+
+[dependencies]
