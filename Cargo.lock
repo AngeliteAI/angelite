@@ -36,6 +36,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c0eefa168a19f0d374479c9edb8fd7a36ca0e0abfd53bf87bef02d199e7e9af"
+dependencies = [
+ "fast 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -166,7 +175,10 @@ dependencies = [
 
 [[package]]
 name = "techkit"
-version = "0.0.0"
+version = "0.0.1"
+dependencies = [
+ "editor 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "unicode-ident"
