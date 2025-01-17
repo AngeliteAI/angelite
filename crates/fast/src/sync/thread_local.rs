@@ -60,7 +60,6 @@ impl<T: Sync> Local<T> {
             .insert(id, UnsafeCell::new(value))
             .await
             .map(|cell| unsafe { cell.into_inner() });
-        dbg!("yo3");
         t
     }
 
