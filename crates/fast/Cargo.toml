@@ -11,7 +11,7 @@ keywords = ["simd", "math", "vector"]
 categories = ["mathematics", "science", "algorithms"]
 
 [dependencies]
-fast-macro = "0.0.1"
+fast-macro = {version = "0.0.2", path = "../fast-macro" }
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
 num-traits = "0.2.19"
 paste = "1.0.15"

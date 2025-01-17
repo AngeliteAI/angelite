@@ -30,18 +30,9 @@ dependencies = [
 
 [[package]]
 name = "editor"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c0eefa168a19f0d374479c9edb8fd7a36ca0e0abfd53bf87bef02d199e7e9af"
-dependencies = [
- "fast 0.1.1",
-]
-
-[[package]]
-name = "editor"
 version = "1.0.1"
 dependencies = [
- "span 0.1.0",
+ "span",
 ]
 
 [[package]]
@@ -52,37 +43,13 @@ checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
 
 [[package]]
 name = "fast"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf4dec231e4e43d99bf3d3ce152b1db179add0a654a62e9230d392f486fe0bf9"
-dependencies = [
- "derive_more",
- "fast-macro 0.0.1",
- "num-traits",
- "paste",
- "pin-project",
-]
-
-[[package]]
-name = "fast"
 version = "0.1.2"
 dependencies = [
  "derive_more",
- "fast-macro 0.0.1",
+ "fast-macro",
  "num-traits",
  "paste",
  "pin-project",
-]
-
-[[package]]
-name = "fast-macro"
-version = "0.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79fa0418586b4bc53d538a41d923d0445c8e8fbb96831bfef5f95a0d8698088d"
-dependencies = [
- "itertools",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -158,18 +125,9 @@ dependencies = [
 
 [[package]]
 name = "span"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7481e277e855cb81b9d3e2840fad24b780f0bb777e8031703de8ca95b34eb2c"
-dependencies = [
- "fast 0.1.1",
-]
-
-[[package]]
-name = "span"
 version = "0.1.1"
 dependencies = [
- "fast 0.1.1",
+ "fast",
 ]
 
 [[package]]
@@ -187,7 +145,7 @@ dependencies = [
 name = "techkit"
 version = "0.0.1"
 dependencies = [
- "editor 1.0.0",
+ "editor",
 ]
 
 [[package]]

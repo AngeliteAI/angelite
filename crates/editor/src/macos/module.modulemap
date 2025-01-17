@@ -1,0 +1,4 @@
+module Editor {
+    header "bridge.h"
+    export *
+}

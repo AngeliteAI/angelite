@@ -9,4 +9,4 @@ repository = "https://github.com/blockglow/techkit"
 readme = "../../README.md"
 
 [dependencies]
-editor = "1.0.0"
+editor = { version = "1.0.0", path = "../editor" }

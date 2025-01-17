@@ -1,27 +1,30 @@
-<header><h1>Techkit</h1></header>
+<header><span><h1>tech<span class="thin">kit</span></h1><h6 class="thin">code at lightning speed</h6></span></header>
 <div id="hero">
-<span><h1>Code</h1><h1>at</h1><span class="lightning"></span><h1>Speed</h1></span>
-<span>
-<a>Contribute</a>
-<a>Repository</a>
-</span>
 <form>
-    <input placeholder="Your email will never be sold or bartered."/>
-    <button>Keep me updated!</button>
+    <input placeholder="your email will never be sold or bartered."/>
+    <button>stay updated</button>
 </form>
+<span >
+<a><img src="/github.svg"></a>
+<a>contribute</a>
+</span>
 </div>
 <footer>
-    <h6>Copyright Blockglow 2024, All rights reserved</h6>
-    <h6>Techkit is open-source under the MIT license</h6>
+    <span class="lightning"></span>
 </footer>
-
 <style>
 @font-face {
-    src: url("/mundial.otf");
-         font-family: 'Mundial';
+    src: url("/mont-heavy.otf");
+         font-family: 'Mont';
+         font-weight: bold;
+}
+@font-face {
+    src: url("/mont-light.otf");
+         font-family: 'Mont';
+         font-weight: lighter;
 }
     :global(*) {
-        font-family: 'Mundial', sans-serif;
+        font-family: 'Mont', sans-serif;
         margin: 0;
         padding: 0;
         box-sizing: border-box;
@@ -43,6 +46,16 @@
             justify-content: center;
     }
 
+    header span {
+        align-items: center;
+    }
+
+    footer {
+        width: 100%;
+               height: 300px;
+                       position: relative;
+    }
+
 
 #hero {
     display: flex;
@@ -51,6 +64,10 @@
     align-items: center;
     height: 50%;
 text-align: center;
+}
+
+.thin {
+   font-weight: lighter; 
 }
 
 #hero > * {
@@ -75,24 +92,42 @@ text-align: center;
     }
 
     .lightning {
-        width: 100%;
+        position: absolute;
+                  left: calc(50% - 150px);
+        width: 300px;
+        height: 300px;
         background: linear-gradient(-45deg, red, orange, yellow, green, blue, indigo, violet);
-	background-size: 400% 400%;
-	animation: gradient 15s ease infinite;
+	background-size: 800% 800%;
+	animation: gradient 30s ease infinite;
         mask-image: url("/lightning.svg");
         mask-mode: alpha;
         mask-repeat: no-repeat;
         transform: translateY(.2em) scale(1.5);
     }
 
+header {
+    width: 100%;
+}
+    header span {
+        display: flex;
+                 flex-direction: column;
+    }
+
+    header span h1 {
+        display: flex;
+
+    }
+
     #hero span a {
-        margin: 0.5em;
-        padding: 0.5em;
-        border: 1px solid white;
-        border-radius: 0.5em;
+        font-weight: lighter;
+        font-size: 1em;
         text-decoration: none;
         color: white;
-               font-size: larger;
+    }
+
+    #hero span a img {
+        filter: brightness(100);
+                width: 30px;
     }
     
 
@@ -109,12 +144,17 @@ text-align: center;
         border-radius: 0em 0.5em 0.5em 0em;
         text-decoration: none;
         color: white;
+        border: 0.1em solid purple;
+                border-left: none;
         background-color: transparent;
         font-size: medium;
+        cursor: pointer;
     }
 #hero form input {
     padding: 0.5em;
         border-radius: 0.5em 0em 0em  0.5em;
+        border: 0.1em solid purple;
+        background-color: transparent;
                  font-size: medium;
                  color:rgb(18, 18, 26);
 }
