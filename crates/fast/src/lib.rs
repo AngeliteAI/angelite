@@ -18,8 +18,8 @@ use num_traits::{Num, WrappingAdd};
 use paste::paste;
 use prelude::Vector;
 use rt::{
-    Act, Local, Task, block_on,
-    worker::{Worker, next_local_key},
+    Act, JoinExt, Local, Task, block_on,
+    worker::{Worker, next_local_key, worker_start_barrier},
 };
 use std::{intrinsics::simd::*, ops::*};
 
@@ -83,11 +83,12 @@ pub fn run(main_fn: impl Future<Output = ()> + 'static) {
             .enqueue(Task::<Local> {
                 key: next_local_key().await,
                 act: Some(Act::Fut(Box::pin(main_fn) as _)),
-            });
-        block_on(start.wait());
+            })
+            .await;
+
+        worker_start_barrier(start).await;
         loop {
-            dbg!("yo3");
-            block_on(Worker::work());
+            Worker::work().await
         }
-    })
+    });
 }

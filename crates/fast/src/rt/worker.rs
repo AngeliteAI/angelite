@@ -14,9 +14,10 @@ use crate::{
     prelude::Vector,
     rng::{Branch, Pcg, Random, Range, rng},
     sync::{barrier::Barrier, thread_local},
+    time::TimerWheel,
 };
 
-use super::{Key, Local, Remote, Task, Work, block_on};
+use super::{JoinExt, Key, Local, Remote, SelectExt, Task, Work, block_on};
 
 static WORKERS: thread_local::Local<Worker> = thread_local::Local::new();
 static REMOTE_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -37,6 +38,7 @@ pub struct WorkerId(usize);
 pub struct Worker {
     pub rng: Pcg<4>,
     pub waker: Option<Arc<Waker>>,
+    pub timers: TimerWheel,
     pub local: Queue<Task<Local>>,
     pub local_counter: AtomicUsize,
     pub remote: Queue<Task<Remote>>,
@@ -44,6 +46,11 @@ pub struct Worker {
 
 impl Worker {
     pub async fn work() {
+        let Some(me) = current_worker().await else {
+            thread::yield_now();
+            return;
+        };
+        me.timers.tick().await;
         let Some(mut work) = next_work().await else {
             thread::yield_now();
             return;
@@ -61,12 +68,24 @@ impl Worker {
     }
 }
 
+pub async fn worker_start_barrier(start: Arc<Barrier>) {
+    start
+        .wait()
+        .select(async move {
+            loop {
+                Worker::work().await;
+            }
+        })
+        .await;
+}
+
 pub async fn start(seed: Vector<4, u128>, count: usize) -> Arc<Barrier> {
     let mut rng = Pcg::<4>::new(seed);
     let start = Arc::new(Barrier::new(count + 1));
     thread::current()
         .register(Worker {
             rng: rng.branch(),
+            timers: TimerWheel::new(),
             waker: None,
             local_counter: 0.into(),
             local: Queue::default(),
@@ -78,13 +97,14 @@ pub async fn start(seed: Vector<4, u128>, count: usize) -> Arc<Barrier> {
         let start = start.clone();
         let handle = thread::spawn(move || {
             block_on(async {
-                start.wait().await;
+                worker_start_barrier(start).await;
                 Worker::work().await;
             })
         });
         handle
             .thread()
             .register(Worker {
+                timers: TimerWheel::new(),
                 rng: rng.branch(),
                 waker: None,
                 local_counter: 0.into(),

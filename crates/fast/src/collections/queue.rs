@@ -43,9 +43,9 @@ impl<T> Default for Queue<T> {
 }
 
 impl<T> Queue<T> {
-    pub fn enqueue(&self, value: T) {
+    pub async fn enqueue(&self, value: T) {
         self.list
-            .insert(Ordered(self.count.fetch_add(1, Relaxed), value));
+            .insert(Ordered(self.count.fetch_add(1, Relaxed), value)).await;
     }
 
     pub fn dequeue(&self) -> Option<T> {

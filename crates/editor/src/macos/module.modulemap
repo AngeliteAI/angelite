@@ -1,4 +1,11 @@
 module Editor {
-    header "bridge.h"
+    umbrella header "bridge.h"
     export *
+
+    explicit module * {
+        export *
+    }
+
+    link "editor"
+    link framework "Cocoa"
 }

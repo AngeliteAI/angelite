@@ -1,7 +1,13 @@
+use std::pin::pin;
 use std::sync::atomic::AtomicBool;
 use std::task::Poll::*;
 
-use crate::time::{Duration, Instant, TimeUnit};
+use crate::{
+    rt::block_on,
+    time::{Duration, Instant, TimeUnit, wait_until},
+};
+use crate::rt::{poll, waker};
+use crate::rt::worker::current_worker;
 
 pub struct Yield {
     until: Instant,
@@ -24,16 +30,25 @@ impl Future for Yield {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        if self.until <= Instant::now() {
-            return Pending;
-        }
+        let waker = cx.waker().clone();
+        poll(cx, async move {
+            if self.until > Instant::now() {
+                let waker = waker.clone();
+                wait_until(self.until, move || {
+                    dbg!("WOAHHHHHH");
+                    waker.wake_by_ref();
+                }).await;
+            }
 
-        if self.ready.load(std::sync::atomic::Ordering::Relaxed) {
-            Ready(())
-        } else {
-            self.ready.store(true, std::sync::atomic::Ordering::Relaxed);
-            Pending
-        }
+            loop {
+                if self.ready.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                } else {
+                    self.ready.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        })
+
     }
 }
 

@@ -42,6 +42,7 @@ impl Barrier {
 
     /// Wait for all tasks to arrive at the barrier
     pub async fn wait(&self) -> Result<usize, TimeoutError> {
+        dbg!("WAIT");
         let generation = self.generation.load(Acquire);
         let start = Instant::now();
 
@@ -52,17 +53,20 @@ impl Barrier {
             // Last task to arrive
             self.waiting.store(0, Release);
             self.generation.fetch_add(1, Release);
+            dbg!("RELEASE");
             Ok(generation)
         } else {
             // Wait for others with backoff
             loop {
+                dbg!("TESTING");
                 if let Some(timeout) = self.timeout {
                     if start.elapsed() > timeout {
                         return Err(TimeoutError(timeout));
                     }
                 }
 
-                if self.generation.load(Acquire) != generation {
+                if dbg!(self.generation.load(Acquire)) != dbg!(generation) {
+                    dbg!("RELEASE");
                     // Barrier was released
                     return Ok(generation);
                 }
@@ -103,10 +107,10 @@ mod tests {
 
     #[test]
     fn test_barrier() {
-        let barrier = Arc::new(Barrier::new(3));
+        let barrier = Arc::new(Barrier::new(4));
         let b1 = barrier.clone();
         let b2 = barrier.clone();
-        let b3 = barrier;
+        let b3 = barrier.clone();
 
         let h1 = std::thread::spawn(move || {
             block_on(async move {
@@ -125,6 +129,8 @@ mod tests {
                 assert!(b3.wait().await.is_ok());
             });
         });
+
+        block_on(barrier.wait());
 
         h1.join().unwrap();
         h2.join().unwrap();

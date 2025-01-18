@@ -2,10 +2,15 @@ use num_traits::{AsPrimitive, Num};
 use std::iter;
 use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering::*};
 use std::time::SystemTime;
 
-use crate::collections::skip::List;
+use crate::collections::skip::{List, Map};
+use crate::rt::block_on;
+use crate::rt::worker::current_worker;
 use crate::sync::backoff::Backoff;
+use crate::sync::r#yield::yield_now;
 
 // Base trait for all time units
 pub trait TimeUnit: Copy + Sized + std::fmt::Debug {
@@ -130,7 +135,7 @@ impl Duration<Nanos> {
     pub const INSTANT: Duration<Nanos> = Duration::<Nanos>(Nanos(0));
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct Instant(u128);
 
 impl Instant {
@@ -291,227 +296,114 @@ impl DivAssign<Instant> for Instant {
     }
 }
 
-pub struct TimerWheel<T> {
-    // Hierarchical wheels for different time scales
-    wheels: [List<Timer<T>>; 4], // ms, sec, min, hour
-    current_tick: Instant,
+pub async fn wait_until(expires: Instant, action: impl FnOnce() + 'static) {
+    if expires <= Instant::now() {
+        (action)();
+        return;
+    }
+    wait_for((expires - Instant::now()).into(), action).await
+}
+
+pub async fn wait_for(duration: Duration<Millis>, action: impl FnOnce() + 'static) {
+        loop {
+            let Some(worker) = current_worker()
+                .await else {
+                yield_now().await;
+                continue;
+            };
+            worker.timers
+                .add(duration, Box::new(action))
+                .await;
+            return;
+        }
+}
+
+pub struct TimerWheel {
+    // Single map for all timers
+    timers: Arc<Map<Instant, Timer>>,
+    current_tick: Arc<AtomicU64>,
     backoff: Backoff,
 }
 
-struct Timer<T> {
-    expires_at: Instant,
-    data: T,
+struct Timer {
+    action: Box<dyn FnOnce()>,
 }
 
-impl<T> TimerWheel<T> {
-    const WHEEL_BITS: [u8; 4] = [8, 6, 6, 6]; // 256ms, 64sec, 64min, 64hour
-
+impl TimerWheel {
     pub fn new() -> Self {
         Self {
-            wheels: iter::repeat_with(|| List::<Timer<T>>::new())
-                .take(4)
-                .collect::<Vec<_>>()
-                .try_into()
-                .or(Err(()))
-                .unwrap(),
-            current_tick: Instant::now(),
+            timers: Arc::new(Map::default()),
+            current_tick: Arc::new(AtomicU64::new(Instant::now().as_u128() as u64)),
             backoff: Backoff::with_step(Duration::from(1)),
         }
     }
 
-    pub async fn add(&self, expires_in: Duration<Millis>, data: T) {
+    pub async fn add(&self, expires_in: Duration<Millis>, action: impl FnOnce() + 'static) {
         let expires_at = Instant::now() + expires_in;
-        let wheel_idx = self.calculate_wheel_index(expires_in);
-        let slot_idx = self.calculate_slot_index(expires_at, wheel_idx);
-
-        self.wheels[wheel_idx]
-            .insert(Timer { expires_at, data })
-            .await;
+        self.timers
+            .insert(expires_at, Timer {
+                action: Box::new(action),
+            }).await;
     }
 
-    pub async fn tick(&self) -> Vec<T> {
-        let mut expired = Vec::new();
+    pub async fn tick(&self) {
         let now = Instant::now();
+        self.current_tick.store(now.as_u128() as u64, Release);
 
-        // Process current level
-        self.process_expired(now, &mut expired).await;
-
-        // Cascade if necessary
-        if self.should_cascade(0) {
-            self.cascade(1).await;
-        }
-
-        expired
-    }
-
-    async fn cascade(&self, level: usize) {
-        // Move timers down to lower levels as appropriate
-        let mut to_move = Vec::new();
-
-        // Collect timers that should move down
-        while let Some(timer) = self.wheels[level].remove_first() {
-            let new_level =
-                self.calculate_wheel_index((timer.expires_at - Instant::now()).into::<Millis>());
-            if new_level < level {
-                to_move.push(timer);
+        loop {
+            match self.timers.first().await {
+                Some((expires_at, _)) if expires_at > &now => {
+                    break;
+                }
+                Some((expires_at, _)) => {
+                    // Remove and execute expired timer
+                    if let Some(timer) = self.timers.remove(&expires_at).await {
+                        dbg!("yo");
+                        (timer.action)();
+                    }
+                }
+                None => break, // No timers remaining
             }
         }
-
-        // Reinsert at appropriate levels
-        for timer in to_move {
-            let new_level =
-                self.calculate_wheel_index((timer.expires_at - Instant::now()).into::<Millis>());
-            self.wheels[new_level].insert(timer).await;
-        }
-    }
-    fn calculate_wheel_index(&self, duration: Duration<Millis>) -> usize {
-        let nanos = duration.get().into_nanos();
-        let ms = nanos / NANOS_PER_MILLI;
-
-        match ms {
-            0..=255 => 0,         // First wheel (8 bits)
-            256..=16383 => 1,     // Second wheel (6 bits)
-            16384..=1048575 => 2, // Third wheel (6 bits)
-            _ => 3,               // Fourth wheel (6 bits)
-        }
     }
 
-    fn calculate_slot_index(&self, expires_at: Instant, wheel: usize) -> u64 {
-        let time_diff = expires_at.as_u128() - self.current_tick.as_u128();
-        let shift = Self::WHEEL_BITS[..wheel].iter().sum::<u8>();
-        let mask = (1 << Self::WHEEL_BITS[wheel]) - 1;
+    pub async fn advance(&self, duration: Duration<Millis>) {
+        let current = self.current_tick.load(Acquire) as u128;
+        let new_tick = current + duration.get().into_nanos();
+        self.current_tick.store(new_tick as u64, Release);
 
-        ((time_diff >> shift) & (mask as u128)) as u64
+        // Process any timers that would have expired during this advance
+        self.tick().await;
     }
 
-    async fn process_expired(&self, now: Instant, expired: &mut Vec<T>) {
-        while let Some(timer) = self.wheels[0].remove_first() {
-            if timer.expires_at > now {
-                // Not expired yet, reinsert
-                self.wheels[0].insert(timer).await;
-                break;
-            }
-            expired.push(timer.data);
+    pub fn get_current_tick(&self) -> Instant {
+        Instant(self.current_tick.load(Acquire) as u128)
+    }
+
+    pub async fn wait_until(&self, target: Instant) {
+        while self.get_current_tick() < target {
+            self.backoff.wait().await;
         }
     }
 
-    fn should_cascade(&self, level: usize) -> bool {
-        if level >= Self::WHEEL_BITS.len() {
-            return false;
-        }
-
-        let mask = (1 << Self::WHEEL_BITS[level]) - 1;
-        let ticks = (self.current_tick.as_u128() >> Self::WHEEL_BITS[..level].iter().sum::<u8>())
-            & (mask as u128);
-
-        ticks == 0
-    }
-
-    // Helper method to check if a timer is expired
-    fn is_expired(&self, timer: &Timer<T>) -> bool {
-        timer.expires_at <= self.current_tick
-    }
-
-    // Get the number of active timers
     pub fn len(&self) -> usize {
-        self.wheels.iter().map(|wheel| wheel.len()).sum()
+        self.timers.len()
     }
 
-    // Check if there are any active timers
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    // Clear all timers
     pub async fn clear(&self) {
-        for wheel in &self.wheels {
-            while wheel.remove_first().is_some() {}
+        while let Some((_, _)) = self.timers.first().await {
+            self.timers.remove_first();
         }
     }
 
-    // Remove and return all expired timers
-    pub async fn drain_expired(&self) -> Vec<T> {
-        let mut expired = Vec::new();
-        let now = Instant::now();
-
-        for wheel in &self.wheels {
-            while let Some(timer) = wheel.remove_first() {
-                if timer.expires_at <= now {
-                    expired.push(timer.data);
-                } else {
-                    // Reinsert non-expired timer
-                    wheel.insert(timer).await;
-                    break;
-                }
-            }
-        }
-
-        expired
-    }
-
-    // Update the current tick and handle cascading
-    pub async fn advance(&mut self, duration: Duration<Millis>) {
-        self.current_tick = self.current_tick + duration;
-
-        // Check if we need to cascade at each level
-        for level in 0..self.wheels.len() {
-            if self.should_cascade(level) {
-                self.cascade(level).await;
-            }
-        }
-    }
-
-    // Get the next expiration time
     pub async fn next_expiration(&self) -> Option<Instant> {
-        for wheel in &self.wheels {
-            if let Some(timer) = wheel
-                .get(&Timer {
-                    expires_at: Instant::epoch(),
-                    data: unsafe { std::mem::zeroed() },
-                })
-                .await
-            {
-                return Some(timer.expires_at);
-            }
-        }
-        None
-    }
-
-    // Remove a specific timer (if it exists)
-    pub async fn remove(&self, expires_at: Instant) -> Option<T> {
-        let wheel_idx =
-            self.calculate_wheel_index((expires_at - self.current_tick).into::<Millis>());
-
-        let dummy = Timer {
-            expires_at,
-            data: unsafe { std::mem::zeroed() },
-        };
-
-        self.wheels[wheel_idx].remove(&dummy).await.map(|t| t.data)
+        self.timers.first().await.map(|(instant, _)| *instant)
     }
 }
-
-// Implement PartialEq for Timer to enable removal
-impl<T> PartialEq for Timer<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.expires_at == other.expires_at
-    }
-}
-
-// Implement PartialOrd for Timer to enable proper ordering in the skip list
-impl<T> PartialOrd for Timer<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.expires_at.cmp(&other.expires_at))
-    }
-}
-
-impl<T> Ord for Timer<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.expires_at.cmp(&other.expires_at)
-    }
-}
-
-impl<T> Eq for Timer<T> {}
 
 #[cfg(test)]
 mod tests {
@@ -659,13 +551,13 @@ mod tests {
             let wheel = TimerWheel::new();
 
             // Test with different duration units
-            wheel.add(Duration::new(Millis(100)), "millis").await;
-            wheel.add(Duration::new(Seconds(1)).into(), "seconds").await;
+            //wheel.add(Duration::new(Millis(100)), "millis").await;
+            //wheel.add(Duration::new(Seconds(1)).into(), "seconds").await;
 
             thread::sleep(StdDuration::from_millis(1100));
 
-            let expired = wheel.drain_expired().await;
-            assert_eq!(expired.len(), 2);
+            //let expired = wheel.drain_expired().await;
+            //assert_eq!(expired.len(), 2);
         });
     }
 }

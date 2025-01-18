@@ -33,7 +33,7 @@ pub trait Kind: Copy {
     fn waker(id: Key<Self>) -> Waker
     where
         Self: Sized;
-    fn schedule(task: Task<Self>);
+    async fn schedule(task: Task<Self>);
 }
 
 impl Kind for Local {
@@ -50,8 +50,8 @@ impl Kind for Local {
         Waker::from(Arc::new(NotifyWaker(notify)))
     }
 
-    fn schedule(task: Task<Self>) {
-        block_on(current_worker()).unwrap().local.enqueue(task);
+    async fn schedule(task: Task<Self>) {
+        current_worker().await.unwrap().local.enqueue(task).await;
     }
 }
 
@@ -69,8 +69,8 @@ impl Kind for Remote {
         Waker::from(Arc::new(NotifyWaker(notify)))
     }
 
-    fn schedule(task: Task<Self>) {
-        block_on(select_worker()).remote.enqueue(task);
+    async fn schedule(task: Task<Self>) {
+        current_worker().await.unwrap().remote.enqueue(task).await;
     }
 }
 
@@ -79,6 +79,7 @@ struct NotifyWaker<K: Kind>(Arc<Notify<K>>);
 impl<K: Kind> Wake for NotifyWaker<K> {
     fn wake(self: Arc<Self>) {
         // Call notify on the underlying Notify instance
+
         self.0.notify()
     }
 
@@ -126,7 +127,7 @@ impl<K: Kind> Notify<K> {
             if !task_ptr.is_null() {
                 // Reconstruct box from raw pointer
                 let task = unsafe { Box::from_raw(task_ptr) };
-                K::schedule(*task)
+                block_on(K::schedule(*task))
             }
         }
     }
@@ -267,3 +268,170 @@ pub fn block_on<F: Future>(mut future: F) -> F::Output {
         break x;
     }
 }
+
+#[pin_project]
+pub struct Join<T: Future, U: Future> {
+    #[pin]
+    first: Pin<Box<T>>,
+    #[pin]
+    second: Pin<Box<U>>,
+    first_done: bool,
+    second_done: bool,
+    first_result: Option<T::Output>,
+    second_result: Option<U::Output>,
+}
+
+impl<T, U> Join<T, U>
+where
+    T: Future,
+    U: Future,
+{
+    pub fn new(first: T, second: U) -> Self {
+        Self {
+            first: Box::pin(first),
+            second: Box::pin(second),
+            first_done: false,
+            second_done: false,
+            first_result: None,
+            second_result: None,
+        }
+    }
+}
+
+impl<T, U> Future for Join<T, U>
+where
+    T: Future,
+    U: Future,
+{
+    type Output = (T::Output, U::Output);
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Poll first future if not done
+        if !self.first_done {
+            if let Poll::Ready(result) = self.first.as_mut().poll(cx) {
+                self.first_done = true;
+                self.first_result = Some(result);
+            }
+        }
+
+        // Poll second future if not done
+        if !self.second_done {
+            if let Poll::Ready(result) = self.second.as_mut().poll(cx) {
+                self.second_done = true;
+                self.second_result = Some(result);
+            }
+        }
+
+        // Return results if both are done
+        if self.first_done && self.second_done {
+            Poll::Ready((
+                self.first_result.take().unwrap(),
+                self.second_result.take().unwrap(),
+            ))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+// Utility functions to join futures
+pub fn join<T, U>(first: T, second: U) -> Join<T, U>
+where
+    T: Future,
+    U: Future,
+{
+    Join::new(first, second)
+}
+
+// Extension trait for more ergonomic usage
+pub trait JoinExt: Future + Sized {
+    fn join<U>(self, other: U) -> Join<Self, U>
+    where
+        U: Future,
+    {
+        Join::new(self, other)
+    }
+}
+
+impl<F: Future> JoinExt for F {}
+
+pub struct Select<T, U> {
+    first: Pin<Box<T>>,
+    second: Pin<Box<U>>,
+    polled_first: bool,
+    polled_second: bool,
+}
+
+#[derive(Debug)]
+pub enum Either<T, U> {
+    First(T),
+    Second(U),
+}
+
+impl<T, U> Select<T, U>
+where
+    T: Future,
+    U: Future,
+{
+    pub fn new(first: T, second: U) -> Self {
+        Self {
+            first: Box::pin(first),
+            second: Box::pin(second),
+            polled_first: false,
+            polled_second: false,
+        }
+    }
+}
+
+impl<T, U> Future for Select<T, U>
+where
+    T: Future,
+    U: Future,
+{
+    type Output = Either<T::Output, U::Output>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // Try first future if not previously completed
+        if !self.polled_first {
+            match self.first.as_mut().poll(cx) {
+                Poll::Ready(result) => return Poll::Ready(Either::First(result)),
+                Poll::Pending => self.polled_first = true,
+            }
+        }
+
+        // Try second future if not previously completed
+        if !self.polled_second {
+            match self.second.as_mut().poll(cx) {
+                Poll::Ready(result) => return Poll::Ready(Either::Second(result)),
+                Poll::Pending => self.polled_second = true,
+            }
+        }
+
+        // Reset poll flags to try again next time
+        self.polled_first = false;
+        self.polled_second = false;
+
+        Poll::Pending
+    }
+}
+
+// Utility function for selecting between futures
+pub fn select<T, U>(first: T, second: U) -> Select<T, U>
+where
+    T: Future,
+    U: Future,
+{
+    Select::new(first, second)
+}
+
+// Extension trait for more ergonomic usage
+pub trait SelectExt: Future + Sized {
+    fn select<U>(self, other: U) -> Select<Self, U>
+    where
+        U: Future,
+    {
+        Select::new(self, other)
+    }
+}
+
+impl<F: Future> SelectExt for F {}

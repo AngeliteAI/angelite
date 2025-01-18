@@ -180,6 +180,8 @@ mod range {
             const I64: Id = Id::of::<i64>();
             const U128: Id = Id::of::<u128>();
             const I128: Id = Id::of::<i128>();
+            const USIZE: Id = Id::of::<usize>();
+            const ISIZE: Id = Id::of::<isize>();
             const F32: Id = Id::of::<f32>();
             const F64: Id = Id::of::<f64>();
 
@@ -187,7 +189,7 @@ mod range {
             let this = Id::of::<T>();
             match this {
                 // Unsigned integers
-                U8 | U16 | U32 | U64 | U128 => {
+                U8 | U16 | U32 | U64 | U128 | USIZE => {
                     let low = match range.start_bound() {
                         Bound::Included(&x) => x,
                         Bound::Excluded(&x) => x + T::one(),
@@ -203,7 +205,7 @@ mod range {
                 }
 
                 // Signed integers
-                I8 | I16 | I32 | I64 | I128 => {
+                I8 | I16 | I32 | I64 | I128 | ISIZE => {
                     let high = match range.end_bound() {
                         Bound::Included(&x) => x + T::one(),
                         Bound::Excluded(&x) => x,
