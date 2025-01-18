@@ -121,7 +121,7 @@
         pointer-events: none;
         z-index: 0;
         opacity: 0.6;
-        filter: blur(100px);
+        filter: blur(50px);
     }
 
     #hero {
