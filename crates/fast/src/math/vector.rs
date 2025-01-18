@@ -4,7 +4,7 @@ use paste::paste;
 use shuffle::Pattern;
 use std::{intrinsics::simd::*, ops::*};
 
-use crate::Array;
+use crate::Simd;
 macro_rules! vector {
         ($tokens:ty; $impl:tt) => {
             impl<const N: usize, T: Num + Copy> $tokens for Vector<N, T>
@@ -63,11 +63,11 @@ macro_rules! vector_ops {
 
 #[repr(transparent)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Vector<const N: usize, T: Num + Copy = f32>(pub Array<N, T>);
+pub struct Vector<const N: usize, T: Num + Copy = f32>(pub Simd<N, T>);
 
 impl<const N: usize, T: Num + Copy> Vector<N, T> {
     pub const fn from_array(data: [T; N]) -> Self {
-        Self(Array::from_array(data))
+        Self(Simd::from_array(data))
     }
 }
 
@@ -82,7 +82,7 @@ impl<const N: usize, T: Num + Copy> Vector<N, T> {
 
     #[inline(always)]
     pub const fn splat(value: T) -> Self {
-        Self(Array::from_array([value; N]))
+        Self(Simd::from_array([value; N]))
     }
 
     #[inline(always)]
@@ -158,7 +158,7 @@ impl<const N: usize, T: Num + Copy> Vector<N, T> {
             simd_shuffle::<_, _, _>(
                 input,
                 input,
-                const { Array::<M, u32>::from_array(<P as Pattern>::MASK) },
+                const { Simd::<M, u32>::from_array(<P as Pattern>::MASK) },
             )
         };
         Vector(output)
@@ -187,7 +187,7 @@ pub mod swizzle {
 }
 
 pub mod shuffle {
-    use crate::Array;
+    use crate::Simd;
 
     pub trait Pattern {
         type Indices;

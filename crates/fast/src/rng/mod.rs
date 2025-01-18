@@ -726,7 +726,7 @@ pub trait Branch: Random {
 
 mod pcg {
     use crate::{
-        Array,
+        Simd,
         math::vector::{Vector, shuffle::Perfect},
     };
 
@@ -773,7 +773,7 @@ mod pcg {
             state[i] = pcg_init_state_index(i);
             i += 1;
         }
-        Vector(Array(state))
+        Vector(Simd(state))
     }
 
     const fn pcg_init_increment<const LANES: usize>() -> Vector<LANES, u128> {
@@ -783,7 +783,7 @@ mod pcg {
             increment[i] = pcg_init_increment_index(i);
             i += 1;
         }
-        Vector(Array(increment))
+        Vector(Simd(increment))
     }
 
     impl<const LANES: usize> Branch for Pcg<LANES> {

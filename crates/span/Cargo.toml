@@ -8,4 +8,5 @@ homepage = "https://techkit.dev"
 repository = "https://github.com/blockglow/techkit"
 
 [dependencies]
+derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
 fast = { version = "0.1.1", path = "../fast" }

@@ -25,9 +25,9 @@ use std::{intrinsics::simd::*, ops::*};
 
 #[repr(simd)]
 #[derive(Deref, DerefMut, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Array<const N: usize, T: Num>(pub [T; N]);
+pub struct Simd<const N: usize, T: Num>(pub [T; N]);
 
-impl<const N: usize, T: Num + Copy> FromIterator<T> for Array<N, T> {
+impl<const N: usize, T: Num + Copy> FromIterator<T> for Simd<N, T> {
     fn from_iter<I: IntoIterator<Item = T>>(data: I) -> Self {
         let mut iter = data.into_iter();
         let mut data = [T::zero(); N];
@@ -46,14 +46,14 @@ impl<const N: usize, T: Num + Copy> FromIterator<T> for Array<N, T> {
     }
 }
 
-impl<const N: usize, T: Num + Copy> Array<N, T> {
+impl<const N: usize, T: Num + Copy> Simd<N, T> {
     const fn from_array(data: [T; N]) -> Self {
         Self(data)
     }
 }
 
 pub mod prelude {
-    pub use crate::Array;
+    pub use crate::Simd;
     pub use crate::math::vector::Vector;
     pub use crate::math::vector::shuffle::Pattern;
     pub use crate::math::vector::swizzle::*;
