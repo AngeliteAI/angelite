@@ -23,4 +23,31 @@ pub struct State<'a> {
     freed: Vec<*mut u8>,
 }
 
-impl Table<'_> {}
+impl<'a> Table<'a> {
+    pub fn with_archetype(archetype: Archetype) -> Self {
+        let pages = UnsafeCell::new(vec![]);
+        Self { archetype, pages }
+    }
+
+    pub fn pages(&'a self) -> impl Iterator<Item = &'a Page> + 'a {
+        unsafe { self.pages.get().as_mut().unwrap() }.iter()
+    }
+
+    pub fn pages_mut(&'a self) -> impl Iterator<Item = &'a mut Page> + 'a {
+        unsafe { self.pages.get().as_mut().unwrap() }.iter_mut()
+    }
+
+    pub fn entity(&self, mut idx: usize) -> Entity {
+        self.pages()
+            .find(|page| {
+                let count = page.count();
+                let chosen = idx < count;
+                if !chosen {
+                    idx -= count;
+                }
+                chosen
+            })
+            .map(|page| page.entity(idx))
+            .expect("Index out of bounds")
+    }
+}

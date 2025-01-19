@@ -13,7 +13,7 @@
     <script
         src="https://www.google.com/recaptcha/enterprise.js?render=6LdrJbsqAAAAANfvTFn0RwvfqvdvgR7QXdyGxOt9"
     ></script>
-    <!-- Your code -->
+    <link rel="icon" type="image/png" href="/favicon.png" />
 </svelte:head>
 <header>
     <span
@@ -76,6 +76,9 @@
         color: rgb(235, 250, 250);
     }
 
+    :global(html) {
+        overflow: hidden;
+    }
     :global(body) {
         width: 100vw;
         height: 100vh;
@@ -83,6 +86,7 @@
         overflow-x: hidden;
         display: flex;
         flex-direction: column;
+        touch-action: pan-y;
     }
 
     header {
@@ -124,11 +128,8 @@
             rgba(238, 130, 238, 0.2) 90%
         );
         background-size: 200% 200%;
-        animation: gradient 30s ease infinite;
         pointer-events: none;
         z-index: 0;
-        opacity: 0.6;
-        filter: blur(50px);
     }
 
     footer p {
@@ -184,7 +185,6 @@
             violet
         );
         background-size: 200% 200%;
-        animation: gradient 30s ease infinite;
         mask-image: url("/lightning.svg");
         mask-mode: alpha;
         mask-repeat: no-repeat;
