@@ -39,8 +39,11 @@ impl From<Meta> for Archetype {
 }
 
 impl Archetype {
-    const MAX: usize = 256;
+    pub const MAX: usize = 256;
     pub fn size(&self) -> usize {
         self.iter().copied().map(|x| x.size).sum::<usize>().max(1)
+    }
+    pub fn count(&self) -> usize {
+        self.len()
     }
 }

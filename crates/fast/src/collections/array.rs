@@ -24,6 +24,10 @@ impl<T, const L: usize> Array<T, L> {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     #[inline]
     pub fn push(&mut self, value: T) -> bool {
         if self.len < L {
