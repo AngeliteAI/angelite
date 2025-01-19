@@ -20,3 +20,5 @@ pub trait Component {
     where
         Self: Sized;
 }
+
+pub type Handle<'a> = Box<dyn Component + 'a>;

@@ -1,6 +1,6 @@
 use std::cell::UnsafeCell;
 
-use super::{Meta, archetype::Archetype};
+use super::{Handle, Meta, archetype::Archetype};
 
 pub struct Data {
     pub ptr: *mut [u8],

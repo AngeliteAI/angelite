@@ -51,6 +51,10 @@
 </div>
 <footer>
     <span class="lightning"></span>
+    <p>
+        Techkit is licensed under Apache 2.0; property of Angeltech, Inc. (DBA
+        Blockglow)
+    </p>
 </footer>
 
 <style>
@@ -77,6 +81,8 @@
         height: 100vh;
         background-color: rgb(18, 18, 26);
         overflow-x: hidden;
+        display: flex;
+        flex-direction: column;
     }
 
     header {
@@ -97,15 +103,16 @@
         height: 300px;
         position: relative;
         overflow: visible;
+        flex-grow: 1;
     }
     footer::after {
         content: "";
         position: absolute;
         bottom: -400px;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 100vw;
-        height: 100vh;
+        left: 0;
+        bottom: -50%;
+        width: 200vw;
+        height: 200vh;
         background: radial-gradient(
             circle at center,
             rgba(255, 0, 0, 0.2) 0%,
@@ -124,6 +131,10 @@
         filter: blur(50px);
     }
 
+    footer p {
+        position: absolute;
+        bottom: 0;
+    }
     #hero {
         display: flex;
         flex-direction: column;
