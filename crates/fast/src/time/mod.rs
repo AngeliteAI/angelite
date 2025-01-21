@@ -305,17 +305,14 @@ pub async fn wait_until(expires: Instant, action: impl FnOnce() + 'static) {
 }
 
 pub async fn wait_for(duration: Duration<Millis>, action: impl FnOnce() + 'static) {
-        loop {
-            let Some(worker) = current_worker()
-                .await else {
-                yield_now().await;
-                continue;
-            };
-            worker.timers
-                .add(duration, Box::new(action))
-                .await;
-            return;
-        }
+    loop {
+        let Some(worker) = current_worker().await else {
+            yield_now().await;
+            continue;
+        };
+        worker.timers.add(duration, Box::new(action)).await;
+        return;
+    }
 }
 
 pub struct TimerWheel {
@@ -343,7 +340,8 @@ impl TimerWheel {
         self.timers
             .insert(expires_at, Timer {
                 action: Box::new(action),
-            }).await;
+            })
+            .await;
     }
 
     pub async fn tick(&self) {

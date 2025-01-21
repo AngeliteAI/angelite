@@ -68,9 +68,10 @@ pub mod list {
         pub async fn insert(&self, value: T) -> Option<T> {
             let backoff = Backoff::with_step(Duration::<Millis>::from(5));
             let height = if self.is_empty() {
-                0 } else {
-                    self.random_level().await
-                };
+                0
+            } else {
+                self.random_level().await
+            };
 
             let node = Box::new(Node::new(Some(value), height + 1));
             let node_ptr = Box::into_raw(node);
@@ -215,7 +216,9 @@ pub mod list {
                         };
 
                         // Validate current node's structure
-                        if curr_ref.next.len() <= current_level || curr_ref.marked.len() <= current_level {
+                        if curr_ref.next.len() <= current_level
+                            || curr_ref.marked.len() <= current_level
+                        {
                             backoff.wait().await;
                             continue 'retry;
                         }
@@ -273,7 +276,9 @@ pub mod list {
                     }
 
                     // Update level pointers
-                    if curr.is_null() || unsafe { (*curr).value.as_ref() }.map_or(true, |v| v > value) {
+                    if curr.is_null()
+                        || unsafe { (*curr).value.as_ref() }.map_or(true, |v| v > value)
+                    {
                         preds[current_level] = pred;
                         succs[current_level] = curr;
                     }
@@ -285,11 +290,14 @@ pub mod list {
             let mut preds = Vec::with_capacity(L);
             let mut succs = Vec::with_capacity(L);
 
-            if !self.find_node(
-                unsafe { (*new_node).value.as_ref().unwrap() },
-                &mut preds,
-                &mut succs,
-            ).await {
+            if !self
+                .find_node(
+                    unsafe { (*new_node).value.as_ref().unwrap() },
+                    &mut preds,
+                    &mut succs,
+                )
+                .await
+            {
                 return None;
             }
 
@@ -330,11 +338,14 @@ pub mod list {
                         {
                             Ok(_) => break,
                             Err(_) => {
-                                if !self.find_node(
-                                    (*new_node).value.as_ref().unwrap(),
-                                    &mut preds,
-                                    &mut succs,
-                                ).await {
+                                if !self
+                                    .find_node(
+                                        (*new_node).value.as_ref().unwrap(),
+                                        &mut preds,
+                                        &mut succs,
+                                    )
+                                    .await
+                                {
                                     return None;
                                 }
                             }
@@ -678,7 +689,10 @@ mod map {
         }
 
         pub async fn first(&self) -> Option<(&K, &V)> {
-            self.list.first().await.map(|kv| (&kv.0, kv.1.as_ref().unwrap()))
+            self.list
+                .first()
+                .await
+                .map(|kv| (&kv.0, kv.1.as_ref().unwrap()))
         }
 
         /// Returns a reference to the last key-value pair

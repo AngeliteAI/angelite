@@ -2,12 +2,12 @@ use std::pin::pin;
 use std::sync::atomic::AtomicBool;
 use std::task::Poll::*;
 
+use crate::rt::worker::current_worker;
+use crate::rt::{poll, waker};
 use crate::{
     rt::block_on,
     time::{Duration, Instant, TimeUnit, wait_until},
 };
-use crate::rt::{poll, waker};
-use crate::rt::worker::current_worker;
 
 pub struct Yield {
     until: Instant,
@@ -37,7 +37,8 @@ impl Future for Yield {
                 wait_until(self.until, move || {
                     dbg!("WOAHHHHHH");
                     waker.wake_by_ref();
-                }).await;
+                })
+                .await;
             }
 
             loop {
@@ -48,7 +49,6 @@ impl Future for Yield {
                 }
             }
         })
-
     }
 }
 

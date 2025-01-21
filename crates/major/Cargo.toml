@@ -1,8 +1,9 @@
 [package]
-name = "span"
-version = "0.1.2"
+name = "major"
+version = "0.0.0"
 edition = "2024"
 license-file = "./LICENSE"
+readme = "./README.md"
 description = "Next-gen integrated entity component system"
 homepage = "https://techkit.dev"
 repository = "https://github.com/blockglow/blockglow"
