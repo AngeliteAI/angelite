@@ -10,13 +10,13 @@
         { prebold: "POWER", middle_little: "your", postbold: "API 🔌" },
         { prebold: "SHAPE", middle_little: "the", postbold: "FUTURE 🌟" },
         { prebold: "DEPLOY", middle_little: "your", postbold: "DREAM 🚢" },
-        { prebold: "REACH", middle_little: "your", postbold: "PEAK 📈" },
+        { prebold: "REACH", middle_little: "your", postbold: "PEAK 🏔️" },
         { prebold: "FIND", middle_little: "your", postbold: "FLOW ⚡" },
         { prebold: "START", middle_little: "your", postbold: "JOURNEY 🛸" },
         { prebold: "CODE", middle_little: "the", postbold: "FUTURE 🏗" },
         { prebold: "REACH", middle_little: "the", postbold: "STARS 🌙" },
         { prebold: "PUSH", middle_little: "the", postbold: "LIMITS ⚔️" },
-        { prebold: "LEAD", middle_little: "the", postbold: "CHANGE ↗️" },
+        { prebold: "LEAD", middle_little: "the", postbold: "CHANGE 🌊" },
     ];
 
     let currentIndex = 0;
@@ -105,6 +105,9 @@
 
 <header>
     <div id="logo" />
+    <div id="menu">
+        <a>Mission</a><a>Blog</a>
+    </div>
 </header>
 <main>
     <div id="hero">
@@ -116,21 +119,25 @@
         </h1>
         <h3>Build and ship your backend with real-time collaboration and AI</h3>
     </div>
+    <div id="mission">
+        <h2>What if code could create instant value?</h2>
+        <h2>↓</h2>
+    </div>
 </main>
 
 <style>
     @font-face {
         src: url("/mont-heavy.otf");
-        font-family: "Mont";
+        font-family: "Mundial";
         font-weight: bold;
     }
     @font-face {
-        src: url("/mont-light.otf");
-        font-family: "Mont";
+        src: url("/MundialHair.otf");
+        font-family: "Mundial";
         font-weight: lighter;
     }
     :global(*) {
-        font-family: "Mont", sans-serif;
+        font-family: "Mundial", sans-serif;
         font-weight: lighter;
         margin: 0;
         padding: 0;
@@ -162,6 +169,18 @@
         margin-left: 0.5em;
         margin-right: 0.5em;
         margin-top: 0.25em;
+        display: grid;
+        grid-template-columns: 3em 1fr 3em;
+    }
+    header #menu {
+        grid-column: 0/1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+    header #menu a {
+        margin-left: 1em;
+        margin-right: 1em;
     }
     #logo {
         width: 3em;
@@ -184,7 +203,7 @@
         justify-content: center;
         align-items: center;
         font-size: 1.5em;
-        height: 90vh; /* More dramatic full-height approach */
+        height: 80vh; /* More dramatic full-height approach */
         width: 100%;
         padding: 0 24px;
         text-align: center;
@@ -199,7 +218,6 @@
         ); /* Dynamic but controlled sizing */
         line-height: 1.05; /* Tighter line height for headlines */
         letter-spacing: -0.015em; /* Subtle letter spacing adjustment */
-        max-width: 18ch; /* Control line length */
         margin: 0;
     }
 
@@ -209,7 +227,6 @@
         letter-spacing: 0.01em;
         font-weight: 400;
         opacity: 0.9; /* Subtle hierarchy */
-        max-width: 28ch;
     }
 
     #hero-carousel {
@@ -224,21 +241,6 @@
         margin: 0 0.1em; /* Subtle spacing */
     }
 
-    @media (max-width: 600px) {
-        h1 {
-            font-size: clamp(2rem, 8vw, 2.5rem);
-        }
-
-        #hero {
-            padding: 0 16px;
-            gap: 1rem;
-        }
-
-        #hero-carousel {
-            margin: 0.1em 0;
-        }
-    }
-
     #hero-carousel span {
         position: absolute;
         left: 0;
@@ -249,18 +251,6 @@
         white-space: nowrap;
         display: block;
         text-align: left;
-    }
-
-    @media (max-width: 600px) {
-        h1 {
-            font-size: 1.8rem;
-            white-space: normal;
-        }
-
-        #hero-carousel {
-            display: block;
-            margin: 0.2em 0;
-        }
     }
 
     #hero-carousel-current {

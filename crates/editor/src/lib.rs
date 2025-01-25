@@ -1,4 +1,4 @@
-pub type App = span::App;
+pub type App = major::App;
 
 #[cfg(target_os = "macos")]
 pub mod macos;

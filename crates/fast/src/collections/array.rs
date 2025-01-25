@@ -4,8 +4,8 @@ use std::ops::{Index, IndexMut};
 use std::ptr::{self, NonNull};
 
 pub struct Array<T, const L: usize> {
-    data: [MaybeUninit<T>; L],
-    len: usize,
+    pub(crate) data: [MaybeUninit<T>; L],
+    pub(crate) len: usize,
 }
 
 impl<T, const L: usize> Default for Array<T, L> {
@@ -29,16 +29,13 @@ impl<T, const L: usize> Array<T, L> {
     }
 
     #[inline]
-    pub fn push(&mut self, value: T) -> bool {
+    pub fn push(&mut self, value: T) {
         if self.len < L {
             // SAFETY: len is always <= L, index is valid
             unsafe {
                 self.data[self.len].write(value);
             }
             self.len += 1;
-            true
-        } else {
-            false
         }
     }
 
@@ -265,7 +262,9 @@ impl<T, const N: usize> FromIterator<T> for Array<T, N> {
 
         // Slower path: need to check bounds each time
         while let Some(value) = iter.next() {
-            if !array.push(value) {
+            if array.len() < N {
+                array.push(value)
+            } else {
                 // Array is full but iterator has more elements
                 panic!("Iterator too long for array size");
             }
@@ -365,8 +364,11 @@ unsafe impl<T: Sync, const N: usize> Sync for Array<T, N> {}
 impl<T, const N: usize> Extend<T> for Array<T, N> {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for item in iter {
-            if !self.push(item) {
+            if self.len < N {
+                self.push(item);
                 break;
+            } else {
+                panic!("Array out of bounds");
             }
         }
     }

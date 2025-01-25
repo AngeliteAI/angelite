@@ -1,4 +1,5 @@
 pub mod array;
+pub mod arrayvec;
 pub mod bi;
-pub mod queue; // Add this line
+pub mod queue;
 pub mod skip;

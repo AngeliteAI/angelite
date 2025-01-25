@@ -17,6 +17,8 @@ pub struct Data {
     pub meta: Meta,
 }
 
+type Components = Array<Handle<'static>, { Archetype::MAX }>;
+
 pub struct Table {
     archetype: Archetype,
     pages: UnsafeCell<Vec<Page>>,
@@ -60,6 +62,68 @@ impl Table {
             .map(|page| page.entity(idx))
             .expect("Index out of bounds")
     }
+
+    pub fn extend(
+        &self,
+        mut data: impl Iterator<Item = Components>,
+    ) -> impl Iterator<Item = Entity> {
+        let mut entities = vec![];
+        loop {
+            let len = entities.len();
+            let page_entities = self.extend_next_page(&mut data);
+            entities.extend(page_entities);
+            if entities.len() == len {
+                break;
+            }
+        }
+        entities.into_iter()
+    }
+
+    pub fn extend_next_page(
+        &self,
+        data: &mut dyn Iterator<Item = Components>,
+    ) -> impl Iterator<Item = Entity> {
+        let next_page = unsafe {
+            let pages = self.pages.get().as_mut().unwrap();
+            &mut pages[self.next_page_index()]
+        };
+        let mut entities = vec![];
+        while next_page.can_insert() {
+            let components = data.next().unwrap();
+            let entity = next_page.insert(components).unwrap();
+            entities.push(entity);
+        }
+        entities.into_iter()
+    }
+
+    pub fn next_page_index(&self) -> usize {
+        let pages = unsafe { self.pages.get().as_mut().unwrap() };
+        if pages.is_empty() || pages.last().unwrap().is_full() {
+            pages.push(Page::new(self.archetype.clone()));
+            return pages.len() - 1;
+        }
+        for (i, page) in pages.iter().enumerate() {
+            if !page.is_full() {
+                return i;
+            }
+        }
+        unreachable!("No available pages?");
+    }
+
+    pub fn free(&self, buckets: Vec<Entity>) -> _ {
+        let mut page_head = HashMap::default();
+
+        entities.into_iter().for_each(|entity| {
+            page_head.entry(entity.head()).or_default().push(entity)
+        });
+
+        let mut pages = unsafe { self.pages.get().as_mut().unwrap() };
+
+        for (page_head, entities) in page_head {
+            let page = pages.iter_mut().find(|page| page.head as usize == page_head).unwrap();
+
+            page.free(entities);
+        }
 }
 
 impl fmt::Debug for Page {
@@ -150,6 +214,10 @@ impl Page {
 
     pub fn archetype(&self) -> &Archetype {
         unsafe { self.head.cast::<Archetype>().as_ref().unwrap() }
+    }
+
+    fn can_insert(&self) -> bool {
+        self.state().freed.len() > 0 && self.count() + 1 <= self.capacity
     }
 }
 
