@@ -1,6 +1,10 @@
 <script>
     import Grid from "$lib/grid";
     import { onDestroy, onMount } from "svelte";
+    import { enhance } from "$app/forms";
+
+    /** @type {import('./$types').PageProps} */
+    let { data, form } = $props();
 
     let heroCanvas;
     let starField;
@@ -40,30 +44,47 @@
 
     const features = [
         {
+            icon: "🎨",
+            title: "Visual Schema Design",
+            description:
+                "Design and understand your application's structure through an intuitive interface",
+            metric: "5x",
+            metricLabel: "Faster Iterations",
+        },
+        {
             icon: "⚡",
-            title: "Zero-Latency Communication",
-            description: "GPU-accelerated messaging with <2ms latency",
-            metric: "<2ms",
-            metricLabel: "P99 Latency",
+            title: "API Prototyping",
+            description:
+                "Test and refine your API design before writing any code",
+            code: "// Preview generated endpoints\nGET /api/v1/users/:id/profile",
         },
         {
             icon: "🔐",
-            title: "Decentralized Identity",
-            description: "Blockchain-verified developer reputation system",
-            code: "const id = await blockglow.verify(signature);",
+            title: "Permission Controls",
+            description:
+                "Define access patterns visually with built-in security checks",
+            metric: "100%",
+            metricLabel: "Policy Coverage",
         },
         {
-            icon: "🚀",
-            title: "WASM-Native Performance",
-            description: "Browser-native execution at near-native speeds",
-            metric: "95%",
-            metricLabel: "Native Performance",
+            icon: "📦",
+            title: "Easy Deployment",
+            description: "Deploy your backend with powerful configuration",
+            code: "blockglow deploy my_project",
         },
         {
             icon: "🔄",
-            title: "Real-Time Collaboration",
-            description: "Zero-conflict merging with CRDT synchronization",
-            code: "room.sync((update) => patch(state, update))",
+            title: "Schema Versioning",
+            description: "Track and manage schema changes over time",
+            metric: "Full",
+            metricLabel: "Change History",
+        },
+        {
+            icon: "💡",
+            title: "Smart Suggestions",
+            description:
+                "Receive contextual hints about potential optimizations",
+            code: "Hint: Consider indexing frequently queried fields",
         },
     ];
 
@@ -304,8 +325,21 @@
     function resetCard(card) {
         card.style.transform = getCardStyle(parseInt(card.dataset.index));
     }
+
+    function onSubmit(token) {
+        document.getElementById("newsletter").submit();
+    }
+
+    onMount(() => {
+        window.onSubmit = onSubmit;
+    });
 </script>
 
+<svelte:head>
+    <script
+        src="https://www.google.com/recaptcha/enterprise.js?render=6Le_R8UqAAAAAL-GxbHI08tExy7NZXHtjJZGUK-O"
+    ></script>
+</svelte:head>
 <div id="grid">
     <canvas
         bind:this={heroCanvas}
@@ -346,24 +380,42 @@
                 </button>
             </div>
         {:else}
-            <div class="float-input-container">
-                <input
-                    type="email"
-                    class="float-input"
-                    placeholder=" "
-                    id="newsletter-email"
-                    required
-                />
-                <label for="newsletter-email" class="float-label">
-                    Enter your email for updates
-                </label>
-                <button class="submit-button">
-                    <svg viewBox="0 0 24 24">
-                        <path
-                            d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"
+            <div>
+                <div class="float-input-container">
+                    <form
+                        action="?/newsletter"
+                        id="newsletter"
+                        method="POST"
+                        use:enhance
+                    >
+                        <input
+                            type="email"
+                            class="float-input"
+                            placeholder=" "
+                            name="email"
+                            id="newsletter-email"
+                            required
                         />
-                    </svg>
-                </button>
+                        <label for="newsletter-email" class="float-label">
+                            Enter your email for updates
+                        </label>
+                        <button
+                            class="submit-button g-recaptcha"
+                            data-sitekey="6Le_R8UqAAAAAL-GxbHI08tExy7NZXHtjJZGUK-O"
+                            data-callback="onSubmit"
+                            data-action="submit"
+                        >
+                            <svg viewBox="0 0 24 24">
+                                <path
+                                    d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8-8-8z"
+                                />
+                            </svg>
+                        </button>
+                    </form>
+                </div>
+                {#if form?.data.message}
+                    <p>{form.data.message}</p>
+                {/if}
             </div>
         {/if}
 
@@ -1563,6 +1615,10 @@
     }
     .nav-button.next {
         right: 1rem;
+    }
+
+    :global(.grecaptcha-badge) {
+        display: none !important;
     }
 
     /* Basic responsive adjustments */
