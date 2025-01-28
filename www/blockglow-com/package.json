@@ -15,8 +15,8 @@
   },
   "devDependencies": {
     "@types/three": "^0.161.2",
+    "svelte-adapter-bun": "*",
     "vite-plugin-glsl": "^1.2.1",
-    "@sveltejs/adapter-auto": "^4.0.0",
     "@sveltejs/kit": "^2.0.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "svelte": "^5.0.0",
