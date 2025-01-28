@@ -380,7 +380,7 @@
                 </button>
             </div>
         {:else}
-            <div>
+            <div style="width: 100%; display: flex; justify-content: center;">
                 <div class="float-input-container">
                     <form
                         action="?/newsletter"
@@ -417,6 +417,7 @@
                     <p>{form.data.message}</p>
                 {/if}
             </div>
+            st
         {/if}
 
         <div class="features-grid">
