@@ -417,7 +417,6 @@
                     <p>{form.data.message}</p>
                 {/if}
             </div>
-            st
         {/if}
 
         <div class="features-grid">
