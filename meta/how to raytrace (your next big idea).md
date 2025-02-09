@@ -92,8 +92,7 @@ Join me on my journey to enlighten you about raytracing.
   - Multiple Importance Sampling (MIS) combines strategies
   - Global Illumination captures indirect lighting
 
-- Historical Timeline
-
+## History (Extemporaneous)
   - 1500s: Albert Durer - Early 3D scene projection
   - 1968: Arthur Appel creates raycasting at IBM
   - 1980: Turner Whitted introduces recursive raytracing
@@ -104,7 +103,7 @@ Join me on my journey to enlighten you about raytracing.
   - 2018: NVIDIA RTX brings real-time raytracing
   - 2022-23: Octane and Hexane raytracers released
 
-- Modern Applications
+## Modern Applications (Extemporaneous)
 
   - Film Industry examples: Monster House, Cloudy with Meatballs
   - Hybrid Solutions: Mix rasterization + raytracing
@@ -124,7 +123,7 @@ Join me on my journey to enlighten you about raytracing.
     - Camera tracking for perspective correction
     - Interactive lighting between real and virtual elements
 
-- Advanced Techniques (not covered by demo)
+## Advanced Techniques (Extemporaneous, not covered by demo)
 
   - Bidirectional path tracing: Traces from both light source AND camera
   - Quality improves with more samples

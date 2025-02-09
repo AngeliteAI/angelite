@@ -1,7 +1,7 @@
 import { RECAPTCHA_SECRET_KEY } from "$env/static/private";
 import fs from "fs";
 
-/** @type {import('./$types').Actions} */
+/** @satisfies {import('./$types').Actions} */
 export const actions = {
   newsletter: async (event) => {
     const formData = await event.request.formData();

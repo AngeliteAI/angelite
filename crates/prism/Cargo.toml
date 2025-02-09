@@ -1,0 +1,8 @@
+[package]
+name = "prism"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+glam = "0.29.2"
+zi = "0.3.2"

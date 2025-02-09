@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import glsl from "vite-plugin-glsl";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [
@@ -14,7 +15,6 @@ export default defineConfig({
       watch: true,
     }),
   ],
-  // Update the optimizeDeps configuration
   optimizeDeps: {
     include: ["three"],
     exclude: ["@sveltejs/kit"],
@@ -22,7 +22,6 @@ export default defineConfig({
   ssr: {
     noExternal: ["three"],
   },
-  // Add resolve configuration
   resolve: {
     dedupe: ["three"],
   },
