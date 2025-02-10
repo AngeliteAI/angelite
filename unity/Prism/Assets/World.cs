@@ -1,11 +1,12 @@
 using System;
 using UnityEngine;
 using System.Collections.Generic;
+using NoiseTest;
 
 public class World : MonoBehaviour
 {
     public int cubeSize = 1; // Size of each cube
-    public float scale = 0.5f;
+    public float freq = 0.5f;
     public float amplitude = 1.0f;
     public Vector3Int worldSize = new Vector3Int(10, 4, 10); // Size of the world (number of cubes in each dimension)
     public Vector3Int chunkSize = new Vector3Int(8, 8, 8); // Size of the world (number of cubes in each dimension)
@@ -23,20 +24,19 @@ public class World : MonoBehaviour
             // Initialize world data
             worldData = new int[worldSize.x * chunkSize.x, worldSize.y * chunkSize.y, worldSize.z * chunkSize.z];
 
-            var noiseData = Noise.Calc3D(worldSize.x * chunkSize.x, worldSize.y * chunkSize.y, worldSize.z * chunkSize.z,
-                scale);
-            ;
+            var noise = new OpenSimplexNoise();
+            var s =  chunkSize;
             for (int z = 0; z < worldSize.z * chunkSize.z; z++)
             {
-                for (int x = 0; x < worldSize.x * chunkSize.x; x++)
-                {
                     for (int y = 0; y < worldSize.y * chunkSize.y; y++)
+                {
+                for (int x = 0; x < worldSize.x * chunkSize.x; x++)
                     {
-                        float density = noiseData[x, y, z] * amplitude;
+                        float density = (float) noise.Evaluate(x * freq * GOLDEN, y * freq * GOLDEN, z * freq * GOLDEN) * amplitude;
                         float densityMod = squishFactor * ((float)y - heightOffset);
                         Debug.Log(densityMod);
                         Debug.Log(density);
-                        if (density + densityMod > 0)
+                        if (density - densityMod > 0)
                         {
                             worldData[x, y, z] = 1;
                         }
