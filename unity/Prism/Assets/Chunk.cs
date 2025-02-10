@@ -43,84 +43,84 @@ public class Chunk : MonoBehaviour
     private void CreateCube(Vector3Int position, int blockId)
 {
     int submeshIndex = GetOrCreateSubmeshIndex(blockId);
+// Front face
+if (!IsCubeExists(position + new Vector3Int(0, 0, 1)))
+{
+    int vertexIndex = vertices[submeshIndex].Count;
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-    // Front face
-    if (!IsCubeExists(position + new Vector3Int(0, 0, -1)))
-    {
-        int vertexIndex = vertices[submeshIndex].Count;
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z));
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
+    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
+}
 
-        triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
-        triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
-    }
+// Top face
+if (!IsCubeExists(position + new Vector3Int(0, 1, 0)))
+{
+    int vertexIndex = vertices[submeshIndex].Count;
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-    // Top face
-    if (!IsCubeExists(position + new Vector3Int(0, 1, 0)))
-    {
-        int vertexIndex = vertices[submeshIndex].Count;
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
+    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
+}
 
-        triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
-        triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 1);
-    }
+// Left face
+if (!IsCubeExists(position + new Vector3Int(-1, 0, 0)))
+{
+    int vertexIndex = vertices[submeshIndex].Count;
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
 
-    // Left face
-    if (!IsCubeExists(position + new Vector3Int(-1, 0, 0)))
-    {
-        int vertexIndex = vertices[submeshIndex].Count;
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
+    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
+}
 
-        triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
-        triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
-    }
+// Right face
+if (!IsCubeExists(position + new Vector3Int(1, 0, 0)))
+{
+    int vertexIndex = vertices[submeshIndex].Count;
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-    // Right face
-    if (!IsCubeExists(position + new Vector3Int(1, 0, 0)))
-    {
-        int vertexIndex = vertices[submeshIndex].Count;
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
+    triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3);
+}
 
-        triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
-        triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 1);
-    }
+// Back face
+if (!IsCubeExists(position + new Vector3Int(0, 0, -1)))
+{
+    int vertexIndex = vertices[submeshIndex].Count;
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z));
 
-    // Back face
-    if (!IsCubeExists(position + new Vector3Int(0, 0, 1)))
-    {
-        int vertexIndex = vertices[submeshIndex].Count;
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
+    triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3);
+}
 
-        triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
-        triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
-    }
+// Bottom face
+if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
+{
+    int vertexIndex = vertices[submeshIndex].Count;
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z));
+    vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
+    vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
 
-    // Bottom face
-    if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
-    {
-        int vertexIndex = vertices[submeshIndex].Count;
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z));
-        vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
-        vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
+    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
+}
 
-        triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
-        triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 1);
-    }
 }
 
     private int GetOrCreateSubmeshIndex(int blockId)

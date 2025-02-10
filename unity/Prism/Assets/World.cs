@@ -29,15 +29,12 @@ public class World : MonoBehaviour
             {
                 for (int x = 0; x < worldSize.x * chunkSize.x; x++)
                 {
-                    float sampleX = (float)x / ((float)worldSize.x * (float)chunkSize.x) * GOLDEN * freq;
-                    float sampleZ = (float)z / ((float)worldSize.z * (float)chunkSize.z) * GOLDEN * freq;
-
                     for (int y = 0; y < worldSize.y * chunkSize.y; y++)
                     {
-                        float sampleY = (float)y / ((float)worldSize.y * (float)chunkSize.y) * freq;
-                        float density = Noise.CalcPixel3D((int)sampleX, (int)sampleY, (int)sampleZ, scale) - heightOffset;
-                        float densityMod = squishFactor * (float)y;
-
+                        float density = noiseData[x,y,z] * scale;
+                        float densityMod = squishFactor * (float)y - heightOffset;
+                        Debug.Log(densityMod);
+                        Debug.Log(density);
                         if (density + densityMod > 0)
                         {
                             worldData[x, y, z] = 1;
