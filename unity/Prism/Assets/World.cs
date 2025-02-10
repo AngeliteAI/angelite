@@ -1,132 +1,50 @@
+using System;
 using UnityEngine;
 using System.Collections.Generic;
 
 public class World : MonoBehaviour
 {
     public int cubeSize = 1; // Size of each cube
-    public Vector3Int worldSize = new Vector3Int(10, 10, 10); // Size of the world (number of cubes in each dimension)
-    public float fillPercentage = 0.5f; // Percentage of cubes to generate (0.0 to 1.0)
-
-    private bool[,,] worldData; // 3D boolean array to store world data
-
-    private void Start()
-    {
-        GenerateWorld();
-    }
-
-    private void GenerateWorld()
-    {
-        GameObject worldObject = new GameObject("World");
-        worldObject.transform.parent = transform;
-
-        MeshFilter meshFilter = worldObject.AddComponent<MeshFilter>();
-        MeshRenderer meshRenderer = worldObject.AddComponent<MeshRenderer>();
-
-        List<Vector3> vertices = new List<Vector3>();
-        List<int> triangles = new List<int>();
-
-        // Initialize world data
-        worldData = new bool[worldSize.x, worldSize.y, worldSize.z];
-        for (int z = 0; z < worldSize.z; z++)
+    public float freq = 1.0f;
+    public Vector3Int worldSize = new Vector3Int(10, 1, 10); // Size of the world (number of cubes in each dimension)
+    public Vector3Int chunkSize = new Vector3Int(8, 8, 8); // Size of the world (number of cubes in each dimension)
+    public int[,,] worldData; // 3D boolean array to store world data
+       private void Start()
         {
-            for (int y = 0; y < worldSize.y; y++)
-            {
-                for (int x = 0; x < worldSize.x; x++)
-                {
-                    worldData[x, y, z] = Random.value < fillPercentage;
-                }
-            }
+            GenerateWorld();
         }
-
-        // Generate cubes
-        for (int z = 0; z < worldSize.z; z++)
+    
+        private void GenerateWorld()
         {
-            for (int y = 0; y < worldSize.y; y++)
+            GameObject worldObject = new GameObject("World");
+            worldObject.transform.parent = transform;
+
+            // Initialize world data
+            worldData = new int[worldSize.x * chunkSize.x, worldSize.y * chunkSize.y, worldSize.z * chunkSize.z];
+            for (int z = 0; z < worldSize.z * chunkSize.z; z++)
             {
-                for (int x = 0; x < worldSize.x; x++)
+                for (int x = 0; x < worldSize.x * chunkSize.x; x++)
                 {
-                    if (worldData[x, y, z])
+                    var height = (int)(Mathf.PerlinNoise(x * freq, z * freq) * (float) worldSize.y * (float) chunkSize.y);
+                    for (int y = 0; y < height; y++)
                     {
-                        CreateCube(vertices, triangles, new Vector3Int(x, y, z));
+                        worldData[x, y, z] = 1;     
                     }
                 }
             }
+
+            for (int z = 0; z < worldSize.z; z++)
+            {
+                for (int x = 0; x < worldSize.x; x++)
+                {
+                    var chunkGameObject = new GameObject("Chunk");
+                    chunkGameObject.transform.parent = transform;
+                    chunkGameObject.transform.localPosition = new Vector3(x * chunkSize.x, 0, z * chunkSize.z);
+                    chunkGameObject.AddComponent<Chunk>();
+                    var chunk = chunkGameObject.GetComponent<Chunk>();
+                    chunk.world = this;
+                    chunk.chunkPosition =  new Vector3Int(x, 0, z);
+                }
+            }
         }
-
-        Mesh mesh = new Mesh();
-        mesh.vertices = vertices.ToArray();
-        mesh.triangles = triangles.ToArray();
-        mesh.RecalculateNormals();
-
-        meshFilter.mesh = mesh;
-        meshRenderer.material = new Material(Shader.Find("Standard"));
-    }
-
-    private void CreateCube(List<Vector3> vertices, List<int> triangles, Vector3Int position)
-    {
-        int vertexIndex = vertices.Count;
-
-        vertices.Add(position); // 0
-        vertices.Add(new Vector3(position.x + 1, position.y, position.z)); // 1
-        vertices.Add(new Vector3(position.x, position.y + 1, position.z)); // 2
-        vertices.Add(new Vector3(position.x + 1, position.y + 1, position.z)); // 3
-        vertices.Add(new Vector3(position.x, position.y, position.z + 1)); // 4
-        vertices.Add(new Vector3(position.x + 1, position.y, position.z + 1)); // 5
-        vertices.Add(new Vector3(position.x, position.y + 1, position.z + 1)); // 6
-        vertices.Add(new Vector3(position.x + 1, position.y + 1, position.z + 1)); // 7
-
-        // Front face
-        if (!IsCubeExists(position + new Vector3Int(0, 0, -1)))
-        {
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 2);
-            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 3);
-        }
-
-        // Top face
-        if (!IsCubeExists(position + new Vector3Int(0, 1, 0)))
-        {
-            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 3); triangles.Add(vertexIndex + 6);
-            triangles.Add(vertexIndex + 3); triangles.Add(vertexIndex + 7); triangles.Add(vertexIndex + 6);
-        }
-
-        // Left face
-        if (!IsCubeExists(position + new Vector3Int(-1, 0, 0)))
-        {
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 4); triangles.Add(vertexIndex + 6);
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 6); triangles.Add(vertexIndex + 2);
-        }
-
-        // Right face
-        if (!IsCubeExists(position + new Vector3Int(1, 0, 0)))
-        {
-            triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 7); triangles.Add(vertexIndex + 5);
-            triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 5); triangles.Add(vertexIndex + 3);
-        }
-
-        // Back face
-        if (!IsCubeExists(position + new Vector3Int(0, 0, 1)))
-        {
-            triangles.Add(vertexIndex + 4); triangles.Add(vertexIndex + 5); triangles.Add(vertexIndex + 7);
-            triangles.Add(vertexIndex + 4); triangles.Add(vertexIndex + 7); triangles.Add(vertexIndex + 6);
-        }
-
-        // Bottom face
-        if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
-        {
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 5);
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 5); triangles.Add(vertexIndex + 4);
-        }
-    }
-
-    private bool IsCubeExists(Vector3Int position)
-    {
-        if (position.x < 0 || position.x >= worldSize.x ||
-            position.y < 0 || position.y >= worldSize.y ||
-            position.z < 0 || position.z >= worldSize.z)
-        {
-            return false;
-        }
-
-        return worldData[position.x, position.y, position.z];
-    }
 }
