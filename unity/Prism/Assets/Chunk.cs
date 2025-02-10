@@ -66,8 +66,8 @@ public class Chunk : MonoBehaviour
             vertices.Add(new Vector3(position.x, position.y + 1, position.z + 1));
             vertices.Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 2);
-            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 3);
+            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1);
+            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 3); triangles.Add(vertexIndex + 1);
         }
 
         // Left face
@@ -92,8 +92,8 @@ public class Chunk : MonoBehaviour
             vertices.Add(new Vector3(position.x + 1, position.y, position.z + 1));
             vertices.Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 2);
-            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 3);
+            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1);
+            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 3); triangles.Add(vertexIndex + 1);
         }
 
         // Back face
@@ -118,8 +118,8 @@ public class Chunk : MonoBehaviour
             vertices.Add(new Vector3(position.x, position.y, position.z + 1));
             vertices.Add(new Vector3(position.x + 1, position.y, position.z + 1));
 
-            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 2);
-            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1); triangles.Add(vertexIndex + 3);
+            triangles.Add(vertexIndex + 0); triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 1);
+            triangles.Add(vertexIndex + 2); triangles.Add(vertexIndex + 3); triangles.Add(vertexIndex + 1);
         }
     }
 
