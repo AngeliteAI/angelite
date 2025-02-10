@@ -14,7 +14,7 @@ public class PixelCamera : MonoBehaviour
         var height = (int)(Screen.height / scale);
         GetComponent<Camera>().targetTexture = new RenderTexture(width, height, 24);
         GetComponent<Camera>().targetTexture.filterMode = FilterMode.Point;
-        displayPlane.GetComponent<Renderer>().material.SetTexture("_MainTex", GetComponent<Camera>().targetTexture);
+        displayPlane.GetComponent<Renderer>().material.SetTexture("_BaseMap",GetComponent<Camera>().targetTexture);
     }
 
     // Update is called once per frame

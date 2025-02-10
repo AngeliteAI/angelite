@@ -65,8 +65,8 @@ if (!IsCubeExists(position + new Vector3Int(0, 1, 0)))
     vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
     vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
-    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
+    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 1);
 }
 
 // Left face
@@ -78,8 +78,8 @@ if (!IsCubeExists(position + new Vector3Int(-1, 0, 0)))
     vertices[submeshIndex].Add(new Vector3(position.x, position.y, position.z + 1));
     vertices[submeshIndex].Add(new Vector3(position.x, position.y + 1, position.z + 1));
 
-    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
-    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3);
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
+    triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 1);
 }
 
 // Right face
@@ -91,8 +91,8 @@ if (!IsCubeExists(position + new Vector3Int(1, 0, 0)))
     vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y, position.z + 1));
     vertices[submeshIndex].Add(new Vector3(position.x + 1, position.y + 1, position.z + 1));
 
-    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 1);
-    triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2); triangles[submeshIndex].Add(vertexIndex + 3);
+    triangles[submeshIndex].Add(vertexIndex + 0); triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 2);
+    triangles[submeshIndex].Add(vertexIndex + 1); triangles[submeshIndex].Add(vertexIndex + 3); triangles[submeshIndex].Add(vertexIndex + 2);
 }
 
 // Back face
@@ -196,7 +196,7 @@ if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
             position.y < 0 || position.y >= world.chunkSize.y * world.worldSize.y ||
             position.z < 0 || position.z >= world.chunkSize.z * world.worldSize.z)
         {
-            return true;
+            return false;
         }
 
         return world.worldData[position.x, position.y, position.z] != 0;
