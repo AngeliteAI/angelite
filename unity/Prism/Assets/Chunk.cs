@@ -18,14 +18,10 @@ public class Chunk : MonoBehaviour
             {
                 for (int x = 0; x < world.chunkSize.x; x++)
                 {
-                    var i = world.chunkSize.x * chunkPosition.x;
-                    var j = world.chunkSize.y * chunkPosition.y;
-                    var k = world.chunkSize.x * chunkPosition.x;
-                    int blockId = world.worldData[x + i, y + j, z + k];
-                    if (blockId != 0)
-                    {
-                        CreateCube(new Vector3Int(x, y, z), blockId);
-                    }
+                if (IsCubeExists(new Vector3Int(x,y,z)))
+                {
+                    CreateCube(new Vector3Int(x, y, z), 1);
+                }
                 }
             }
         }
@@ -191,14 +187,14 @@ if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
 
     private bool IsCubeExists(Vector3Int position)
     {
-        position += world.chunkSize * chunkPosition;
-        if (position.x < 0 || position.x >= world.chunkSize.x * world.worldSize.x ||
-            position.y < 0 || position.y >= world.chunkSize.y * world.worldSize.y ||
-            position.z < 0 || position.z >= world.chunkSize.z * world.worldSize.z)
+        var real = position + world.chunkSize * chunkPosition;
+        var s = world.chunkSize * world.worldSize;
+        if (real.x < 0 || real.x >= s.x ||
+            real.y < 0 || real.y >= s.y ||
+            real.z < 0 || real.z >= s.z)
         {
-            return false;
+            return true;
         }
-
-        return world.worldData[position.x, position.y, position.z] != 0;
+        return world.worldData[real.x + s.x * (real.y + s.y * real.z)] != 0;
     }
 }

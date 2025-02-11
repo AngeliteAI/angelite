@@ -4,10 +4,13 @@ public class ObliqueMover : MonoBehaviour
 {
     public Vector3 excess;
 
+    float modf(float a, float n)
+    {
+        return (a % n + n) % n;
+    }
     void rectify()
     {
-        var frameExcess = new Vector3(this.transform.position.x % 1.0f, this.transform.position.y % 1.0f,
-            this.transform.position.z % 1.0f);
+        var frameExcess = new Vector3(modf(this.transform.position.x, 1.0f), modf(this.transform.position.y, 1.0f), modf(this.transform.position.z, 1.0f));
         this.excess += frameExcess;
         var temp = new Vector3(0f,0f,0f);
         for (int d = 0; d < 3; d++)
@@ -24,12 +27,10 @@ public class ObliqueMover : MonoBehaviour
 
     void Start()
     {
-        rectify();
     }
 
     // Update is called once per frame
     void Update()
     {
-        rectify();
     }
 }

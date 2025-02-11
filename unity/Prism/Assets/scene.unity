@@ -407,12 +407,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   cubeSize: 1
-  freq: 1
-  scale: 0.5
-  worldSize: {x: 10, y: 1, z: 10}
+  freq: 0.2
+  amplitude: 1
+  worldSize: {x: 10, y: 4, z: 10}
   chunkSize: {x: 8, y: 8, z: 8}
-  squishFactor: 0.6
-  heightOffset: 0
+  squishFactor: 0.2
+  heightOffset: 23
 --- !u!4 &411697009
 Transform:
   m_ObjectHideFlags: 0
