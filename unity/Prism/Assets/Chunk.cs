@@ -37,9 +37,11 @@ public class Chunk : MonoBehaviour
 
     }
 
+    public bool done = false;
+    
     public void Update()
     {
-        if (!genHandle.IsCompleted)
+        if (!genHandle.IsCompleted || done)
         {
             return;
         }
@@ -67,6 +69,8 @@ public class Chunk : MonoBehaviour
 
         meshFilter.mesh = mesh;
         meshRenderer.materials = materials.ToArray();
+        data.Dispose();
+        done = true;
     }
 
     private void CreateCube(Vector3Int position, int blockId)

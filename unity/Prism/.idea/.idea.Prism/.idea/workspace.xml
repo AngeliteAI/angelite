@@ -7,8 +7,6 @@
     <list default="true" id="3a96fd66-d833-4ede-a967-f4e39694c151" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/.idea.Prism/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.Prism/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Assets/Chunk.cs" beforeDir="false" afterPath="$PROJECT_DIR$/Assets/Chunk.cs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Assets/Simplex.cs" beforeDir="false" afterPath="$PROJECT_DIR$/Assets/Simplex.cs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Assets/World.cs" beforeDir="false" afterPath="$PROJECT_DIR$/Assets/World.cs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -99,7 +97,7 @@
       <option name="presentableId" value="Default" />
       <updated>1739066934427</updated>
       <workItem from="1739066935950" duration="4976000" />
-      <workItem from="1739080969716" duration="48761000" />
+      <workItem from="1739080969716" duration="49096000" />
     </task>
     <servers />
   </component>
