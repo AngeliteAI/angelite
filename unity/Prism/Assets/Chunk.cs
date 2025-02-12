@@ -23,7 +23,7 @@ public class Chunk : MonoBehaviour
     {
             // Initialize data
                        data = new NativeArray<int>(
-                           world.chunkSize.x * world.chunkSize.y * world.chunkSize.z * world.chunkSize.x * world.chunkSize.y * world.chunkSize.z, Allocator.Persistent);
+                           world.chunkSize.x * world.chunkSize.y * world.chunkSize.z, Allocator.Persistent);
            
                        int numBatches = Math.Max(1, JobsUtility.JobWorkerCount / 2);
                        int totalItems = data.Length;
@@ -32,7 +32,7 @@ public class Chunk : MonoBehaviour
                        var job = world.NewRegionGenJob();
                        job.data = data;
                        job.pos = pos;
-                       genHandle = job.Schedule(data.Length, batchSize);
+                       genHandle = job.Schedule(data.Length, 64);
                
 
     }

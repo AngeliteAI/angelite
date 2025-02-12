@@ -1,11 +1,16 @@
     using System;
+    using Unity.Burst;
     using Unity.Collections;
     using Unity.Jobs;
+    using Unity.Mathematics;
     using UnityEngine;
 
     public class World : MonoBehaviour
     {
    public float cubeSize = 1; // Size of each cube
+   public float loaded = 0;
+   public float loadTime = 0.0f;
+   public float loadRate = 0.1f;
      public float freq = 0.5f;
      public float amplitude = 1.0f;
      public Vector3Int worldSize = new Vector3Int(8, 8, 8); // Size of the region (number of cubes in each dimension)
@@ -16,6 +21,7 @@
 
 
     // Set up the job
+    [BurstCompile(CompileSynchronously = true)]
     public struct GenJob : IJobParallelFor
     {
         public float squishFactor;
@@ -36,7 +42,7 @@
             float z = _z;
             float y = index / width;
             float x = index % width;
-            float density = (float) SimplexNoise.Simplex3DFractal(pos * size + new Vector3((float)x / (float)width * freq, (float)y / (float) height * freq, (float) z / (float) depth * freq)) * amplitude;
+            float density = (float) SimplexNoise.Simplex3DFractal(new int3(pos.x, pos.y, pos.z) * new int3(size.x, size.y, size.z) + new float3((float)x / (float)width * freq, (float)y / (float) height * freq, (float) z / (float) depth * freq)) * amplitude;
             float densityMod = squishFactor * ((float)heightOffset - y);
             if (density + densityMod > 0)
             {
@@ -64,19 +70,38 @@
              }
 
              private int impld = 0;
+
+             public void Start()
+             {
+                 NativeLeakDetection.Mode = NativeLeakDetectionMode.EnabledWithStackTrace;
+             }
+
              public void Update()
              {
-                 if (impld % 100 == 0)
-                 {
-                    var gen = new GameObject("Chunk");
-                                   gen.transform.parent = transform;
-                                   gen.transform.localPosition = new Vector3(chunkSize.x  * impld, 0, 0);
-                                   gen.AddComponent<Chunk>();
-                                   gen.GetComponent<Chunk>().world = this;
-                                   gen.GetComponent<Chunk>().pos.x = impld;
+                 loadTime += Time.deltaTime;
+                 if (loaded < worldSize.x * worldSize.y * worldSize.z && loadTime >= loadRate) {
+                     // Convert linear index to 3D coordinates
+                     int index = (int)loaded;
+                     int x = index % worldSize.x;
+                     int y = (index / worldSize.x) % worldSize.y;
+                     int z = index / (worldSize.x * worldSize.y);
+    
+                     var gen = new GameObject("Chunk");
+                     gen.transform.parent = transform;
+    
+                     // Position the chunk based on its 3D coordinates
+                     gen.transform.localPosition = new Vector3(
+                         x * chunkSize.x,
+                         y * chunkSize.y,
+                         z * chunkSize.z
+                     );
+    
+                     var chunk = gen.AddComponent<Chunk>();
+                     chunk.world = this;
+                     chunk.pos = new Vector3Int(x, y, z);
+    
+                     loaded++;
+                     loadTime = 0.0f;
                  }
-               
-                 impld++;
-                 
              }
     }
