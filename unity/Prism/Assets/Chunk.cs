@@ -1,17 +1,50 @@
+using System;
 using UnityEngine;
 using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Jobs.LowLevel.Unsafe;
 using UnityEngine.Rendering;
 
+[RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class Chunk : MonoBehaviour
 {
-    public World world;
+    public World world; 
+    public NativeArray<int> data;
+    public Vector3Int pos;
+    JobHandle genHandle;
+
     public Vector3Int chunkPosition;
     private List<List<Vector3>> vertices = new List<List<Vector3>>();
     private List<List<int>> triangles = new List<List<int>>();
     private List<Material> materials = new List<Material>();
-
-    public void Start()
+    
+    public void Start()    
     {
+            // Initialize data
+                       data = new NativeArray<int>(
+                           world.chunkSize.x * world.chunkSize.y * world.chunkSize.z * world.chunkSize.x * world.chunkSize.y * world.chunkSize.z, Allocator.Persistent);
+           
+                       int numBatches = Math.Max(1, JobsUtility.JobWorkerCount / 2);
+                       int totalItems = data.Length;
+                       int batchSize = totalItems / numBatches;
+                        Debug.Log(totalItems + " / " + numBatches); 
+                       var job = world.NewRegionGenJob();
+                       job.data = data;
+                       job.pos = pos;
+                       genHandle = job.Schedule(data.Length, batchSize);
+               
+
+    }
+
+    public void Update()
+    {
+        if (!genHandle.IsCompleted)
+        {
+            return;
+        }
+        genHandle.Complete();
+        
         for (int z = 0; z < world.chunkSize.z; z++)
         {
             for (int y = 0; y < world.chunkSize.y; y++)
@@ -29,8 +62,8 @@ public class Chunk : MonoBehaviour
         Mesh mesh = new Mesh();
         CombineSubmeshes(mesh);
 
-        MeshFilter meshFilter = gameObject.AddComponent<MeshFilter>();
-        MeshRenderer meshRenderer = gameObject.AddComponent<MeshRenderer>();
+        MeshFilter meshFilter = gameObject.GetComponent<MeshFilter>();
+        MeshRenderer meshRenderer = gameObject.GetComponent<MeshRenderer>();
 
         meshFilter.mesh = mesh;
         meshRenderer.materials = materials.ToArray();
@@ -187,14 +220,17 @@ if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
 
     private bool IsCubeExists(Vector3Int position)
     {
-        var real = position + world.chunkSize * chunkPosition;
-        var s = world.chunkSize * world.worldSize;
-        if (real.x < 0 || real.x >= s.x ||
-            real.y < 0 || real.y >= s.y ||
-            real.z < 0 || real.z >= s.z)
+        var s = world.chunkSize;
+        if (position.y < 0)
         {
             return true;
         }
-        return world.worldData[real.x + s.x * (real.y + s.y * real.z)] != 0;
+        if (position.x < 0 || position.x >= s.x || position.y >= s.y ||
+            position.z < 0 || position.z >= s.z)
+        {
+            return false;
+        }
+        return data[position.x + s.x * (position.y + s.y * position.z)] != 0;
     }
+
 }
