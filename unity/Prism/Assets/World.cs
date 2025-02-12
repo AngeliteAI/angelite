@@ -4,6 +4,7 @@
     using Unity.Jobs;
     using Unity.Mathematics;
     using UnityEngine;
+    using UnityEngine.UIElements;
 
     public class World : MonoBehaviour
     {
@@ -28,6 +29,7 @@
         public float heightOffset;
         public float freq;
         public Vector3Int pos;
+        public int chunkY;
         public float amplitude;
         public Vector3Int size;
         public NativeArray<int> data;
@@ -43,7 +45,8 @@
             float y = index / width;
             float x = index % width;
             float density = (float) SimplexNoise.Simplex3DFractal(new int3(pos.x, pos.y, pos.z) * new int3(size.x, size.y, size.z) + new float3((float)x / (float)width * freq, (float)y / (float) height * freq, (float) z / (float) depth * freq)) * amplitude;
-            float densityMod = squishFactor * ((float)heightOffset - y);
+            float densityMod = squishFactor * ((float)heightOffset - y - chunkY);
+            
             if (density + densityMod > 0)
             {
                 data[final] = 1;
@@ -60,7 +63,7 @@
                  return new GenJob
                                  {
                                      squishFactor = squishFactor,
-                                     heightOffset = heightOffset,
+                                     heightOffset =  heightOffset,
                                      freq = freq,
                                      
                                      amplitude = amplitude,

@@ -32,6 +32,7 @@ public class Chunk : MonoBehaviour
                        var job = world.NewRegionGenJob();
                        job.data = data;
                        job.pos = pos;
+                       job.chunkY = pos.y * world.chunkSize.y;
                        genHandle = job.Schedule(data.Length, 64);
                
 
