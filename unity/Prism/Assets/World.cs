@@ -20,7 +20,8 @@
              public float squishFactor = 0.6f; // Adjust this value to control the squish effect
              public float heightOffset = 8f; // Adjust this value to control the overall height of the terrain       
 
-
+             public Material stone;
+             
     // Set up the job
     [BurstCompile(CompileSynchronously = true)]
     public struct GenJob : IJobParallelFor

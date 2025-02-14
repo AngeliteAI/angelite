@@ -79,9 +79,11 @@ pub async fn worker_start_barrier(start: Arc<Barrier>) {
         .await;
 }
 
-pub async fn start(seed: Vector<4, u128>, count: usize) -> Arc<Barrier> {
+pub struct WorkerHandle(thread::JoinHandle<()>);
+
+pub async fn start(seed: Vector<4, u128>, worker_count: usize) -> Arc<Barrier> {
     let mut rng = Pcg::<4>::new(seed);
-    let start = Arc::new(Barrier::new(count + 1));
+    let start = Arc::new(Barrier::new(worker_count + 1));
     thread::current()
         .register(Worker {
             rng: rng.branch(),
@@ -93,7 +95,7 @@ pub async fn start(seed: Vector<4, u128>, count: usize) -> Arc<Barrier> {
         })
         .await;
 
-    for worker in (0..count).map(|x| x + 1).map(WorkerId) {
+    for worker in (0..worker_count).map(|x| x + 1).map(WorkerId) {
         let start = start.clone();
         let handle = thread::spawn(move || {
             block_on(async {
@@ -130,6 +132,7 @@ pub async fn select_worker() -> &'static Worker {
 }
 
 async fn all_workers() -> impl Iterator<Item = &'static Worker> + Clone {
+    //SAFETY ?????????????
     let workers = WORKERS.all_values().collect::<Vec<_>>();
     workers
         .into_iter()

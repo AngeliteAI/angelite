@@ -2,15 +2,20 @@ use core::fmt;
 use std::{
     alloc,
     cell::UnsafeCell,
+    collections::HashMap,
     iter,
     mem::{self, transmute},
 };
 
-use fast::collections::array::Array;
+use fast::collections::{array::Array, arrayvec::ArrayVec};
 
 use crate::entity::Entity;
 
 use super::{Handle, Meta, archetype::Archetype};
+
+pub struct Metatable {
+    page_heads: ArrayVec<*mut u8, 64>,
+}
 
 pub struct Data {
     pub ptr: *mut [u8],
@@ -110,20 +115,25 @@ impl Table {
         unreachable!("No available pages?");
     }
 
-    pub fn free(&self, buckets: Vec<Entity>) -> _ {
-        let mut page_head = HashMap::default();
+    pub fn free(&self, entities: Vec<Entity>) {
+        type Head = *mut u8;
+        let mut page_head = HashMap::<Head, Vec<Entity>>::default();
 
-        entities.into_iter().for_each(|entity| {
-            page_head.entry(entity.head()).or_default().push(entity)
-        });
+        entities
+            .into_iter()
+            .for_each(|entity| page_head.entry(entity.head()).or_default().push(entity));
 
         let mut pages = unsafe { self.pages.get().as_mut().unwrap() };
 
         for (page_head, entities) in page_head {
-            let page = pages.iter_mut().find(|page| page.head as usize == page_head).unwrap();
+            let page = pages
+                .iter_mut()
+                .find(|page| page.head == page_head)
+                .unwrap();
 
             page.free(entities);
         }
+    }
 }
 
 impl fmt::Debug for Page {

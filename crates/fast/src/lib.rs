@@ -27,6 +27,18 @@ use std::{intrinsics::simd::*, ops::*};
 #[derive(Deref, DerefMut, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Simd<const N: usize, T: Num>(pub [T; N]);
 
+impl<const N: usize, T: Num + Copy> Simd<N, T> {
+    pub fn splat(value: T) -> Self {
+        Self([value; N])
+    }
+}
+
+impl<const N: usize, T: Num + Copy> Default for Vector<N, T> {
+    fn default() -> Self {
+        Self::splat(T::zero())
+    }
+}
+
 impl<const N: usize, T: Num + Copy> FromIterator<T> for Simd<N, T> {
     fn from_iter<I: IntoIterator<Item = T>>(data: I) -> Self {
         let mut iter = data.into_iter();

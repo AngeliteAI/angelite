@@ -5,7 +5,10 @@ use std::{
     pin::{Pin, pin},
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicPtr, AtomicU8, Ordering::*},
+        atomic::{
+            AtomicBool, AtomicPtr, AtomicU8, AtomicUsize,
+            Ordering::{self, *},
+        },
     },
     task::{
         Context,
@@ -14,10 +17,15 @@ use std::{
     },
 };
 
+use derive_more::derive::{Deref, DerefMut, From};
 use pin_project::pin_project;
-use worker::{current_worker, select_worker};
+use worker::{WorkerHandle, current_worker, select_worker};
 
-use crate::{collections::queue::Queue, sync::split::Split};
+use crate::{
+    collections::queue::Queue,
+    prelude::Vector,
+    sync::{barrier::Barrier, channel::Channel, split::Split},
+};
 
 pub mod worker;
 
@@ -148,6 +156,8 @@ pub enum Act<K: Kind> {
     Fut(#[pin] K::Fut),
 }
 
+pub static KEY: AtomicUsize = AtomicUsize::new(0);
+
 pub struct Task<K: Kind> {
     pub key: Key<K>,
     pub act: Option<Act<K>>,
@@ -267,6 +277,40 @@ pub fn block_on<F: Future>(mut future: F) -> F::Output {
         };
         break x;
     }
+}
+
+pub struct YieldNow {
+    yielded: Arc<AtomicBool>,
+}
+
+impl YieldNow {
+    pub fn new() -> Self {
+        Self {
+            yielded: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl Future for YieldNow {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.yielded.load(Ordering::SeqCst) {
+            Poll::Ready(())
+        } else {
+            let waker = cx.waker().clone();
+            let yielded = self.yielded.clone();
+            spawn_local(async move {
+                yielded.store(true, Ordering::SeqCst);
+                waker.wake();
+            });
+            Poll::Pending
+        }
+    }
+}
+
+pub fn yield_now() -> YieldNow {
+    YieldNow::new()
 }
 
 #[pin_project]
@@ -435,3 +479,77 @@ pub trait SelectExt: Future + Sized {
 }
 
 impl<F: Future> SelectExt for F {}
+
+#[derive(Deref, DerefMut, From)]
+pub struct UnsafeLocal<T>(T);
+
+unsafe impl<T> Send for UnsafeLocal<T> {}
+unsafe impl<T> Sync for UnsafeLocal<T> {}
+
+pub struct Handle<T>(Channel<UnsafeLocal<T>, 64>);
+
+pub const PIPELINE: usize = 8192;
+
+pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static + Clone, T: Send + 'static>(
+    f: F,
+) -> Handle<T> {
+    let channel = Channel::default();
+    let handle = Handle(channel.clone());
+    let f = move || {
+        channel.send(UnsafeLocal((f)()));
+    };
+    Remote::schedule(Task {
+        key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
+        act: Some(Act::Call(ManuallyDrop::new(UnsafeCell::new(
+            Box::new(f) as Box<dyn FnOnce() + Send + 'static>
+        )))),
+    })
+    .await;
+    handle
+}
+
+pub async fn spawn<
+    F: IntoFuture<Output = T, IntoFuture = Fut>,
+    Fut: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+>(
+    fut: F,
+) -> Handle<T> {
+    let channel = Channel::default();
+    let handle = Handle(channel.clone());
+    let fut = fut.into_future();
+    let fut = async move || {
+        channel.send(UnsafeLocal(fut.await));
+    };
+    Remote::schedule(Task {
+        key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
+        act: Some(Act::Fut(
+            Box::pin((fut)()) as Pin<Box<dyn Future<Output = ()> + Send + 'static>>
+        )),
+    })
+    .await;
+    handle
+}
+
+pub async fn spawn_local<
+    F: IntoFuture<Output = T, IntoFuture = Fut>,
+    Fut: Future<Output = T> + 'static,
+    T: 'static,
+>(
+    fut: F,
+) -> Handle<T> {
+    let channel = Channel::default();
+    let handle = Handle(channel.clone());
+    let fut = fut.into_future();
+    let fut = async move || {
+        channel.send(UnsafeLocal(fut.await));
+    };
+    Local::schedule(Task {
+        key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
+        act: Some(Act::Fut(
+            Box::pin((fut)()) as Pin<Box<dyn Future<Output = ()> + 'static>>
+        )),
+    })
+    .await;
+    handle
+}

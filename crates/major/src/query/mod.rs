@@ -1,59 +1,26 @@
-use std::marker::PhantomData;
-
-use fast::{collections::arrayvec::ArrayVec, prelude::Vector};
-
 use crate::component::archetype::Archetype;
+use fast::rt::UnsafeLocal;
+use fetch::Fetch;
 
-pub trait Query {
-    type Ref;
-    type Mut;
+use crate::{component::table::Metatable, world::World};
 
-    fn archetype() -> Archetype;
+pub mod fetch;
 
-    fn query<'a>(world: &'a mut World) -> Fetch<Self>
-    where
-        Self: Sized,
-    {
-        todo!()
-    }
-
-    fn offsets() -> Array<usize, { Archetype::MAX }>;
-    fn deduce(state: &mut State) -> Option<Self::Ref>;
-    fn deduce_mut(state: &mut State) -> Option<Self::Mut>;
+pub trait Param: Send {
+    fn inject(archetype: &mut Archetype);
 }
 
-pub struct Fetch<Q: Query> {
-    shard: Shard,
-    marker: PhantomData<Q>,
-}
+//SAFETY: Query will only be used by one thread at a time, so its inner RefCell is safe.
+pub struct Query<Q: fetch::Query>(UnsafeLocal<Fetch<Q>>);
 
-unsafe impl<Q: Query> Send for Fetch<Q> {}
-
-impl<'a, Q: Query> IntoIterator for &'a Fetch<Q> {
-    type Item = Q::Ref;
-    type IntoIter = Scan<'a, Q>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        todo!()
+impl<Q: fetch::Query> Param for Query<Q> {
+    fn inject(archetype: &mut Archetype) {
+        archetype.merge(Q::archetype())
     }
 }
 
-impl<'a, Q: Query> IntoIterator for &'a mut Fetch<Q> {
-    type Item = Q::Mut;
-    type IntoIter = Scan<'a, Q>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        todo!()
-    }
+pub trait Params: Send + 'static {
+    fn bind(world: &mut World) -> Metatable;
 }
 
-pub struct Cursor {
-    route: Vector<3, usize>,
-    max: Vector<3, usize>,
-}
-
-impl Cursor {
-    fn shard(&self) -> usize {
-        let [x] = self.route.x();
-    }
-}
+major_macro::params!();

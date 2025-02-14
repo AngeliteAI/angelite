@@ -70,7 +70,6 @@ public class Chunk : MonoBehaviour
 
         meshFilter.mesh = mesh;
         meshRenderer.materials = materials.ToArray();
-        data.Dispose();
         done = true;
     }
 
@@ -161,31 +160,28 @@ if (!IsCubeExists(position + new Vector3Int(0, -1, 0)))
     {
         for (int i = 0; i < materials.Count; i++)
         {
-            if (materials[i].color == GetColorForBlockId(blockId))
+            if (materials[i] == GetMaterialForBlockId(blockId))
             {
                 return i;
             }
         }
 
-        Material newMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit"));
-        newMaterial.color = GetColorForBlockId(blockId);
-        materials.Add(newMaterial);
+        materials.Add(GetMaterialForBlockId(blockId));
         vertices.Add(new List<Vector3>());
         triangles.Add(new List<int>());
         return materials.Count - 1;
     }
 
-    private Color GetColorForBlockId(int blockId)
+    private Material GetMaterialForBlockId(int blockId)
     {
         // Implement your logic here to return a color based on the block ID
         // For example:
         switch (blockId)
         {
-            case 1: return Color.red;
-            case 2: return Color.green;
-            case 3: return Color.blue;
+            case 1:
+               return world.stone; 
             // ... add more cases as needed
-            default: return Color.gray;
+            default: return null;
         }
     }
 

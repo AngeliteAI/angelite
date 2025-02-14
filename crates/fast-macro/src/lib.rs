@@ -1,6 +1,7 @@
 use itertools::Itertools;
+use parse::{Parse, ParseStream};
 use proc_macro::{Span, TokenStream};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::*;
 
 #[proc_macro_attribute]
@@ -20,6 +21,80 @@ pub fn main(_: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     output.into()
+}
+
+struct VectorConstants {
+    vec_type: Type,
+    repr_type: Type,
+    zero: Expr,
+    one: Expr,
+}
+
+impl Parse for VectorConstants {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let vec_type = input.parse()?;
+        let _: Token![,] = input.parse()?;
+        let repr_type = input.parse()?;
+        let _: Token![,] = input.parse()?;
+        let zero = input.parse()?;
+        let _: Token![,] = input.parse()?;
+        let one = input.parse()?;
+
+        Ok(VectorConstants {
+            vec_type,
+            repr_type,
+            zero,
+            one,
+        })
+    }
+}
+
+#[proc_macro]
+pub fn vector_constants(input: TokenStream) -> TokenStream {
+    let VectorConstants {
+        vec_type,
+        repr_type,
+        zero,
+        one,
+    } = parse_macro_input!(input as VectorConstants);
+
+    let axes2d = ["X", "Y"];
+    let axes3d = ["X", "Y", "Z"];
+    let axes4d = ["X", "Y", "Z", "W"];
+
+    let gen_vector = |dim: usize, axes: &[&str]| {
+        let axis_constants = axes.iter().enumerate().map(|(idx, axis)| {
+            let axis_ident = format_ident!("{}", axis);
+            quote! {
+                pub const #axis_ident: Self = {
+                    let mut arr = [#zero; #dim];
+                    arr[#idx] = #one;
+                    Self(Simd(arr))
+                };
+            }
+        });
+
+        quote! {
+            impl #vec_type<#dim, #repr_type> {
+                #(#axis_constants)*
+
+                pub const ZERO: Self = Self(Simd([#zero; #dim]));
+                pub const ONE: Self = Self(Simd([#one; #dim]));
+            }
+        }
+    };
+
+    let vec2 = gen_vector(2, &axes2d);
+    let vec3 = gen_vector(3, &axes3d);
+    let vec4 = gen_vector(4, &axes4d);
+
+    let expanded = quote! {
+        #vec2
+        #vec3
+        #vec4
+    };
+
+    expanded.into()
 }
 
 #[proc_macro]

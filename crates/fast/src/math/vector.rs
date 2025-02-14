@@ -62,8 +62,12 @@ macro_rules! vector_ops {
 }
 
 #[repr(transparent)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Deref, DerefMut, PartialEq, Eq, Clone, Copy)]
 pub struct Vector<const N: usize, T: Num + Copy = f32>(pub Simd<N, T>);
+
+fast_macro::vector_constants!(Vector, f32, 0.0f32, 1.0f32);
+fast_macro::vector_constants!(Vector, u32, 0u32, 1u32);
+fast_macro::vector_constants!(Vector, usize, 0usize, 1usize);
 
 impl<const N: usize, T: Num + Copy> Vector<N, T> {
     pub const fn from_array(data: [T; N]) -> Self {

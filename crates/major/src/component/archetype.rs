@@ -3,10 +3,20 @@ use std::iter;
 use derive_more::derive::{Deref, DerefMut};
 use fast::collections::array::Array;
 
-use super::Meta;
+use super::{Component, Meta};
 
 #[derive(Clone, Ord, Eq, PartialEq, Default, Debug, Deref, DerefMut, Hash)]
 pub struct Archetype(Array<Meta, { Self::MAX }>);
+
+impl IntoIterator for Archetype {
+    type Item = Meta;
+
+    type IntoIter = fast::collections::array::IntoIter<Self::Item, 256>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 impl PartialOrd for Archetype {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -46,7 +56,6 @@ impl Archetype {
     pub fn count(&self) -> usize {
         self.len()
     }
-
     pub(crate) fn offset_of(&self, index: usize) -> usize {
         self.iter()
             .copied()
@@ -54,5 +63,13 @@ impl Archetype {
             .take(index)
             .sum::<usize>()
             .max(1)
+    }
+    pub(crate) fn merge(&mut self, archetype: Archetype) {
+        for meta in archetype {
+            if self.iter().find(|x| *x == &meta).is_some() {
+                continue;
+            }
+            self.push(meta);
+        }
     }
 }

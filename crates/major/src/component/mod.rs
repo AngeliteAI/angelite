@@ -3,9 +3,9 @@ use std::{any::TypeId, ptr, sync::Arc};
 use derive_more::derive::{Deref, DerefMut};
 
 pub mod archetype;
+pub mod registry;
 pub mod source;
 pub mod table;
-pub mod world;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Deref, DerefMut, Hash)]
 pub struct Id(pub TypeId);

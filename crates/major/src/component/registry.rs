@@ -13,9 +13,9 @@ pub(crate) struct Shard {
     pub tables: HashMap<Archetype, Table>,
 }
 
-pub struct World(Shard);
+pub struct Registry(Shard);
 
-impl World {
+impl Registry {
     pub fn extend<Src: Source + 'static>(
         &mut self,
         src: impl IntoIterator<Item = Src>,

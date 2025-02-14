@@ -11,3 +11,5 @@ repository = "https://github.com/blockglow/blockglow"
 [dependencies]
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
 fast = { version = "0.1.3", path = "../fast" }
+typeid = "1.0.2"
+major-macro = { path = "../major-macro"}
