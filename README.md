@@ -1,16 +1,17 @@
-# Blockglow Developer Platform
+# Angelite Developer Platform
 
 A suite of integrated development tools built for performance-critical engineering workflows.
 
 ## Core Products
 
-### Techkit
+### Prism
 
-High-performance development environment with real-time collaboration, hardware-accelerated code analysis, and native debugging support for distributed systems.
+Epic war simulator, play with or against friends.
 
 ### api.diy
 
-Declarative backend generation with automatic scaling, validation, and documentation. Deploy production-ready APIs in minutes.
+Declarative game BaaS with automatic scaling, validation, and documentation. Deploy production-ready APIs in minutes.
+spec includes an (eventual) high-performance development environment with real-time collaboration, hardware-accelerated code analysis, and native debugging support for distributed systems.
 
 ## Technical Overview
 
