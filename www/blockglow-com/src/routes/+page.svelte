@@ -16,91 +16,91 @@
     const phrases = [
         {
             prebold: "BUILD",
-            middle_little: "your",
+            middle: "your",
             postbold: "VISION",
             emoji: "🎯",
         },
         {
             prebold: "SHIP",
-            middle_little: "your",
+            middle: "your",
             postbold: "CODE",
             emoji: "⚡",
         },
         {
             prebold: "SCALE",
-            middle_little: "your",
+            middle: "your",
             postbold: "STACK",
             emoji: "🚀",
         },
         {
             prebold: "LAUNCH",
-            middle_little: "your",
+            middle: "your",
             postbold: "MVP",
             emoji: "🔮",
         },
         {
             prebold: "UNLOCK",
-            middle_little: "your",
+            middle: "your",
             postbold: "POTENTIAL",
             emoji: "🗝️",
         },
         {
             prebold: "POWER",
-            middle_little: "your",
+            middle: "your",
             postbold: "API",
             emoji: "⚙️",
         },
         {
             prebold: "SHAPE",
-            middle_little: "the",
+            middle: "the",
             postbold: "FUTURE",
             emoji: "🌟",
         },
         {
             prebold: "DEPLOY",
-            middle_little: "your",
+            middle: "your",
             postbold: "DREAM",
             emoji: "🛸",
         },
         {
             prebold: "REACH",
-            middle_little: "your",
+            middle: "your",
             postbold: "PEAK",
             emoji: "🏔️",
         },
         {
             prebold: "FIND",
-            middle_little: "your",
+            middle: "your",
             postbold: "FLOW",
             emoji: "💫",
         },
         {
             prebold: "START",
-            middle_little: "your",
+            middle: "your",
             postbold: "JOURNEY",
             emoji: "🧭",
         },
         {
             prebold: "CODE",
-            middle_little: "the",
+            middle: "the",
             postbold: "FUTURE",
             emoji: "💻",
         },
         {
             prebold: "REACH",
-            middle_little: "the",
+            middle: "the",
             postbold: "STARS",
             emoji: "✨",
         },
         {
             prebold: "PUSH",
-            middle_little: "the",
+            middle: "the",
             postbold: "LIMITS",
             emoji: "🔥",
         },
         {
             prebold: "LEAD",
-            middle_little: "the",
+            middle: "the",
             postbold: "CHANGE",
             emoji: "🌊",
         },
@@ -344,7 +344,7 @@
         prebold.className = "caps";
         rainbow.className = "rainbow caps";
         prebold.textContent = text.prebold;
-        middle.textContent = text.middle_little;
+        middle.textContent = text.middle;
         span.appendChild(prebold);
         span.appendChild(middle);
         span.appendChild(rainbow);
@@ -392,7 +392,7 @@
             const phrase = phrases[currentIndex];
             const parts = {
                 prebold: phrase.prebold,
-                middle: phrase.middle_little,
+                middle: phrase.middle,
                 postbold: phrase.postbold,
                 emoji: phrase.emoji,
             };

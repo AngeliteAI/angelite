@@ -2,7 +2,10 @@
 pub mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::editor_start;
-use major::world::World;
+use major::{
+    system::{func::Provider, sequence::Sequence},
+    world::World,
+};
 
 pub struct App {
     world: World,
@@ -10,6 +13,6 @@ pub struct App {
 
 impl App {
     fn schedule<S: Sequence<Marker>, Marker: Provider>(&mut self, sequence: S) {
-        sequence.transform(&mut self.graph);
+        sequence.transform(self.world.graph());
     }
 }
