@@ -1,7 +1,7 @@
 use std::iter;
 
+use base::collections::array::Array;
 use derive_more::derive::{Deref, DerefMut};
-use fast::collections::array::Array;
 
 use super::{Component, Meta};
 
@@ -11,7 +11,7 @@ pub struct Archetype(Array<Meta, { Self::MAX }>);
 impl IntoIterator for Archetype {
     type Item = Meta;
 
-    type IntoIter = fast::collections::array::IntoIter<Self::Item, 256>;
+    type IntoIter = base::collections::array::IntoIter<Self::Item, 256>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()

@@ -7,6 +7,15 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/fast/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/span/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/techkit/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/api-diy/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/api/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/base-macro/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/base/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ecs-macro/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/ecs/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/fleet/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/meshpipe/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/prism/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

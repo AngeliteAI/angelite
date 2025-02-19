@@ -5,28 +5,55 @@ use std::{
     collections::HashMap,
     iter,
     mem::{self, transmute},
+    ptr, slice,
+    sync::Arc,
 };
 
-use fast::collections::{array::Array, arrayvec::ArrayVec};
+use base::collections::{array::Array, arrayvec::ArrayVec};
 
 use crate::entity::Entity;
 
-use super::{Handle, Meta, archetype::Archetype};
-
-pub struct Metatable {
-    page_heads: ArrayVec<*mut u8, 64>,
-}
+use super::{Component, Handle, Meta, archetype::Archetype};
 
 pub struct Data {
     pub ptr: *mut [u8],
     pub meta: Meta,
 }
+impl Data {
+    pub fn copy_to(&mut self, src: *const u8, check: &Meta) {
+        let Self { ptr, meta } = self;
+        assert_eq!(meta, check);
+        unsafe { ptr::copy(src, *ptr as *mut _, meta.size) };
+    }
+    pub fn copy_from(&self, dst: *mut u8, check: &Meta) {
+        let Self { ptr, meta } = self;
+        assert_eq!(meta, check);
+        unsafe { ptr::copy(*ptr as *const _, dst, meta.size) }
+    }
+}
 
-type Components = Array<Handle<'static>, { Archetype::MAX }>;
+pub trait Erase {
+    fn erase(self: &mut Arc<Self>) -> Data;
+}
+
+impl<C: Component> Erase for C {
+    fn erase(self: &mut Arc<Self>) -> Data {
+        let ptr = ptr::slice_from_raw_parts_mut(
+            Arc::get_mut(self).unwrap() as *mut _ as *mut u8,
+            mem::size_of::<C>(),
+        );
+        Data {
+            ptr,
+            meta: Meta::of::<C>(),
+        }
+    }
+}
+
+pub type Components<'a> = Array<(Handle<'a>, Data), { Archetype::MAX }>;
 
 pub struct Table {
     archetype: Archetype,
-    pages: UnsafeCell<Vec<Page>>,
+    pub(crate) pages: UnsafeCell<Vec<Page>>,
 }
 
 pub struct Page {
@@ -70,7 +97,7 @@ impl Table {
 
     pub fn extend(
         &self,
-        mut data: impl Iterator<Item = Components>,
+        mut data: impl Iterator<Item = Components<'static>>,
     ) -> impl Iterator<Item = Entity> {
         let mut entities = vec![];
         loop {
@@ -86,7 +113,7 @@ impl Table {
 
     pub fn extend_next_page(
         &self,
-        data: &mut dyn Iterator<Item = Components>,
+        data: &mut dyn Iterator<Item = Components<'static>>,
     ) -> impl Iterator<Item = Entity> {
         let next_page = unsafe {
             let pages = self.pages.get().as_mut().unwrap();
@@ -166,6 +193,10 @@ impl Page {
         }
     }
 
+    pub fn head(&self) -> *mut u8 {
+        self.head
+    }
+
     pub fn capacity(archetype: &Archetype) -> usize {
         let row = archetype.size();
         Self::AVAIL.div_floor(row)
@@ -190,11 +221,13 @@ impl Page {
         Entity::new(ptr)
     }
 
-    pub fn insert(&self, components: Array<Handle<'static>, { Archetype::MAX }>) -> Option<Entity> {
+    pub fn insert(&self, components: Components) -> Option<Entity> {
         let entity = self.state().freed.pop()?;
         let archetype = self.archetype();
-        for (i, (component, meta)) in components.into_iter().zip(archetype.iter()).enumerate() {
-            component.write_to(self.row_column(&entity, i), meta);
+        for (i, ((_handle, mut erased), meta)) in
+            components.into_iter().zip(archetype.iter()).enumerate()
+        {
+            erased.copy_to(self.row_column(&entity, i), meta);
         }
         Some(entity)
     }
@@ -213,8 +246,11 @@ impl Page {
             let Some(erased) = &mut self.state().erased[idx] else {
                 unreachable!();
             };
-
-            erased[i].coalese(self.row_column(entity, i), meta);
+            let data = Data {
+                ptr: ptr::slice_from_raw_parts_mut(self.row_column(entity, i), meta.size),
+                meta: *meta,
+            };
+            data.copy_from(erased[i].as_mut_ptr(), meta);
         }
     }
 

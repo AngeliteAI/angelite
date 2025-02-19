@@ -1,5 +1,5 @@
 [package]
-name = "major-macro"
+name = "ecs-macro"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,3 +11,4 @@ itertools = "0.14.0"
 quote = "1.0.38"
 syn = { version = "2.0.96", features = ["full"] }
 proc-macro2 = "1.0.38"
+paste = "*"

@@ -1,7 +1,8 @@
 [package]
-name = "backstart"
+name = "api"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-major = { path = "../major" }
+base = {path = "../base"}
+ecs = { path = "../ecs" }

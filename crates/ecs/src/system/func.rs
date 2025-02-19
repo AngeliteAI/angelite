@@ -6,15 +6,18 @@ use std::{
     sync::Arc,
 };
 
+use base::{
+    rt::{UnsafeLocal, block_on, spawn, spawn_blocking, worker::Register},
+    sync::{barrier::Barrier, channel::Channel, oneshot::Oneshot},
+};
 use derive_more::derive::{Deref, DerefMut};
-use fast::{
-    rt::{UnsafeLocal, block_on, spawn, spawn_blocking},
-    sync::{barrier::Barrier, channel::Channel},
+
+use crate::{
+    component::{registry::Registry, table::Metatable},
+    world::World,
 };
 
-use crate::{component::table::Metatable, query::Params, world::World};
-
-use super::System;
+use super::{System, param::Params};
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Deref, DerefMut)]
 pub struct Id(pub TypeId);
@@ -82,18 +85,15 @@ impl<Fut: Future> Provider for Concurrent<Fut> {
 }
 
 type Erased = u8;
-type PtrChannel = Channel<UnsafeLocal<*mut Erased>, 1>;
 
 pub struct Get<T: Params> {
-    wait: Arc<Barrier>,
-    get: PtrChannel,
+    get: Oneshot<Metatable>,
     marker: PhantomData<T>,
 }
 
 impl<T: Params> Clone for Get<T> {
     fn clone(&self) -> Self {
         Self {
-            wait: self.wait.clone(),
             get: self.get.clone(),
             marker: PhantomData,
         }
@@ -107,12 +107,7 @@ impl<T: Params> AsyncFnOnce<()> for Get<T> {
 
     extern "rust-call" fn async_call_once(self, args: ()) -> Self::CallOnceFuture {
         Getter {
-            fut: Box::pin(async move {
-                self.wait.wait().await;
-                let ptr = self.get.recv().await;
-                //TODO is this a reference or read
-                unsafe { ptr.unwrap().cast::<T>().read() }
-            }),
+            fut: Box::pin(async move { T::create(self.get.recv().await) }),
         }
     }
 }
@@ -135,9 +130,14 @@ impl<T: Params> Future for Getter<T> {
 }
 
 pub struct Put {
-    wait: Arc<Barrier>,
-    binding: Arc<dyn Fn(&mut World) -> Metatable>,
-    put: PtrChannel,
+    binding: Arc<dyn Fn(&mut Registry) -> Metatable>,
+    put: Oneshot<Metatable>,
+}
+impl Put {
+    pub(crate) fn prepare(&self, registry: &mut Registry) {
+        let binding = (self.binding)(registry);
+        self.put.clone().send(binding);
+    }
 }
 
 pub trait Wrap<Input, Marker: Provider>: Func<Input, Marker> {
@@ -179,23 +179,17 @@ where
         (system, put)
     }
 }
-major_macro::func!();
+ecs_macro::func!();
 
 fn bind<T: Params>() -> (Get<T>, Put) {
-    let barrier = Arc::new(Barrier::new(2));
-    let get = PtrChannel::default();
+    let get = Oneshot::default();
     let put = get.clone();
     let binding = Arc::new(T::bind);
     (
         Get {
-            wait: barrier.clone(),
             get,
             marker: PhantomData,
         },
-        Put {
-            wait: barrier,
-            binding,
-            put,
-        },
+        Put { binding, put },
     )
 }

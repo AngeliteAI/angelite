@@ -1,0 +1,19 @@
+@import "tailwindcss";
+@import "tailwindcss/preflight";
+@tailwind utilities;
+
+@font-face {
+    src: url("/justsans.ttf");
+    font-family: "justsans";
+}
+
+:global(*) {
+    font-family: "justsans";
+}
+
+@theme {
+    --color-*: initial;
+    --color-space: #0e0e0f;
+    --color-day: #ffffff;
+    --color-angelite: #0066cc;
+}

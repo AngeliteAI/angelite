@@ -1,18 +1,61 @@
 use std::{collections::HashMap, iter};
 
-use fast::collections::arrayvec::ArrayVec;
+use base::collections::arrayvec::ArrayVec;
 
 use crate::entity::Entity;
 
-use super::{archetype::Archetype, source::Source, table::Table};
+use super::{archetype::Archetype, meta::Metatable, source::Source, table::Table};
 
 pub const STACK: usize = 1024;
 pub type Entities = ArrayVec<Entity, STACK>;
 
-pub(crate) struct Shard {
-    pub tables: HashMap<Archetype, Table>,
+pub(crate) enum Shard {
+    Map { tables: HashMap<Archetype, Table> },
+    Linear { tables: Vec<(Archetype, Table)> },
 }
 
+impl Shard {
+    pub(crate) fn table_map(&self) -> Option<&HashMap<Archetype, Table>> {
+        match self {
+            Shard::Map { tables } => Some(tables),
+            Shard::Linear { .. } => {
+                panic!("not a table map")
+            }
+        }
+    }
+
+    pub(crate) fn table_slice(&self) -> Option<&[(Archetype, Table)]> {
+        match self {
+            Shard::Map { tables } => panic!("not a table slice"),
+            Shard::Linear { tables } => Some(tables),
+        }
+    }
+    pub(crate) fn table_map_mut(&mut self) -> Option<&mut HashMap<Archetype, Table>> {
+        match self {
+            Shard::Map { tables } => Some(tables),
+            Shard::Linear { .. } => {
+                panic!("not a table map")
+            }
+        }
+    }
+
+    pub(crate) fn table_slice_mut(&mut self) -> Option<&mut [(Archetype, Table)]> {
+        match self {
+            Shard::Map { tables } => panic!("not a table slice"),
+            Shard::Linear { tables } => Some(tables),
+        }
+    }
+}
+
+impl Default for Shard {
+    fn default() -> Self {
+        Self::Map {
+            tables: Default::default(),
+        }
+    }
+}
+
+#[derive(Default)]
 pub struct Registry(Shard);
 
 impl Registry {
@@ -28,7 +71,8 @@ impl Registry {
         let archetype = unsafe { first.archetype() };
         let components = unsafe { first.erase_component_data() };
         let table = shard
-            .tables
+            .table_map_mut()
+            .expect("main shard should be a table map")
             .entry(archetype.clone())
             .or_insert_with(|| Table::with_archetype(archetype));
         let src =
@@ -45,8 +89,27 @@ impl Registry {
             .for_each(|x| buckets.entry(x.archetype().clone()).or_default().push(x));
 
         for (archetype, buckets) in buckets {
-            let table = shard.tables.get_mut(&archetype).unwrap();
+            let table = shard
+                .table_map_mut()
+                .expect("main shard should be a table map")
+                .get_mut(&archetype)
+                .unwrap();
             table.free(buckets);
         }
+    }
+    pub(crate) fn metatable(&mut self, archetype: Archetype) -> Metatable {
+        let mut metatable = Metatable::init(archetype);
+
+        if let Some(tables) = self.0.table_map() {
+            for (table_arch, table) in tables {
+                if table_arch >= &archetype {
+                    for page in unsafe { &*table.pages.get() } {
+                        metatable.pages.push(page.head());
+                    }
+                }
+            }
+        }
+
+        metatable
     }
 }

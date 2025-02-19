@@ -1,5 +1,5 @@
 [package]
-name = "span"
+name = "fleet"
 version = "0.1.2"
 edition = "2024"
 license-file = "./LICENSE"
@@ -9,4 +9,4 @@ repository = "https://github.com/blockglow/blockglow"
 
 [dependencies]
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
-fast = { version = "0.1.1", path = "../fast" }
+base = { path = "../base" }

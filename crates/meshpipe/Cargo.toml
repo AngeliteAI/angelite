@@ -1,5 +1,5 @@
 [package]
-name = "editor"
+name = "meshpipe"
 version = "1.0.1"
 edition = "2024"
 license-file = "../../LICENSE"
@@ -9,4 +9,4 @@ repository = "https://github.com/blockglow/techkit"
 readme = "../../README.md"
 
 [dependencies]
-major = { version = "0.0.0", path = "../major" }
+ecs = { version = "0.0.0", path = "../ecs" }

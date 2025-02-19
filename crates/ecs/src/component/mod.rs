@@ -1,9 +1,11 @@
-use std::{any::TypeId, ptr, sync::Arc};
+use std::{any::TypeId, mem, ptr, sync::Arc};
 
 use derive_more::derive::{Deref, DerefMut};
 
 pub mod archetype;
+pub mod meta;
 pub mod registry;
+pub mod sink;
 pub mod source;
 pub mod table;
 
@@ -16,21 +18,30 @@ pub struct Meta {
     pub size: usize,
 }
 
+impl Meta {
+    pub fn of<T: Component>() -> Self {
+        Self {
+            id: Id(typeid::of::<T>()),
+            size: mem::size_of::<T>(),
+        }
+    }
+}
+
 pub trait Component {
     fn meta() -> Meta
     where
         Self: Sized;
 }
 
-pub struct Handle<'a>(Arc<dyn Component + 'a>);
+pub use ecs_macro::Component;
 
-impl<'a> Handle<'a> {
-    pub fn coalese(&mut self, src: *const u8, meta: &Meta) {
-        let Self(this) = self;
-        unsafe { ptr::copy(src, Arc::as_ptr(this) as *mut _, meta.size) };
-    }
-    pub fn write_to(&self, dst: *mut u8, meta: &Meta) {
-        let Self(this) = self;
-        unsafe { ptr::copy(Arc::as_ptr(this) as *const u8, dst, meta.size) }
+pub struct Handle<'a>(Arc<dyn Component + 'a>);
+impl Handle<'_> {
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        //SAFETY: Arc only has one strong reference to the component
+        //Well here technically two but were just hacking it to get the raw pointer
+        let ptr = Arc::into_raw(self.0.clone()) as *mut _;
+        unsafe { Arc::from_raw(ptr) };
+        ptr
     }
 }

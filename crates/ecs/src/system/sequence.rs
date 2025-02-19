@@ -1,12 +1,11 @@
 use std::{iter, marker::PhantomData};
 
-use fast::collections::arrayvec::ArrayVec;
-
-use crate::query::Params;
+use base::collections::arrayvec::ArrayVec;
 
 use super::{
     func::{Blocking, Concurrent, Func, Id, Outcome, Provider},
     graph::{Graph, Require},
+    param::Params,
 };
 
 pub trait Sequence<Marker: Provider> {

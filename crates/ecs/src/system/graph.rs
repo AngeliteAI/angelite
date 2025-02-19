@@ -9,11 +9,14 @@ use super::{
 };
 
 pub struct Node {
-    pub(super) system: System,
-    pub(super) put: Put,
+    pub(crate) system: System,
+    pub(crate) put: Put,
     name: String,
     id: Id,
 }
+
+unsafe impl Send for Node {}
+unsafe impl Sync for Node {}
 
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -28,8 +31,8 @@ pub enum Require {
 
 #[derive(Default, Debug)]
 pub struct Graph {
-    nodes: HashMap<Id, Node>,
-    requirements: HashSet<Require>,
+    pub(crate) nodes: HashMap<Id, Node>,
+    pub(crate) requirements: HashSet<Require>,
 }
 
 impl Graph {

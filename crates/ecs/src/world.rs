@@ -1,21 +1,30 @@
 use crate::{
     component::{
         archetype::{self, Archetype},
+        registry::Registry,
+        source::Source,
         table::Metatable,
     },
-    system::graph::Graph,
+    system::{
+        func::{Provider, Wrap},
+        graph::Graph,
+        sequence::Sequence,
+    },
 };
 
+#[derive(Default)]
 pub struct World {
-    graph: Graph,
+    pub(crate) registry: Registry,
 }
 
 impl World {
-    pub fn graph(&mut self) -> &mut Graph {
-        &mut self.graph
+    pub fn new() -> Self {
+        Self {
+            registry: Registry::default(),
+        }
     }
 
-    pub fn supertype(&mut self, archetype: Archetype) -> Metatable {
-        todo!()
+    pub fn extend(&mut self, src: impl IntoIterator<Item = impl Source>) {
+        self.registry.extend(src);
     }
 }

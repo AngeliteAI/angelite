@@ -1,32 +1,27 @@
-use std::{marker::PhantomData, ops::AddAssign};
-
-use fast::{
+use crate::component::sink::Sink;
+use base::{
     collections::{array::Array, arrayvec::ArrayVec},
     prelude::{Pattern, Vector, X, Y, Z},
 };
+use std::{marker::PhantomData, ops::AddAssign};
 
 use crate::{
     component::{archetype::Archetype, registry::Shard},
     world::World,
 };
 
-pub trait Query {
+pub trait Query: Sized {
     type Ref;
     type Mut;
 
     fn archetype() -> Archetype;
-
-    fn query<'a>(world: &'a mut World) -> Fetch<Self>
-    where
-        Self: Sized,
-    {
-        todo!()
-    }
-
     fn offsets() -> Array<usize, { Archetype::MAX }>;
-    fn deduce(state: &mut State) -> Option<Self::Ref>;
-    fn deduce_mut(state: &mut State) -> Option<Self::Mut>;
+    fn deduce(state: &mut State, fetcher: &Fetch<Self>) -> Option<Self::Ref>;
+    fn deduce_mut(state: &mut State, fetcher: &mut Fetch<Self>) -> Option<Self::Mut>;
 }
+
+use paste::paste;
+ecs_macro::query!();
 
 pub struct Fetch<Q: Query> {
     shard: Shard,
@@ -35,48 +30,26 @@ pub struct Fetch<Q: Query> {
 
 unsafe impl<Q: Query> Send for Fetch<Q> {}
 
-impl<'a, Q: Query> IntoIterator for &'a Fetch<Q> {
-    type Item = Q::Ref;
-    type IntoIter = Scan<Self>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        todo!()
-    }
-}
-
-impl<'a, Q: Query> IntoIterator for &'a mut Fetch<Q> {
-    type Item = Q::Mut;
-    type IntoIter = Scan<Self>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        todo!()
-    }
-}
-
 #[derive(Default)]
 pub struct Cursor {
-    route: Vector<3, usize>,
-    max: Vector<3, usize>,
+    route: Vector<2, usize>,
+    max: Vector<2, usize>,
 }
 
 impl Cursor {
-    fn shard(&self) -> usize {
+    fn table(&self) -> usize {
         let [x] = **self.route.shuffle::<X, 1>();
         x
     }
-    fn table(&self) -> usize {
+    fn row(&self) -> usize {
         let [y] = **self.route.shuffle::<Y, 1>();
         y
-    }
-    fn row(&self) -> usize {
-        let [z] = **self.route.shuffle::<Z, 1>();
-        z
     }
 }
 
 impl AddAssign<usize> for Cursor {
     fn add_assign(&mut self, rhs: usize) {
-        self.route += Vector::<3, usize>::X * rhs;
+        self.route += Vector::<2, usize>::X * rhs;
         for i in 0..2 {
             while self.route[i] > self.max[i] {
                 self.route[i] -= self.max[i];
@@ -93,16 +66,14 @@ impl Cursor {
 }
 
 pub struct State {
-    shard: Shard,
     offsets: Array<usize, 256>,
     supertype: Archetype,
     cursor: Cursor,
 }
 
 impl State {
-    fn init<Q: Query>(shard: Shard) -> State {
+    fn init<Q: Query>() -> State {
         Self {
-            shard,
             offsets: Q::offsets(),
             supertype: Q::archetype(),
             cursor: Cursor::default(),
@@ -111,8 +82,25 @@ impl State {
 }
 
 pub struct Scan<F> {
-    fetcher: PhantomData<F>,
+    fetcher: F,
     state: State,
+}
+
+impl<'a, Q: Query> Scan<&'a Fetch<Q>> {
+    pub fn new(fetcher: &'a Fetch<Q>) -> Self {
+        Scan {
+            fetcher,
+            state: State::init::<Q>(),
+        }
+    }
+}
+impl<'a, Q: Query> Scan<&'a mut Fetch<Q>> {
+    pub fn new_mut(fetcher: &'a mut Fetch<Q>) -> Self {
+        Scan {
+            fetcher,
+            state: State::init::<Q>(),
+        }
+    }
 }
 
 impl<'a, Q: Query> Iterator for Scan<&'a Fetch<Q>> {
@@ -123,7 +111,7 @@ impl<'a, Q: Query> Iterator for Scan<&'a Fetch<Q>> {
             return None;
         }
 
-        let ret = Q::deduce(&mut self.state);
+        let ret = Q::deduce(&mut self.state, self.fetcher);
 
         self.state.cursor += 1;
 
@@ -139,7 +127,7 @@ impl<'a, Q: Query> Iterator for Scan<&'a mut Fetch<Q>> {
             return None;
         }
 
-        let ret = Q::deduce_mut(&mut self.state);
+        let ret = Q::deduce_mut(&mut self.state, self.fetcher);
 
         self.state.cursor += 1;
 

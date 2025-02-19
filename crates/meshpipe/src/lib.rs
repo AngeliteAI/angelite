@@ -1,18 +1,16 @@
 #[cfg(target_os = "macos")]
 pub mod macos;
-#[cfg(target_os = "macos")]
-pub use macos::editor_start;
-use major::{
+use ecs::{
     system::{func::Provider, sequence::Sequence},
     world::World,
 };
+#[cfg(target_os = "macos")]
+pub use macos::editor_start;
 
 pub struct App {
     world: World,
 }
 
 impl App {
-    fn schedule<S: Sequence<Marker>, Marker: Provider>(&mut self, sequence: S) {
-        sequence.transform(self.world.graph());
-    }
+    fn schedule<S: Sequence<Marker>, Marker: Provider>(&mut self, sequence: S) {}
 }

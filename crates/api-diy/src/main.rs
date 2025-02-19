@@ -1,3 +1,4 @@
-fn main() {
-    println!("Hello, world!");
+#[base::main]
+async fn main() {
+    api::start().await;
 }

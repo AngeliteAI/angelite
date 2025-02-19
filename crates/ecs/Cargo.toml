@@ -1,5 +1,5 @@
 [package]
-name = "major"
+name = "ecs"
 version = "0.0.0"
 edition = "2024"
 license-file = "./LICENSE"
@@ -10,6 +10,7 @@ repository = "https://github.com/blockglow/blockglow"
 
 [dependencies]
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
-fast = { version = "0.1.3", path = "../fast" }
+base = { path = "../base" }
 typeid = "1.0.2"
-major-macro = { path = "../major-macro"}
+ecs-macro = { path = "../ecs-macro"}
+paste = "*"
