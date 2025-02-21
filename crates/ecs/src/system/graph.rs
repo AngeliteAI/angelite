@@ -2,7 +2,8 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
 };
-
+use flume::Receiver;
+use crate::system::func::Cmd;
 use super::{
     System,
     func::{Id, Provider, Put, Wrap},
@@ -13,6 +14,7 @@ pub struct Node {
     pub(crate) put: Put,
     name: String,
     id: Id,
+    pub(crate) rx: Receiver<Cmd>
 }
 
 unsafe impl Send for Node {}
@@ -39,12 +41,13 @@ impl Graph {
     pub(crate) fn register<Input, T: Provider>(&mut self, subject: impl Wrap<Input, T>) {
         let id = subject.id();
         let name = subject.name().to_string();
-        let (system, put) = subject.wrap();
+        let (system, rx, put) = subject.wrap();
         let node = Node {
             name,
             id,
             system,
             put,
+            rx
         };
         self.nodes.insert(id, node);
     }

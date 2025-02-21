@@ -38,7 +38,7 @@ impl Schedule {
             }
 
             // Prepare and launch tasks
-            let mut join = UnorderedJoin::<_, 128>::new();
+            let mut join = UnorderedJoin::<_>::new();
 
             for (node_id, mut node) in batch {
                 // Prepare node input data
@@ -47,7 +47,7 @@ impl Schedule {
                 // Create system task
                 join.push(async move {
                     // Execute system
-                    (node.system)().await;
+                    (node.system)(node.rx.clone()).await;
                     (node_id, node)
                 });
             }

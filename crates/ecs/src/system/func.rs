@@ -12,7 +12,7 @@ use base::{
 };
 use derive_more::derive::{Deref, DerefMut};
 use ecs_macro::func;
-use flume::{Receiver, Sender, unbounded};
+use flume::{Receiver, Sender, unbounded, bounded};
 use std::mem::offset_of;
 use std::{
     any::{TypeId, type_name},
@@ -160,17 +160,16 @@ impl Put {
 }
 
 pub trait Wrap<Input, Marker: Provider>: Func<Input, Marker> {
-    fn wrap(self) -> (System, Put);
+    fn wrap(self) -> (System, Receiver<Cmd>, Put);
 }
 
 impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
     Wrap<Input, Blocking<Output>> for F
 {
-    fn wrap(mut self) -> (System, Put) {
-        let (put, get) = unbounded();
+    fn wrap(mut self) -> (System, Receiver<Cmd>, Put) {
+        let (tx, rx) =bounded(1024);
         let binding = Arc::new(Input::bind);
-        let system = Box::pin(move || {
-            let get = get.clone();
+        let system = Box::pin(move |get: Receiver<Cmd>| {
             let this = self.clone();
             let system = block_on(spawn_blocking(move || {
                 block_on(async move {
@@ -190,7 +189,7 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
             }));
             system
         });
-        (system, Put { binding, put })
+        (system, rx, Put { binding, put: tx})
     }
 }
 
@@ -199,12 +198,11 @@ impl<F, Fut: Future<Output = R> + Send, R: Outcome + Send, Input: Params>
 where
     F: Func<Input, Concurrent<Fut>> + Clone,
 {
-    fn wrap(mut self) -> (System, Put) {
-        let (put, get) = unbounded();
+    fn wrap(mut self) -> (System, Receiver<Cmd>, Put) {
+        let (tx, rx) = unbounded();
         let binding = Arc::new(Input::bind);
 
-        let system = Box::pin(move || {
-            let get = get.clone();
+        let system = Box::pin(move |get: Receiver<Cmd>| {
             let this = self.clone();
             let system = block_on(spawn(async move {
                 Ok(this
@@ -221,7 +219,7 @@ where
             }));
             system
         });
-        (system, Put { binding, put })
+        (system, rx, Put { binding, put: tx })
     }
 }
 ecs_macro::func!();
