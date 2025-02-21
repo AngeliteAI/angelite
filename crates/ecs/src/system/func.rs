@@ -7,7 +7,7 @@ use crate::{
     world::World,
 };
 use base::{
-    rt::{UnsafeLocal, block_on, spawn, spawn_blocking, worker::Register},
+    rt::{UnsafeLocal, block_on, spawn, spawn_blocking, worker::Register, yield_now},
     sync::{barrier::Barrier, oneshot::Oneshot},
 };
 use derive_more::derive::{Deref, DerefMut};
@@ -112,30 +112,17 @@ impl<T: Params> AsyncFnOnce<()> for Get<T> {
     type Output = Result<T, Finished>;
 
     extern "rust-call" fn async_call_once(self, args: ()) -> Self::CallOnceFuture {
-        self.async_call(args)
-    }
-}
-
-impl<T: Params> AsyncFnMut<()> for Get<T> {
-    type CallRefFuture<'a>
-    where
-        Self: 'a,
-    = Getter<T>;
-
-    extern "rust-call" fn async_call_mut(&mut self, args: ()) -> Self::CallRefFuture<'_> {
-        self.async_call(args)
-    }
-}
-
-impl<T: Params> AsyncFn<()> for Get<T> {
-    extern "rust-call" fn async_call(&self, args: ()) -> Self::CallOnceFuture {
-        let get = self.get.clone();
         Getter {
             fut: Box::pin(async move {
-                match get.try_recv() {
-                    Ok(Cmd::Execute(supertype, table)) => Ok(T::create(supertype, table)),
-                    Ok(Cmd::Complete) => Err(Finished),
-                    Err(_) => panic!("failure to retrieve system param information"),
+                loop {
+                    match self.get.try_recv() {
+                        Ok(Cmd::Execute(supertype, table)) => {
+                            return Ok(T::create(supertype, table));
+                        }
+                        Ok(Cmd::Complete) => return Err(Finished),
+                        Err(flume::TryRecvError::Empty) => yield_now().await,
+                        Err(_) => panic!("failure to retrieve system param information"),
+                    }
                 }
             }),
         }
@@ -194,7 +181,7 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
                                 get,
                                 marker: PhantomData,
                             })
-                            .async_call(())
+                            .async_call_once(())
                             .await?,
                         )
                         .await
