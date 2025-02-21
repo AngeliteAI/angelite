@@ -1,21 +1,20 @@
-use std::{
-    any::{TypeId, type_name},
-    fmt::{self, Formatter},
-    marker::PhantomData,
-    pin::{Pin, pin},
-    sync::Arc,
-};
-
-use base::{
-    rt::{UnsafeLocal, block_on, spawn, spawn_blocking, worker::Register},
-    sync::{barrier::Barrier, channel::Channel, oneshot::Oneshot},
-};
-use derive_more::derive::{Deref, DerefMut};
-
 use crate::{
-    component::{registry::Registry, table::Metatable},
+    component::{
+        archetype::Archetype,
+        registry::{Registry, Shard},
+        table::Table,
+    },
     world::World,
 };
+use base::{
+    rt::{UnsafeLocal, block_on, spawn, spawn_blocking, worker::Register},
+    sync::{barrier::Barrier, oneshot::Oneshot},
+};
+use derive_more::derive::{Deref, DerefMut};
+use ecs_macro::func;
+use flume::{Receiver, Sender, unbounded};
+use std::mem::offset_of;
+use std::{any::{TypeId, type_name}, clone, fmt::{self, Formatter}, marker::PhantomData, pin::{Pin, pin}, sync::Arc};
 
 use super::{System, param::Params};
 
@@ -86,8 +85,15 @@ impl<Fut: Future> Provider for Concurrent<Fut> {
 
 type Erased = u8;
 
+pub enum Cmd {
+    Execute(Archetype, Table),
+    Complete,
+}
+
+unsafe impl Send for Cmd {}
+
 pub struct Get<T: Params> {
-    get: Oneshot<Metatable>,
+    get: Arc<Receiver<Cmd>>,
     marker: PhantomData<T>,
 }
 
@@ -100,24 +106,50 @@ impl<T: Params> Clone for Get<T> {
     }
 }
 
+pub struct Finished;
+
 impl<T: Params> AsyncFnOnce<()> for Get<T> {
     type CallOnceFuture = Getter<T>;
 
-    type Output = T;
+    type Output = Result<T, Finished>;
 
     extern "rust-call" fn async_call_once(self, args: ()) -> Self::CallOnceFuture {
+        self.async_call(args)
+    }
+}
+
+impl<T: Params> AsyncFnMut<()> for Get<T> {
+    type CallRefFuture<'a>
+    where
+        Self: 'a,
+    = Getter<T>;
+
+    extern "rust-call" fn async_call_mut(&mut self, args: ()) -> Self::CallRefFuture<'_> {
+        self.async_call(args)
+    }
+}
+
+impl<T: Params> AsyncFn<()> for Get<T> {
+    extern "rust-call" fn async_call(&self, args: ()) -> Self::CallOnceFuture {
+        let get = self.get.clone();
         Getter {
-            fut: Box::pin(async move { T::create(self.get.recv().await) }),
+            fut: Box::pin(async move {
+                match get.try_recv() {
+                    Ok(Cmd::Execute(supertype, table)) => Ok(T::create(supertype, table)),
+                    Ok(Cmd::Complete) => Err(Finished),
+                    Err(_) => panic!("failure to retrieve system param information"),
+                }
+            }),
         }
     }
 }
 
 pub struct Getter<T: Params> {
-    fut: Pin<Box<dyn Future<Output = T> + Send>>,
+    fut: Pin<Box<dyn Future<Output = Result<T, Finished>> + Send>>,
 }
 
 impl<T: Params> Future for Getter<T> {
-    type Output = T;
+    type Output = Result<T, Finished>;
 
     fn poll(
         mut self: Pin<&mut Self>,
@@ -130,13 +162,16 @@ impl<T: Params> Future for Getter<T> {
 }
 
 pub struct Put {
-    binding: Arc<dyn Fn(&mut Registry) -> Metatable>,
-    put: Oneshot<Metatable>,
+    binding: Arc<dyn Fn(&mut Registry) -> Shard>,
+    put: Sender<Cmd>,
+    hold: Arc<Receiver<Cmd>>,
 }
 impl Put {
     pub(crate) fn prepare(&self, registry: &mut Registry) {
-        let binding = (self.binding)(registry);
-        self.put.clone().send(binding);
+        let mut binding = (self.binding)(registry);
+        for (supertype, table) in binding.table_vec().unwrap().drain(..) {
+            self.put.clone().try_send(Cmd::Execute(supertype, table));
+        }
     }
 }
 
@@ -148,12 +183,20 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
     Wrap<Input, Blocking<Output>> for F
 {
     fn wrap(mut self) -> (System, Put) {
-        let (get, put) = bind();
+        let (get, put) = bind::<Input>();
+        let pkg = (self, get);
         let system = Box::pin(move || {
-            let get = get.clone();
-            let func = self.clone();
+            let pkg = pkg.clone();
             let system = block_on(spawn_blocking(move || {
-                block_on(async move { func.derive().execute((get)().await).await.to_return() })
+                let pkg = pkg.clone();
+                block_on(async move {
+                    let (func, get) = pkg.clone();
+                    Ok(func
+                        .derive()
+                        .execute(get.async_call(()).await?)
+                        .await
+                        .to_return())
+                })
             }));
             system
         });
@@ -172,7 +215,7 @@ where
             let get = get.clone();
             let this = self.clone();
             let system = block_on(spawn(async move {
-                this.derive().execute((get)().await).await.to_return()
+                Ok(this.derive().execute((get)().await?).await.to_return())
             }));
             system
         });
@@ -182,14 +225,15 @@ where
 ecs_macro::func!();
 
 fn bind<T: Params>() -> (Get<T>, Put) {
-    let get = Oneshot::default();
-    let put = get.clone();
+    let (put, get) = unbounded();
+    let get = Arc::from(get);
+    let hold = get.clone();
     let binding = Arc::new(T::bind);
     (
         Get {
-            get,
+            get: get,
             marker: PhantomData,
         },
-        Put { binding, put },
+        Put { binding, put, hold },
     )
 }

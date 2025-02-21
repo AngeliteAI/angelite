@@ -82,6 +82,7 @@ pub struct Complete(Success);
 pub struct Failure(Error);
 
 fn sysa(deez: Query<(&Pending)>) {
+    println!("yodeez2");
     for i in &deez {
         println!("{i:?}");
     }
@@ -93,5 +94,5 @@ pub async fn start() {
     world.extend((0..1000).map(|x| ((3 * x + 17) / 4 + 10)).map(Pending));
     dbg!("yo hoe");
     let mut schedule = Schedule::default().schedule(sysa);
-    schedule.run(&mut world).await.await;
+    schedule.run(&mut world).await;
 }

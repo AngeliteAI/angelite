@@ -1,36 +1,36 @@
 use crate::component::{
-    archetype::Archetype, meta::Metashard, registry::Registry, table::Metatable,
+    archetype::Archetype,
+    registry::{Registry, Shard},
+    table::Table,
 };
 
 use super::func::Outcome;
 
 pub trait Param: Send {
     fn inject(archetype: &mut Archetype);
+    fn create(archetype: Archetype, table: &mut Table) -> Self
+    where
+        Self: Sized;
 }
 
 pub trait Params: Send + 'static {
-    fn bind(registry: &mut Registry) -> Metashard;
-    fn create(meta: Metashard) -> Self
+    fn bind(registry: &mut Registry) -> Shard;
+    fn create(archetype: Archetype, table: Table) -> Self
     where
         Self: Sized;
 }
 use base::array;
 ecs_macro::params!();
 
-impl Param for i32 {
-    fn inject(archetype: &mut Archetype) {
-        todo!()
-    }
-}
-
 impl Param for () {
     fn inject(archetype: &mut Archetype) {
         todo!()
     }
-}
 
-impl Param for (i32,) {
-    fn inject(archetype: &mut Archetype) {
+    fn create(archetype: Archetype, table: &mut Table) -> Self
+    where
+        Self: Sized,
+    {
         todo!()
     }
 }

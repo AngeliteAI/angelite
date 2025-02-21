@@ -48,12 +48,14 @@ fn params_arity(arity: usize) -> proc_macro2::TokenStream {
 
     quote! {
         impl<#(#input_types: Param + 'static),*> Params for #input_tuple {
-            fn bind(registry: &mut Registry) -> Metashard {
-                Metashard { tables: array![#({
+
+            fn bind(registry: &mut Registry) -> Shard {
                     let mut archetype = Archetype::default();
-                    #input_types::inject(&mut archetype);
-                    registry.metatable(archetype)
-                }),*] }
+                    #(#input_types::inject(&mut archetype);)*
+                    registry.shard(archetype)
+            }
+            fn create(archetype: Archetype, mut table: Table) -> Self where Self: Sized {
+                (#(#input_types::create(archetype.clone(), &mut table),)*)
             }
         }
     }
@@ -156,16 +158,11 @@ fn query_arity(arity: usize) -> proc_macro2::TokenStream {
                     None?
                 }
 
-                let shard = fetcher.shard.table_slice();
-
-                let table = state.cursor.table();
-                let (_, table) = &shard.unwrap()[table];
-
                 let row = state.cursor.row();
 
                 let mut index = 0;
                 Some((#(unsafe {
-                    let item = <#types as Sink>::coerce_component_data(table.entity(row), state.offsets[index], state.supertype[index]);
+                    let item = <#types as Sink>::coerce_component_data(fetcher.table.entity(row), state.offsets[index], state.supertype[index]);
                     index += 1;
                     item
                 },)*))
@@ -176,16 +173,11 @@ fn query_arity(arity: usize) -> proc_macro2::TokenStream {
                     None?
                 }
 
-                let shard = fetcher.shard.table_slice_mut();
-
-                let table = state.cursor.table();
-                let (_, table) = &mut shard.unwrap()[table];
-
                 let row = state.cursor.row();
 
                 let mut index = 0;
                 Some((#(unsafe {
-                    let item = <#types as Sink>::coerce_component_data_mut(table.entity(row), state.offsets[index], state.supertype[index]);
+                    let item = <#types as Sink>::coerce_component_data_mut(fetcher.table.entity(row), state.offsets[index], state.supertype[index]);
                     index += 1;
                     item
                 },)*))

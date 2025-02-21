@@ -3,7 +3,6 @@ use crate::{
         archetype::{self, Archetype},
         registry::Registry,
         source::Source,
-        table::Metatable,
     },
     system::{
         func::{Provider, Wrap},

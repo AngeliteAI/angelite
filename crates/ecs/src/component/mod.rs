@@ -3,7 +3,6 @@ use std::{any::TypeId, mem, ptr, sync::Arc};
 use derive_more::derive::{Deref, DerefMut};
 
 pub mod archetype;
-pub mod meta;
 pub mod registry;
 pub mod sink;
 pub mod source;
@@ -41,7 +40,6 @@ impl Handle<'_> {
         //SAFETY: Arc only has one strong reference to the component
         //Well here technically two but were just hacking it to get the raw pointer
         let ptr = Arc::into_raw(self.0.clone()) as *mut _;
-        unsafe { Arc::from_raw(ptr) };
         ptr
     }
 }

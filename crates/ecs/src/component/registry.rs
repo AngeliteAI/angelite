@@ -4,7 +4,7 @@ use base::collections::arrayvec::ArrayVec;
 
 use crate::entity::Entity;
 
-use super::{archetype::Archetype, meta::Metatable, source::Source, table::Table};
+use super::{archetype::Archetype, source::Source, table::Table};
 
 pub const STACK: usize = 1024;
 pub type Entities = ArrayVec<Entity, STACK>;
@@ -30,6 +30,14 @@ impl Shard {
             Shard::Linear { tables } => Some(tables),
         }
     }
+
+    pub(crate) fn table_vec(&mut self) -> Option<&mut Vec<(Archetype, Table)>> {
+        match self {
+            Shard::Map { tables } => panic!("not a table slice"),
+            Shard::Linear { tables } => Some(tables),
+        }
+    }
+
     pub(crate) fn table_map_mut(&mut self) -> Option<&mut HashMap<Archetype, Table>> {
         match self {
             Shard::Map { tables } => Some(tables),
@@ -97,19 +105,23 @@ impl Registry {
             table.free(buckets);
         }
     }
-    pub(crate) fn metatable(&mut self, archetype: Archetype) -> Metatable {
-        let mut metatable = Metatable::init(archetype);
+    pub(crate) fn shard(&mut self, archetype: Archetype) -> Shard {
+        let mut shard = Shard::Linear { tables: vec![] };
 
+        let mut table_take = vec![];
         if let Some(tables) = self.0.table_map() {
             for (table_arch, table) in tables {
                 if table_arch >= &archetype {
-                    for page in unsafe { &*table.pages.get() } {
-                        metatable.pages.push(page.head());
-                    }
+                    table_take.push(table_arch.clone());
                 }
             }
         }
 
-        metatable
+        for table_arch in table_take {
+            let table = self.0.table_map_mut().unwrap().remove(&table_arch).unwrap();
+            shard.table_vec().unwrap().push((table_arch, table));
+        }
+
+        shard
     }
 }

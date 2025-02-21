@@ -5,33 +5,40 @@ use crate::{
 use base::rt::UnsafeLocal;
 use fetch::{Fetch, Scan};
 
-use crate::{component::table::Metatable, world::World};
+use crate::world::World;
 
 pub mod fetch;
 
 //SAFETY: Query will only be used by one thread at a time, so its inner RefCell is safe.
-pub struct Query<Q: fetch::Query>(UnsafeLocal<Fetch<Q>>);
+pub struct Query<'a, Q: fetch::Query>(UnsafeLocal<Fetch<'a, Q>>);
 
-impl<'a, Q: fetch::Query> IntoIterator for &'a Query<Q> {
+impl<'a, Q: fetch::Query> IntoIterator for &'a Query<'a, Q> {
     type Item = Q::Ref;
-    type IntoIter = Scan<&'a Fetch<Q>>;
+    type IntoIter = Scan<&'a Fetch<'a, Q>>;
 
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter::new(&self.0)
     }
 }
-impl<'a, Q: fetch::Query> IntoIterator for &'a mut Query<Q> {
+impl<'a, Q: fetch::Query> IntoIterator for &'a mut Query<'a, Q> {
     type Item = Q::Mut;
-    type IntoIter = Scan<&'a mut Fetch<Q>>;
+    type IntoIter = Scan<&'a mut Fetch<'a, Q>>;
 
     fn into_iter(mut self) -> Self::IntoIter {
         Self::IntoIter::new_mut(&mut self.0)
     }
 }
 
-impl<Q: fetch::Query> Param for Query<Q> {
+impl<Q: fetch::Query> Param for Query<'_, Q> {
     fn inject(archetype: &mut Archetype) {
         archetype.merge(Q::archetype())
+    }
+
+    fn create(archetype: Archetype, table: &mut crate::component::table::Table) -> Self
+    where
+        Self: Sized,
+    {
+        todo!()
     }
 }
 

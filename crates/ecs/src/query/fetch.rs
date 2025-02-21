@@ -1,4 +1,4 @@
-use crate::component::sink::Sink;
+use crate::component::{sink::Sink, table::Table};
 use base::{
     collections::{array::Array, arrayvec::ArrayVec},
     prelude::{Pattern, Vector, X, Y, Z},
@@ -23,12 +23,13 @@ pub trait Query: Sized {
 use paste::paste;
 ecs_macro::query!();
 
-pub struct Fetch<Q: Query> {
-    shard: Shard,
+pub struct Fetch<'a, Q: Query> {
+    supertype: Archetype,
+    table: &'a mut Table,
     marker: PhantomData<Q>,
 }
 
-unsafe impl<Q: Query> Send for Fetch<Q> {}
+unsafe impl<Q: Query> Send for Fetch<'_, Q> {}
 
 #[derive(Default)]
 pub struct Cursor {
@@ -86,7 +87,7 @@ pub struct Scan<F> {
     state: State,
 }
 
-impl<'a, Q: Query> Scan<&'a Fetch<Q>> {
+impl<'a, Q: Query> Scan<&'a Fetch<'a, Q>> {
     pub fn new(fetcher: &'a Fetch<Q>) -> Self {
         Scan {
             fetcher,
@@ -94,8 +95,8 @@ impl<'a, Q: Query> Scan<&'a Fetch<Q>> {
         }
     }
 }
-impl<'a, Q: Query> Scan<&'a mut Fetch<Q>> {
-    pub fn new_mut(fetcher: &'a mut Fetch<Q>) -> Self {
+impl<'a, Q: Query> Scan<&'a mut Fetch<'a, Q>> {
+    pub fn new_mut(fetcher: &'a mut Fetch<'a, Q>) -> Self {
         Scan {
             fetcher,
             state: State::init::<Q>(),
@@ -103,7 +104,7 @@ impl<'a, Q: Query> Scan<&'a mut Fetch<Q>> {
     }
 }
 
-impl<'a, Q: Query> Iterator for Scan<&'a Fetch<Q>> {
+impl<'a, Q: Query> Iterator for Scan<&'a Fetch<'a, Q>> {
     type Item = Q::Ref;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -119,7 +120,7 @@ impl<'a, Q: Query> Iterator for Scan<&'a Fetch<Q>> {
     }
 }
 
-impl<'a, Q: Query> Iterator for Scan<&'a mut Fetch<Q>> {
+impl<'a, Q: Query> Iterator for Scan<&'a mut Fetch<'a, Q>> {
     type Item = Q::Mut;
 
     fn next(&mut self) -> Option<Self::Item> {

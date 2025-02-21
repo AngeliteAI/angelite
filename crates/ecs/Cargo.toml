@@ -14,3 +14,4 @@ base = { path = "../base" }
 typeid = "1.0.2"
 ecs-macro = { path = "../ecs-macro"}
 paste = "*"
+flume = "*"

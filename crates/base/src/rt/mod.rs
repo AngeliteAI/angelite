@@ -18,13 +18,15 @@ use std::{
 };
 
 use derive_more::derive::{Deref, DerefMut, From};
+use flume::{Receiver, r#async::RecvFut, unbounded};
 use pin_project::pin_project;
 use worker::{WorkerHandle, current_worker, select_worker};
 
+use crate::sync::backoff::Wait;
 use crate::{
     collections::queue::Queue,
     prelude::Vector,
-    sync::{barrier::Barrier, channel::Channel, split::Split},
+    sync::{barrier::Barrier, split::Split},
 };
 
 pub mod join;
@@ -487,29 +489,39 @@ pub struct UnsafeLocal<T>(T);
 unsafe impl<T> Send for UnsafeLocal<T> {}
 unsafe impl<T> Sync for UnsafeLocal<T> {}
 
-pub struct Handle<T>(Channel<UnsafeLocal<T>, 64>);
+pub struct Handle<T>(Receiver<UnsafeLocal<T>>);
 
-impl<T> Future for Handle<T> {
+#[pin_project]
+pub struct HandleRecv<T>(#[pin] flume::Receiver<UnsafeLocal<T>>);
+
+impl<T> Future for HandleRecv<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.0.poll_recv() {
-            Poll::Ready(Some(UnsafeLocal(value))) => Poll::Ready(value),
-            Poll::Ready(None) => unreachable!(),
-            Poll::Pending => Poll::Pending,
+        match self.project().0.try_recv() {
+            Ok(value) => Poll::Ready(value.0),
+            Err(flume::TryRecvError::Empty) => Poll::Pending,
+            Err(flume::TryRecvError::Disconnected) => panic!("Channel closed unexpectedly"),
         }
     }
 }
 
-pub const PIPELINE: usize = 8192;
+impl<T> IntoFuture for Handle<T> {
+    type Output = T;
+    type IntoFuture = HandleRecv<T>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        HandleRecv(self.0)
+    }
+}
 
 pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static + Clone, T: Send + 'static>(
     f: F,
 ) -> Handle<T> {
-    let channel = Channel::default();
-    let handle = Handle(channel.clone());
+    let (tx, rx) = unbounded();
+    let handle = Handle(rx.clone());
     let f = move || {
-        channel.send(UnsafeLocal((f)()));
+        tx.send(UnsafeLocal((f)()));
     };
     Remote::schedule(Task {
         key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
@@ -528,11 +540,11 @@ pub async fn spawn<
 >(
     fut: F,
 ) -> Handle<T> {
-    let channel = Channel::default();
-    let handle = Handle(channel.clone());
+    let (tx, rx) = unbounded();
+    let handle = Handle(rx.clone());
     let fut = fut.into_future();
     let fut = async move || {
-        channel.send(UnsafeLocal(fut.await));
+        tx.send(UnsafeLocal(fut.await));
     };
     Remote::schedule(Task {
         key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
@@ -551,11 +563,11 @@ pub async fn spawn_local<
 >(
     fut: F,
 ) -> Handle<T> {
-    let channel = Channel::default();
-    let handle = Handle(channel.clone());
+    let (tx, rx) = unbounded();
+    let handle = Handle(rx.clone());
     let fut = fut.into_future();
     let fut = async move || {
-        channel.send(UnsafeLocal(fut.await));
+        tx.send(UnsafeLocal(fut.await));
     };
     Local::schedule(Task {
         key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),

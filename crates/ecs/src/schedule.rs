@@ -47,7 +47,7 @@ impl Schedule {
                 // Create system task
                 join.push(async move {
                     // Execute system
-                    (node.system)();
+                    (node.system)().await;
                     (node_id, node)
                 });
             }
