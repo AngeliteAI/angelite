@@ -31,7 +31,7 @@ impl Schedule {
         while !nodes_ready.is_empty() {
             // Collect batch of ready nodes
             let mut batch = Array::<_, 128>::new();
-            while let Some(node_id) = nodes_ready.dequeue() {
+            while let Some(node_id) = nodes_ready.dequeue().await {
                 if let Some(node) = self.graph.nodes.remove(&node_id) {
                     batch.push((node_id, node));
                 }

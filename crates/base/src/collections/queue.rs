@@ -16,6 +16,14 @@ impl<T> Ordered<T> {
     }
 }
 
+impl<T> Eq for Ordered<T> {}
+
+impl<T> Ord for Ordered<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
 impl<T> PartialEq for Ordered<T> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
@@ -49,8 +57,11 @@ impl<T> Queue<T> {
             .await;
     }
 
-    pub fn dequeue(&self) -> Option<T> {
-        self.list.remove_first().map(|Ordered(_, value)| value)
+    pub async fn dequeue(&self) -> Option<T> {
+        self.list
+            .remove_first()
+            .await
+            .map(|Ordered(_, value)| value)
     }
 
     pub fn is_empty(&self) -> bool {

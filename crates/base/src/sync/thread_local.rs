@@ -26,6 +26,7 @@ pub struct Local<T: Sync> {
 }
 
 impl<T: Sync> !Send for Local<T> {}
+unsafe impl<T: Sync> Sync for Local<T> {}
 
 impl<T: Sync> Default for Local<T> {
     fn default() -> Self {

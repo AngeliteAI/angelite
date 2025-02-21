@@ -44,6 +44,8 @@ pub struct Worker {
     pub remote: Queue<Task<Remote>>,
 }
 
+unsafe impl Send for Worker {}
+unsafe impl Sync for Worker {}
 impl Worker {
     pub async fn work() {
         let Some(me) = current_worker().await else {
@@ -58,10 +60,10 @@ impl Worker {
         work.execute();
     }
     async fn dequeue(&mut self) -> Option<Work> {
-        if let Some(task) = self.local.dequeue() {
+        if let Some(task) = self.local.dequeue().await {
             return Some(Work::Local(task));
         }
-        if let Some(task) = self.remote.dequeue() {
+        if let Some(task) = self.remote.dequeue().await {
             return Some(Work::Remote(task));
         }
         None
@@ -150,7 +152,7 @@ async fn steal_work() -> Option<Work> {
     const RETRIES: usize = 5;
     for _ in 0..RETRIES {
         let worker = select_worker().await;
-        if let Some(task) = worker.remote.dequeue() {
+        if let Some(task) = worker.remote.dequeue().await {
             return Some(Work::Remote(task));
         }
     }

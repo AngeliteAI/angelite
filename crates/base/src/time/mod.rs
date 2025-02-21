@@ -3,7 +3,10 @@ use std::iter;
 use std::marker::PhantomData;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering::*};
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering::{self, *},
+};
 use std::time::SystemTime;
 
 use crate::collections::skip::{List, Map};
@@ -233,7 +236,7 @@ where
 impl Sub for Instant {
     type Output = Duration<Nanos>;
     fn sub(self, other: Self) -> Duration<Nanos> {
-        Duration(Nanos(self.0 - other.0))
+        Duration(Nanos(self.0.saturating_sub(other.0)))
     }
 }
 
@@ -296,7 +299,7 @@ impl DivAssign<Instant> for Instant {
     }
 }
 
-pub async fn wait_until(expires: Instant, action: impl FnOnce() + 'static) {
+pub async fn wait_until(expires: Instant, action: impl FnOnce() + Send + Sync + 'static) {
     if expires <= Instant::now() {
         (action)();
         return;
@@ -304,7 +307,7 @@ pub async fn wait_until(expires: Instant, action: impl FnOnce() + 'static) {
     wait_for((expires - Instant::now()).into(), action).await
 }
 
-pub async fn wait_for(duration: Duration<Millis>, action: impl FnOnce() + 'static) {
+pub async fn wait_for(duration: Duration<Millis>, action: impl FnOnce() + Send + Sync + 'static) {
     loop {
         let Some(worker) = current_worker().await else {
             yield_now().await;
@@ -315,15 +318,17 @@ pub async fn wait_for(duration: Duration<Millis>, action: impl FnOnce() + 'stati
     }
 }
 
+type TimerKey = (Instant, u64);
+
 pub struct TimerWheel {
     // Single map for all timers
-    timers: Arc<Map<Instant, Timer>>,
+    timers: Arc<Map<TimerKey, Timer>>,
     current_tick: Arc<AtomicU64>,
     backoff: Backoff,
 }
 
 struct Timer {
-    action: Box<dyn FnOnce()>,
+    action: Box<dyn FnOnce() + Send + Sync>,
 }
 
 impl TimerWheel {
@@ -335,12 +340,20 @@ impl TimerWheel {
         }
     }
 
-    pub async fn add(&self, expires_in: Duration<Millis>, action: impl FnOnce() + 'static) {
+    pub async fn add(
+        &self,
+        expires_in: Duration<Millis>,
+        action: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let expires_at = Instant::now() + expires_in;
         self.timers
-            .insert(expires_at, Timer {
-                action: Box::new(action),
-            })
+            .insert(
+                (expires_at, NEXT_ID.fetch_add(1, Ordering::Relaxed)),
+                Timer {
+                    action: Box::new(action),
+                },
+            )
             .await;
     }
 
@@ -349,13 +362,13 @@ impl TimerWheel {
         self.current_tick.store(now.as_u128() as u64, Release);
 
         loop {
-            match self.timers.first().await {
-                Some((expires_at, _)) if expires_at > &now => {
+            match self.timers.first() {
+                Some(((expires_at, _), _)) if expires_at > &now => {
                     break;
                 }
-                Some((expires_at, _)) => {
+                Some((key, _)) => {
                     // Remove and execute expired timer
-                    if let Some(timer) = self.timers.remove(&expires_at).await {
+                    if let Some(timer) = self.timers.remove(&key).await {
                         dbg!("yo");
                         (timer.action)();
                     }
@@ -393,13 +406,13 @@ impl TimerWheel {
     }
 
     pub async fn clear(&self) {
-        while let Some((_, _)) = self.timers.first().await {
+        while let Some((_, _)) = self.timers.first() {
             self.timers.remove_first();
         }
     }
 
     pub async fn next_expiration(&self) -> Option<Instant> {
-        self.timers.first().await.map(|(instant, _)| *instant)
+        self.timers.first().map(|(instant, _)| instant.0)
     }
 }
 

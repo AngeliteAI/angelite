@@ -14,7 +14,14 @@ use derive_more::derive::{Deref, DerefMut};
 use ecs_macro::func;
 use flume::{Receiver, Sender, unbounded};
 use std::mem::offset_of;
-use std::{any::{TypeId, type_name}, clone, fmt::{self, Formatter}, marker::PhantomData, pin::{Pin, pin}, sync::Arc};
+use std::{
+    any::{TypeId, type_name},
+    clone,
+    fmt::{self, Formatter},
+    marker::PhantomData,
+    pin::{Pin, pin},
+    sync::Arc,
+};
 
 use super::{System, param::Params};
 
@@ -93,17 +100,8 @@ pub enum Cmd {
 unsafe impl Send for Cmd {}
 
 pub struct Get<T: Params> {
-    get: Arc<Receiver<Cmd>>,
+    get: Receiver<Cmd>,
     marker: PhantomData<T>,
-}
-
-impl<T: Params> Clone for Get<T> {
-    fn clone(&self) -> Self {
-        Self {
-            get: self.get.clone(),
-            marker: PhantomData,
-        }
-    }
 }
 
 pub struct Finished;
@@ -164,7 +162,6 @@ impl<T: Params> Future for Getter<T> {
 pub struct Put {
     binding: Arc<dyn Fn(&mut Registry) -> Shard>,
     put: Sender<Cmd>,
-    hold: Arc<Receiver<Cmd>>,
 }
 impl Put {
     pub(crate) fn prepare(&self, registry: &mut Registry) {
@@ -183,24 +180,30 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
     Wrap<Input, Blocking<Output>> for F
 {
     fn wrap(mut self) -> (System, Put) {
-        let (get, put) = bind::<Input>();
-        let pkg = (self, get);
+        let (put, get) = unbounded();
+        let binding = Arc::new(Input::bind);
         let system = Box::pin(move || {
-            let pkg = pkg.clone();
+            let get = get.clone();
+            let this = self.clone();
             let system = block_on(spawn_blocking(move || {
-                let pkg = pkg.clone();
                 block_on(async move {
-                    let (func, get) = pkg.clone();
-                    Ok(func
+                    Ok(this
                         .derive()
-                        .execute(get.async_call(()).await?)
+                        .execute(
+                            (Get::<Input> {
+                                get,
+                                marker: PhantomData,
+                            })
+                            .async_call(())
+                            .await?,
+                        )
                         .await
                         .to_return())
                 })
             }));
             system
         });
-        (system, put)
+        (system, Put { binding, put })
     }
 }
 
@@ -210,30 +213,28 @@ where
     F: Func<Input, Concurrent<Fut>> + Clone,
 {
     fn wrap(mut self) -> (System, Put) {
-        let (get, put) = bind();
+        let (put, get) = unbounded();
+        let binding = Arc::new(Input::bind);
+
         let system = Box::pin(move || {
             let get = get.clone();
             let this = self.clone();
             let system = block_on(spawn(async move {
-                Ok(this.derive().execute((get)().await?).await.to_return())
+                Ok(this
+                    .derive()
+                    .execute(
+                        (Get::<Input> {
+                            get,
+                            marker: PhantomData,
+                        })()
+                        .await?,
+                    )
+                    .await
+                    .to_return())
             }));
             system
         });
-        (system, put)
+        (system, Put { binding, put })
     }
 }
 ecs_macro::func!();
-
-fn bind<T: Params>() -> (Get<T>, Put) {
-    let (put, get) = unbounded();
-    let get = Arc::from(get);
-    let hold = get.clone();
-    let binding = Arc::new(T::bind);
-    (
-        Get {
-            get: get,
-            marker: PhantomData,
-        },
-        Put { binding, put, hold },
-    )
-}
