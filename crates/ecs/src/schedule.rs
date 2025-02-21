@@ -47,7 +47,12 @@ impl Schedule {
                 // Create system task
                 join.push(async move {
                     // Execute system
-                    (node.system)(node.rx.clone()).await;
+                    dbg!("stock");
+                    (node.system)(node.rx.clone())
+                        .await
+                        .map_err(|_| ())
+                        .expect("YO");
+                    dbg!("poop");
                     (node_id, node)
                 });
             }

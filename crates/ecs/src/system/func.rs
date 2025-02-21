@@ -12,7 +12,7 @@ use base::{
 };
 use derive_more::derive::{Deref, DerefMut};
 use ecs_macro::func;
-use flume::{Receiver, Sender, unbounded, bounded};
+use flume::{Receiver, Sender, bounded, unbounded};
 use std::mem::offset_of;
 use std::{
     any::{TypeId, type_name},
@@ -152,10 +152,16 @@ pub struct Put {
 }
 impl Put {
     pub(crate) fn prepare(&self, registry: &mut Registry) {
+        dbg!(self.put.is_disconnected());
         let mut binding = (self.binding)(registry);
+        dbg!(self.put.is_disconnected());
         for (supertype, table) in binding.table_vec().unwrap().drain(..) {
-            self.put.clone().try_send(Cmd::Execute(supertype, table));
+            self.put
+                .clone()
+                .try_send(Cmd::Execute(supertype, table))
+                .unwrap();
         }
+        dbg!(self.put.is_disconnected());
     }
 }
 
@@ -167,7 +173,7 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
     Wrap<Input, Blocking<Output>> for F
 {
     fn wrap(mut self) -> (System, Receiver<Cmd>, Put) {
-        let (tx, rx) =bounded(1024);
+        let (tx, rx) = bounded(1024);
         let binding = Arc::new(Input::bind);
         let system = Box::pin(move |get: Receiver<Cmd>| {
             let this = self.clone();
@@ -189,7 +195,8 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
             }));
             system
         });
-        (system, rx, Put { binding, put: tx})
+        dbg!(rx.is_disconnected());
+        (system, rx, Put { binding, put: tx })
     }
 }
 
