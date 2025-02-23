@@ -5,7 +5,7 @@ use crate::world::World;
 use base::collections::array::Array;
 use base::rt::join::UnorderedJoin;
 use base::{collections::queue::Queue, rt::spawn};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::env::args;
 
 #[derive(Default)]
@@ -14,7 +14,7 @@ pub struct Schedule {
 }
 impl Schedule {
     pub async fn run(&mut self, world: &mut World) {
-        let mut nodes_ready = Queue::default();
+        let mut nodes_ready = VecDeque::default();
         let mut nodes_pending = HashMap::new();
         let mut nodes_completed = HashSet::new();
 
@@ -22,7 +22,7 @@ impl Schedule {
         for (id, _) in &self.graph.nodes {
             let deps = self.graph.dependencies(id);
             if deps.is_empty() {
-                nodes_ready.enqueue(id.clone()).await;
+                nodes_ready.push_front(id.clone());
             } else {
                 nodes_pending.insert(id.clone(), deps.len());
             }
@@ -30,8 +30,8 @@ impl Schedule {
 
         while !nodes_ready.is_empty() {
             // Collect batch of ready nodes
-            let mut batch = Array::<_, 128>::new();
-            while let Some(node_id) = nodes_ready.dequeue().await {
+            let mut batch = Vec::<_>::new();
+            while let Some(node_id) = nodes_ready.pop_back() {
                 if let Some(node) = self.graph.nodes.remove(&node_id) {
                     batch.push((node_id, node));
                 }
@@ -66,13 +66,13 @@ impl Schedule {
                 self.graph.nodes.insert(completed_id.clone(), node);
                 nodes_completed.insert(completed_id.clone());
 
-                // Update dependent nodes
+               // update dependent nodes
                 for dependent in self.graph.dependents(&completed_id) {
                     if let Some(pending_count) = nodes_pending.get_mut(&dependent) {
                         *pending_count -= 1;
                         if *pending_count == 0 {
                             nodes_pending.remove(&dependent);
-                            nodes_ready.enqueue(dependent).await;
+                            nodes_ready.push_front(dependent);
                         }
                     }
                 }

@@ -11,7 +11,7 @@ use super::{
 pub trait Sequence<Marker: Provider> {
     type Input;
     type Output;
-    type Return: Params + Send;
+    type Return: Params<'static> + Send;
     fn transform(self, graph: &mut Graph);
     fn iter(&self) -> impl Iterator<Item = Id>;
     fn before<Rhs: Sequence<Other>, Other: Provider>(
@@ -65,9 +65,9 @@ pub struct Set<Tuple>(Tuple);
 //meshpipe_macro::set!();
 
 impl<
-    Input: Params,
+    Input: Params<'static>,
     Output: Future<Output = R> + Send,
-    R: Outcome + Params + Send,
+    R: Outcome + Params<'static> + Send,
     F: Func<Input, Concurrent<Output>> + Clone,
 > Sequence<System<Input, R, Concurrent<Output>>> for F
 {
@@ -83,7 +83,7 @@ impl<
         iter::once(self.id())
     }
 }
-impl<F: Func<Input, Blocking<Output>> + Clone, Input: Params, Output: Params + Outcome>
+impl<F: Func<Input, Blocking<Output>> + Clone, Input: Params<'static>, Output: Params<'static> + Outcome>
     Sequence<System<Input, Output, Blocking<Output>>> for F
 {
     type Input = Input;

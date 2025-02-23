@@ -7,5 +7,5 @@ edition = "2024"
 panic = "abort"
 
 [dependencies]
-api = {path = "../api"}
+http = {path = "../http"}
 base = {path = "../base"}

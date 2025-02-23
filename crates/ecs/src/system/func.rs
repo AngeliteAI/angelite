@@ -63,7 +63,7 @@ pub trait Outcome: Send + 'static {
 
 impl Outcome for () {
     fn to_return(self) -> Return {
-        todo!()
+        Return {}
     }
 }
 
@@ -93,20 +93,20 @@ impl<Fut: Future> Provider for Concurrent<Fut> {
 type Erased = u8;
 
 pub enum Cmd {
-    Execute(Archetype, Table),
+    Execute(Archetype, &'static mut Table),
     Complete,
 }
 
 unsafe impl Send for Cmd {}
 
-pub struct Get<T: Params> {
+pub struct Get<T: Params<'static>> {
     get: Receiver<Cmd>,
     marker: PhantomData<T>,
 }
 
 pub struct Finished;
 
-impl<T: Params> AsyncFnOnce<()> for Get<T> {
+impl<T: Params<'static>> AsyncFnOnce<()> for Get<T> {
     type CallOnceFuture = Getter<T>;
 
     type Output = Result<T, Finished>;
@@ -129,11 +129,11 @@ impl<T: Params> AsyncFnOnce<()> for Get<T> {
     }
 }
 
-pub struct Getter<T: Params> {
+pub struct Getter<T: Params<'static>> {
     fut: Pin<Box<dyn Future<Output = Result<T, Finished>> + Send>>,
 }
 
-impl<T: Params> Future for Getter<T> {
+impl<T: Params<'static>> Future for Getter<T> {
     type Output = Result<T, Finished>;
 
     fn poll(
@@ -156,10 +156,10 @@ impl Put {
         let mut binding = (self.binding)(registry);
         dbg!(self.put.is_disconnected());
         for (supertype, table) in binding.table_vec().unwrap().drain(..) {
+            dbg!(&supertype);
             self.put
                 .clone()
-                .try_send(Cmd::Execute(supertype, table))
-                .unwrap();
+                .try_send(Cmd::Execute(supertype, table)).unwrap();
         }
         dbg!(self.put.is_disconnected());
     }
@@ -169,11 +169,11 @@ pub trait Wrap<Input, Marker: Provider>: Func<Input, Marker> {
     fn wrap(self) -> (System, Receiver<Cmd>, Put);
 }
 
-impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
+impl<Input: Params<'static>, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
     Wrap<Input, Blocking<Output>> for F
 {
     fn wrap(mut self) -> (System, Receiver<Cmd>, Put) {
-        let (tx, rx) = bounded(1024);
+        let (tx, rx) = unbounded();
         let binding = Arc::new(Input::bind);
         let system = Box::pin(move |get: Receiver<Cmd>| {
             let this = self.clone();
@@ -200,7 +200,7 @@ impl<Input: Params, Output: Outcome, F: Func<Input, Blocking<Output>> + Clone>
     }
 }
 
-impl<F, Fut: Future<Output = R> + Send, R: Outcome + Send, Input: Params>
+impl<F, Fut: Future<Output = R> + Send, R: Outcome + Send, Input: Params<'static>>
     Wrap<Input, Concurrent<Fut>> for F
 where
     F: Func<Input, Concurrent<Fut>> + Clone,

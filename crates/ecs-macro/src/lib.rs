@@ -47,15 +47,16 @@ fn params_arity(arity: usize) -> proc_macro2::TokenStream {
     let input_tuple = quote! { (#(#input_types,)*) };
 
     quote! {
-        impl<#(#input_types: Param + 'static),*> Params for #input_tuple {
+        impl<'a, #(#input_types: Param<'a> + 'static),*> Params<'a> for #input_tuple {
 
             fn bind(registry: &mut Registry) -> Shard {
                     let mut archetype = Archetype::default();
                     #(#input_types::inject(&mut archetype);)*
                     registry.shard(archetype)
             }
-            fn create(archetype: Archetype, mut table: Table) -> Self where Self: Sized {
-                (#(#input_types::create(archetype.clone(), &mut table),)*)
+            fn create(archetype: Archetype, mut table: &'static mut Table) -> Self where Self: Sized {
+                let table = UnsafeCell::new(table);
+                (#(#input_types::create(archetype.clone(), unsafe { table.get().as_mut().unwrap() }),)*)
             }
         }
     }
@@ -248,15 +249,15 @@ fn source_arity(arity: usize) -> proc_macro2::TokenStream {
 
     quote! {
         impl<#(#input_types: Source + 'static),*> Source for #input_tuple {
-            unsafe fn erase_component_data<'a>(self) -> Array<(Handle<'a>, Data), 256>  where Self: 'a {
+            unsafe fn erase_component_data<'a>(self) -> Vec<(Handle<'a>, Data)>  where Self: 'a {
                 let (#(#input_params,)*) = self;
-                let mut raw_data = array![#(#input_params.erase_component_data(),)*].into_iter().flatten().collect::<Array<_, 256>>();
+                let mut raw_data = vec![#(#input_params.erase_component_data(),)*].into_iter().flatten().collect::<Vec<_>>();
                 raw_data.sort_by_key(|(_, data)| data.meta.id);
                 raw_data
             }
             unsafe fn archetype(&self) -> Archetype {
                 let (#(#input_params,)*) = self;
-                let mut raw_data = array![#(#input_params.archetype(),)*].into_iter().flatten().collect::<Archetype>();
+                let mut raw_data = vec![#(#input_params.archetype(),)*].into_iter().flatten().collect::<Archetype>();
                 raw_data
             }
         }

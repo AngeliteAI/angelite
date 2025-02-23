@@ -1,16 +1,17 @@
 use crate::component::{sink::Sink, table::Table};
-use base::{
-    collections::{array::Array, arrayvec::ArrayVec},
-    prelude::{Pattern, Vector, X, Y, Z},
-};
-use std::{marker::PhantomData, ops::AddAssign};
-
 use crate::{
     component::{archetype::Archetype, registry::Shard},
     world::World,
 };
+use base::{
+    Simd,
+    collections::{array::Array, arrayvec::ArrayVec},
+    prelude::{Pattern, Vector, X, Y, Z},
+};
+use std::cmp::max;
+use std::{marker::PhantomData, ops::AddAssign};
 
-pub trait Query: Sized {
+pub trait Query: ?Sized {
     type Ref;
     type Mut;
 
@@ -23,39 +24,38 @@ pub trait Query: Sized {
 use paste::paste;
 ecs_macro::query!();
 
-pub struct Fetch<'a, Q: Query> {
-    supertype: Archetype,
-    table: &'a mut Table,
-    marker: PhantomData<Q>,
+pub struct Fetch<'a, Q: Query + ?Sized> {
+    pub(crate) supertype: Archetype,
+    pub(crate) table: &'a mut Table,
+    pub(crate) marker: PhantomData<Q>,
 }
 
 unsafe impl<Q: Query> Send for Fetch<'_, Q> {}
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Cursor {
-    route: Vector<2, usize>,
-    max: Vector<2, usize>,
+    route: usize,
+    max: usize,
 }
 
 impl Cursor {
-    fn table(&self) -> usize {
-        let [x] = **self.route.shuffle::<X, 1>();
-        x
+    fn init(table: &Table) -> Cursor {
+        Self {
+            route: Default::default(),
+            max: table.count(),
+        }
     }
+
     fn row(&self) -> usize {
-        let [y] = **self.route.shuffle::<Y, 1>();
-        y
+        self.route
     }
 }
 
 impl AddAssign<usize> for Cursor {
     fn add_assign(&mut self, rhs: usize) {
-        self.route += Vector::<2, usize>::X * rhs;
-        for i in 0..2 {
-            while self.route[i] > self.max[i] {
-                self.route[i] -= self.max[i];
-                self.route[i + 1] += 1;
-            }
+        self.route += rhs;
+        if self.route > self.max {
+            self.route = self.max;
         }
     }
 }
@@ -73,11 +73,11 @@ pub struct State {
 }
 
 impl State {
-    fn init<Q: Query>() -> State {
+    fn init<Q: Query>(shard: &Table) -> State {
         Self {
             offsets: Q::offsets(),
             supertype: Q::archetype(),
-            cursor: Cursor::default(),
+            cursor: Cursor::init(shard),
         }
     }
 }
@@ -90,16 +90,16 @@ pub struct Scan<F> {
 impl<'a, Q: Query> Scan<&'a Fetch<'a, Q>> {
     pub fn new(fetcher: &'a Fetch<Q>) -> Self {
         Scan {
+            state: State::init::<Q>(&fetcher.table),
             fetcher,
-            state: State::init::<Q>(),
         }
     }
 }
 impl<'a, Q: Query> Scan<&'a mut Fetch<'a, Q>> {
     pub fn new_mut(fetcher: &'a mut Fetch<'a, Q>) -> Self {
         Scan {
+            state: State::init::<Q>(&fetcher.table),
             fetcher,
-            state: State::init::<Q>(),
         }
     }
 }

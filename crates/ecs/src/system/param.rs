@@ -5,24 +5,25 @@ use crate::component::{
 };
 
 use super::func::Outcome;
+use std::cell::UnsafeCell;
 
-pub trait Param: Send {
+pub trait Param<'a>: Send {
     fn inject(archetype: &mut Archetype);
-    fn create(archetype: Archetype, table: &mut Table) -> Self
+    fn create(archetype: Archetype, table: &'a mut Table) -> Self
     where
-        Self: Sized;
+        Self: Sized + 'a;
 }
 
-pub trait Params: Send + 'static {
+pub trait Params<'a>: Send + 'static {
     fn bind(registry: &mut Registry) -> Shard;
-    fn create(archetype: Archetype, table: Table) -> Self
+    fn create(archetype: Archetype, table: &'static mut Table) -> Self
     where
-        Self: Sized;
+        Self: Sized + 'a;
 }
 use base::array;
 ecs_macro::params!();
 
-impl Param for () {
+impl Param<'_> for () {
     fn inject(archetype: &mut Archetype) {
         todo!()
     }

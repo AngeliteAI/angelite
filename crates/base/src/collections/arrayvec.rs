@@ -158,7 +158,9 @@ impl<T, const N: usize> FromIterator<T> for ArrayVec<T, N> {
             // Fill array first
             while arr.len() < N {
                 match iter.next() {
-                    Some(item) => arr.push(item),
+                    Some(item) => {
+                        arr.push(item);
+                    }
                     None => return Self(State::Array(arr)),
                 }
             }

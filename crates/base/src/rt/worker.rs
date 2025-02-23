@@ -138,14 +138,7 @@ async fn all_workers() -> impl Iterator<Item = &'static Worker> + Clone {
     let workers = WORKERS.all_values().collect::<Vec<_>>();
     workers
         .into_iter()
-        .cycle()
-        .skip(
-            rng()
-                .await
-                .map(|x| x.sample(&Range::new(0..WORKERS.len())))
-                .unwrap_or_default(),
-        )
-        .take(WORKERS.len())
+
 }
 
 async fn steal_work() -> Option<Work> {

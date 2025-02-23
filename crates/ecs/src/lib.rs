@@ -3,7 +3,8 @@
     int_roundings,
     box_as_ptr,
     unboxed_closures,
-    async_fn_traits
+    async_fn_traits,
+    more_maybe_bounds
 )]
 pub mod component;
 pub mod entity;

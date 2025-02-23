@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use crate::{
     component::{archetype::Archetype, registry::Registry, sink::Sink},
     system::param::Param,
@@ -29,16 +30,17 @@ impl<'a, Q: fetch::Query> IntoIterator for &'a mut Query<'a, Q> {
     }
 }
 
-impl<Q: fetch::Query> Param for Query<'_, Q> {
+impl<'a, Q: fetch::Query> Param<'a> for Query<'a, Q> {
     fn inject(archetype: &mut Archetype) {
         archetype.merge(Q::archetype())
     }
 
-    fn create(archetype: Archetype, table: &mut crate::component::table::Table) -> Self
+    fn create(archetype: Archetype, table: &'a mut crate::component::table::Table) -> Self
     where
-        Self: Sized,
+        Self: Sized + 'a,
     {
-        todo!()
+        dbg!(&table);
+        Query(UnsafeLocal(Fetch { supertype: archetype, table, marker: PhantomData }))
     }
 }
 

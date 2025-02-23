@@ -22,8 +22,8 @@ impl<T: Component + 'static> Source for T {
     where
         Self: 'a,
     {
-        let mut arr = Array::new();
         let mut this = Arc::new(self);
+        let mut arr = vec![];
         let data = this.erase();
         arr.push((Handle(this), data));
         arr

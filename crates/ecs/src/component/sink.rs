@@ -13,7 +13,7 @@ pub trait Sink {
         Self: Sized,
     {
         Self::interpret_component_data(Data {
-            ptr: ptr::slice_from_raw_parts_mut(entity.head().add(offset) as _, meta.size),
+            ptr: ptr::slice_from_raw_parts_mut(dbg!(entity.data()).add(offset) as _, meta.size),
             meta,
         })
     }
@@ -80,3 +80,5 @@ impl<'a, T: Component + 'a> Sink for &'a T {
         T::meta()
     }
 }
+
+impl<'a, T: Component + 'a> Sink for &'a dyn T {}

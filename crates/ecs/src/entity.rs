@@ -1,5 +1,7 @@
 use crate::component::{archetype::Archetype, table::Page};
+use crate::component::source::Source;
 
+#[derive(Debug)]
 pub struct Entity {
     pub(crate) data: *mut u8,
     pub(crate) generation: usize,
@@ -15,6 +17,10 @@ impl Entity {
 
     pub(crate) fn archetype(&self) -> &Archetype {
         unsafe { self.head().cast::<Archetype>().as_ref().unwrap() }
+    }
+
+    pub(crate) fn data(&self) -> *mut u8 {
+        self.data
     }
 
     pub(crate) fn head(&self) -> *mut u8 {

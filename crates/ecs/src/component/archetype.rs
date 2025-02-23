@@ -2,16 +2,16 @@ use std::iter;
 
 use base::collections::array::Array;
 use derive_more::derive::{Deref, DerefMut};
-
+use crate::system::sequence::Sequence;
 use super::{Component, Meta};
 
 #[derive(Clone, Ord, Eq, PartialEq, Default, Debug, Deref, DerefMut, Hash)]
-pub struct Archetype(Array<Meta, { Self::MAX }>);
+pub struct Archetype(Vec<Meta>);
 
 impl IntoIterator for Archetype {
     type Item = Meta;
 
-    type IntoIter = base::collections::array::IntoIter<Self::Item, 256>;
+    type IntoIter = std::vec::IntoIter<Meta>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
@@ -51,7 +51,7 @@ impl From<Meta> for Archetype {
 impl Archetype {
     pub const MAX: usize = 256;
     pub fn size(&self) -> usize {
-        self.offset_of(self.count())
+        dbg!(self.offset_of(self.count()))
     }
     pub fn count(&self) -> usize {
         self.len()
@@ -62,7 +62,6 @@ impl Archetype {
             .map(|x| x.size)
             .take(index)
             .sum::<usize>()
-            .max(1)
     }
     pub(crate) fn merge(&mut self, archetype: Archetype) {
         for meta in archetype {

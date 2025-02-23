@@ -1,6 +1,6 @@
-use std::{any::TypeId, mem, ptr, sync::Arc};
-
 use derive_more::derive::{Deref, DerefMut};
+use std::fmt::Formatter;
+use std::{any::TypeId, fmt, mem, ptr, sync::Arc};
 
 pub mod archetype;
 pub mod registry;
@@ -41,5 +41,11 @@ impl Handle<'_> {
         //Well here technically two but were just hacking it to get the raw pointer
         let ptr = Arc::into_raw(self.0.clone()) as *mut _;
         ptr
+    }
+}
+
+impl fmt::Debug for Handle<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Handle").finish()
     }
 }

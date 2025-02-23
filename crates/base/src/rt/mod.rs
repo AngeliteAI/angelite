@@ -484,7 +484,7 @@ pub trait SelectExt: Future + Sized {
 impl<F: Future> SelectExt for F {}
 
 #[derive(Deref, DerefMut, From)]
-pub struct UnsafeLocal<T>(T);
+pub struct UnsafeLocal<T>(pub T);
 
 unsafe impl<T> Send for UnsafeLocal<T> {}
 unsafe impl<T> Sync for UnsafeLocal<T> {}

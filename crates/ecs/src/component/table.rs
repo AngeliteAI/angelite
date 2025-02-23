@@ -1,4 +1,6 @@
+use base::collections::{array::Array, arrayvec::ArrayVec};
 use core::fmt;
+use std::fmt::{Formatter, format};
 use std::{
     alloc,
     cell::UnsafeCell,
@@ -8,9 +10,8 @@ use std::{
     ptr, slice,
     sync::Arc,
 };
-
-use base::collections::{array::Array, arrayvec::ArrayVec};
-
+use base::rng::transform::DistributionTransform;
+use crate::component::source::Source;
 use crate::entity::Entity;
 
 use super::{Component, Handle, Meta, archetype::Archetype};
@@ -20,12 +21,12 @@ pub struct Data {
     pub meta: Meta,
 }
 impl Data {
-    pub fn copy_to(&mut self, src: *const u8, check: &Meta) {
+    pub fn copy_from(&mut self, src: *const u8, check: &Meta) {
         let Self { ptr, meta } = self;
         assert_eq!(meta, check);
         unsafe { ptr::copy(src, *ptr as *mut _, meta.size) };
     }
-    pub fn copy_from(&self, dst: *mut u8, check: &Meta) {
+    pub fn copy_to(&self, dst: *mut u8, check: &Meta) {
         let Self { ptr, meta } = self;
         assert_eq!(meta, check);
         unsafe { ptr::copy(*ptr as *const _, dst, meta.size) }
@@ -38,22 +39,37 @@ pub trait Erase {
 
 impl<C: Component> Erase for C {
     fn erase(self: &mut Arc<Self>) -> Data {
-        let ptr = ptr::slice_from_raw_parts_mut(
-            Arc::get_mut(self).unwrap() as *mut _ as *mut u8,
+        let ptr = ptr::slice_from_raw_parts(
+            Arc::as_ptr(self),
             mem::size_of::<C>(),
         );
         Data {
-            ptr,
+            //SAFETY illegal hack
+            ptr: ptr as *mut _,
             meta: Meta::of::<C>(),
         }
     }
 }
 
-pub type Components<'a> = Array<(Handle<'a>, Data), { Archetype::MAX }>;
+pub type Components<'a> = Vec<(Handle<'a>, Data)>;
 
 pub struct Table {
     archetype: Archetype,
     pub(crate) pages: UnsafeCell<Vec<Page>>,
+}
+
+impl fmt::Debug for Table {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut yes = f.debug_struct("Table");
+        yes.field("archetype", &self.archetype);
+        for (i, page) in unsafe { self.pages.get().as_mut().unwrap() }
+            .iter()
+            .enumerate()
+        {
+            yes.field(&i.to_string(), page);
+        }
+        yes.finish()
+    }
 }
 
 pub struct Page {
@@ -62,6 +78,7 @@ pub struct Page {
     state: UnsafeCell<State>,
 }
 
+#[derive(Debug)]
 pub struct State {
     erased: Vec<Option<Array<Handle<'static>, { Archetype::MAX }>>>,
     freed: Vec<Entity>,
@@ -121,7 +138,9 @@ impl Table {
         };
         let mut entities = vec![];
         while next_page.can_insert() {
-            let components = data.next().unwrap();
+            let Some(components) = data.next() else {
+                break;
+            };
             let entity = next_page.insert(components).unwrap();
             entities.push(entity);
         }
@@ -161,15 +180,33 @@ impl Table {
             page.free(entities);
         }
     }
+    pub fn count(&self) -> usize {
+        let pages = unsafe { self.pages.get().as_mut().unwrap() };
+        match pages.len() {
+            0 => 0,
+            1 => pages.first().unwrap().count(),
+            x => {
+                (x - 1) * Page::capacity(&self.archetype)
+                + pages.last().as_ref().unwrap().count()
+            }
+        }
+    }
 }
 
 impl fmt::Debug for Page {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Page")
             .field("head", &self.head)
-            .field("entities", &(self.count() / self.archetype().len()))
+            .field(
+                "entities",
+                &(if self.archetype().len() == 0 {
+                    0
+                } else {
+                    self.count() / self.archetype().len()
+                }),
+            )
             .field("components", &self.count())
-            .field("capacity", &self.capacity)
+            .field("capacity", &Self::capacity(&self.archetype()))
             .field("freed", &self.state().freed.len())
             .finish()
     }
@@ -185,25 +222,22 @@ impl Page {
         let layout = alloc::Layout::from_size_align(Page::SIZE, Page::SIZE).unwrap();
         let mut head = unsafe { alloc::alloc(layout) };
         unsafe { head.cast::<Archetype>().write(archetype) };
-        head = unsafe { head.add(mem::size_of::<Archetype>()) };
-        Self {
-            capacity,
-            head,
-            state: UnsafeCell::new(State::init(head, capacity, row_size)),
+        unsafe {
+            Self {
+                capacity,
+                head,
+                state: UnsafeCell::new(State::init(head.add(mem::size_of::<Archetype>()), capacity, row_size)),
+            }
         }
     }
 
-    pub fn head(&self) -> *mut u8 {
-        self.head
-    }
-
     pub fn capacity(archetype: &Archetype) -> usize {
-        let row = archetype.size();
+        let row = archetype.size().max(1);
         Self::AVAIL.div_floor(row)
     }
 
     pub fn count(&self) -> usize {
-        Self::capacity(self.archetype()) - self.state().freed.len()
+        dbg!(Self::capacity(self.archetype())) - dbg!(self.state().freed.len())
     }
 
     pub fn state(&self) -> &mut State {
@@ -217,7 +251,7 @@ impl Page {
     pub fn entity(&self, index: usize) -> Entity {
         let row_size = self.archetype().size();
         let offset = index * row_size;
-        let ptr = unsafe { self.head.add(offset) };
+        let ptr = unsafe { self.entity_head().add(offset) };
         Entity::new(ptr)
     }
 
@@ -227,8 +261,9 @@ impl Page {
         for (i, ((_handle, mut erased), meta)) in
             components.into_iter().zip(archetype.iter()).enumerate()
         {
-            erased.copy_to(self.row_column(&entity, i), meta);
+            erased.copy_to(dbg!(self.row_column(&entity, i)), meta);
         }
+        dbg!(&entity);
         Some(entity)
     }
 
@@ -240,13 +275,17 @@ impl Page {
         }
     }
 
+    pub fn entity_head(&self) -> *mut u8 {
+        unsafe { self.head.add(mem::size_of::<Archetype>()) }
+    }
+
     pub fn coalese_row(&self, entity: &Entity) {
         let idx = entity.index();
         for (i, meta) in self.archetype().iter().enumerate() {
             let Some(erased) = &mut self.state().erased[idx] else {
                 unreachable!();
             };
-            let data = Data {
+            let mut data = Data {
                 ptr: ptr::slice_from_raw_parts_mut(self.row_column(entity, i), meta.size),
                 meta: *meta,
             };
@@ -268,9 +307,9 @@ impl Page {
 }
 
 impl State {
-    fn init(head: *mut u8, capacity: usize, row_size: usize) -> Self {
+    fn init(entity_head: *mut u8, capacity: usize, row_size: usize) -> Self {
         let freed = (0..capacity)
-            .map(|i| unsafe { head.add(i * row_size) })
+            .map(|i| unsafe { entity_head.add(i * row_size) })
             .map(Entity::new)
             .rev()
             .collect::<Vec<_>>();
