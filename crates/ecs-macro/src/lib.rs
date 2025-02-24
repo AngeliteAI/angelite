@@ -3,28 +3,89 @@ use parse::{Parse, ParseStream};
 use proc_macro::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::*;
+#[proc_macro_attribute]
+pub fn component(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as Item);
 
-#[proc_macro_derive(Component)]
-pub fn derive_component(input: TokenStream) -> TokenStream {
-    // Parse the input tokens into a syntax tree
-    let input = parse_macro_input!(input as DeriveInput);
+    match input {
+        Item::Struct(s) => component_struct(s),
+        Item::Trait(t) => component_trait(t, attr),
+        _ => panic!("The `component` attribute can only be applied to structs and traits."),
+    }
+}
+
+fn component_struct(input: ItemStruct) -> TokenStream {
     let name = &input.ident;
 
-    // Generate the implementation
     let expanded = quote! {
-        use ecs::component::*;
-        impl Component for #name {
-            fn meta() -> Meta {
-                Meta {
-                    id: Id(std::any::TypeId::of::<Self>()),
+        #input // Keep the original struct definition
+
+        impl ecs::component::Component for #name {
+            fn meta() -> ecs::component::Meta {
+                ecs::component::Meta {
+                    id: ecs::component::Id(std::any::TypeId::of::<Self>()),
                     size: std::mem::size_of::<Self>(),
                 }
             }
         }
+
+        impl ecs::component::access::Access for #name {
+            fn access<'a>(ptr: *const u8, _vtable: *const ()) -> &'a mut Self {
+                unsafe { &mut *(ptr as *mut #name) }
+            }
+
+            fn meta() -> Vec<ecs::component::Meta> {
+                vec![<#name as ecs::component::Component>::meta()]
+            }
+        }
     };
 
-    // Convert back to token stream and return
-    TokenStream::from(expanded)
+    expanded.into()
+}
+
+fn component_trait(input: ItemTrait, attr: TokenStream) -> TokenStream {
+    let name = &input.ident;
+    let attr_args = parse_macro_input!(attr as TraitAttrArgs);
+
+    let meta_variants = attr_args.types.iter().map(|ty| {
+        quote! {
+            <#ty as ecs::component::Component>::meta()
+        }
+    });
+
+    let expanded = quote! {
+        #input // Keep the original trait definition
+
+        impl ecs::component::access::Access for dyn #name {
+
+             fn access<'a>(ptr: *const u8, vtable: *const ()) -> &'a mut Self {
+                 unsafe {
+                    let (data, vtable) = (ptr, vtable);
+                    std::mem::transmute::<(*const u8, *const ()), &mut Self>((data, vtable))
+                }
+            }
+
+            fn meta() -> Vec<ecs::component::Meta> {
+                vec![#(#meta_variants,)*]
+            }
+
+        }
+    };
+    expanded.into()
+}
+
+struct TraitAttrArgs {
+    types: Vec<Type>,
+}
+
+impl Parse for TraitAttrArgs {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let types = syn::punctuated::Punctuated::<Type, Token![,]>::parse_terminated(input)?
+            .into_iter()
+            .collect();
+
+        Ok(TraitAttrArgs { types })
+    }
 }
 
 #[proc_macro]
@@ -163,7 +224,7 @@ fn query_arity(arity: usize) -> proc_macro2::TokenStream {
 
                 let mut index = 0;
                 Some((#(unsafe {
-                    let item = <#types as Sink>::coerce_component_data(fetcher.table.entity(row), state.offsets[index], state.supertype[index]);
+                    let item = <#types as Sink>::coerce_component_data(fetcher.table.entity(row), state.offsets[index], state.supertype[index], fetcher.table.handle(row, index));
                     index += 1;
                     item
                 },)*))
@@ -178,7 +239,7 @@ fn query_arity(arity: usize) -> proc_macro2::TokenStream {
 
                 let mut index = 0;
                 Some((#(unsafe {
-                    let item = <#types as Sink>::coerce_component_data_mut(fetcher.table.entity(row), state.offsets[index], state.supertype[index]);
+                    let item = <#types as Sink>::coerce_component_data_mut(fetcher.table.entity(row), state.offsets[index], state.supertype[index], fetcher.table.handle(row, index));
                     index += 1;
                     item
                 },)*))

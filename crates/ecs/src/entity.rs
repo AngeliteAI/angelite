@@ -1,3 +1,4 @@
+use std::mem;
 use crate::component::{archetype::Archetype, table::Page};
 use crate::component::source::Source;
 
@@ -32,7 +33,7 @@ impl Entity {
     pub(crate) fn index(&self) -> usize {
         let data = self.data as usize;
         let head = self.head() as usize;
-        (data - head) / self.archetype().size()
+        (data - (head + mem::size_of::<Archetype>())) / self.archetype().size().max(1)
     }
 
     pub(crate) fn incr_gen(self) -> Self {

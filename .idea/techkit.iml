@@ -16,6 +16,7 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/fleet/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/meshpipe/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/prism/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/http/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

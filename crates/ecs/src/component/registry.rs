@@ -1,6 +1,6 @@
-use std::{collections::HashMap, iter};
-use std::cell::UnsafeCell;
 use base::collections::arrayvec::ArrayVec;
+use std::cell::UnsafeCell;
+use std::{collections::HashMap, iter};
 
 use crate::entity::Entity;
 
@@ -10,47 +10,51 @@ pub const STACK: usize = 1024;
 pub type Entities = ArrayVec<Entity, STACK>;
 
 pub(crate) enum Shard {
-    Map { tables: UnsafeCell<HashMap<Archetype, &'static mut Table>> },
-    Linear { tables: UnsafeCell<Vec<(Archetype, &'static mut Table)>> },
+    Map {
+        tables: UnsafeCell<HashMap<Archetype, &'static mut Table>>,
+    },
+    Linear {
+        tables: UnsafeCell<Vec<(Archetype, &'static mut Table)>>,
+    },
 }
 
 impl Shard {
-    pub(crate) fn table_map(& self) -> Option<& HashMap<Archetype, &'static mut Table>> {
+    pub(crate) fn table_map(&self) -> Option<&HashMap<Archetype, &'static mut Table>> {
         match self {
-            Shard::Map { tables } => Some( unsafe { tables.get().as_mut().unwrap() }),
+            Shard::Map { tables } => Some(unsafe { tables.get().as_mut().unwrap() }),
             Shard::Linear { .. } => {
                 panic!("not a table map")
             }
         }
     }
 
-    pub(crate) fn table_slice(& self) -> Option<& [(Archetype, &'static mut Table)]> {
+    pub(crate) fn table_slice(&self) -> Option<&[(Archetype, &'static mut Table)]> {
         match self {
             Shard::Map { tables } => panic!("not a table slice"),
-            Shard::Linear { tables } => Some( unsafe { tables.get().as_mut().unwrap() }),
+            Shard::Linear { tables } => Some(unsafe { tables.get().as_mut().unwrap() }),
         }
     }
 
-    pub(crate) fn table_vec(& self) -> Option<& mut Vec<(Archetype, &'static mut Table)>> {
+    pub(crate) fn table_vec(&self) -> Option<&mut Vec<(Archetype, &'static mut Table)>> {
         match self {
             Shard::Map { tables } => panic!("not a table slice"),
-            Shard::Linear { tables } => Some( unsafe { tables.get().as_mut().unwrap() }),
+            Shard::Linear { tables } => Some(unsafe { tables.get().as_mut().unwrap() }),
         }
     }
 
-    pub(crate) fn table_map_mut(& self) -> Option<& mut HashMap<Archetype, &'static mut Table>> {
+    pub(crate) fn table_map_mut(&self) -> Option<&mut HashMap<Archetype, &'static mut Table>> {
         match self {
-            Shard::Map { tables } => Some( unsafe { tables.get().as_mut().unwrap() }),
+            Shard::Map { tables } => Some(unsafe { tables.get().as_mut().unwrap() }),
             Shard::Linear { .. } => {
                 panic!("not a table map")
             }
         }
     }
 
-    pub(crate) fn table_slice_mut(& self) -> Option<& mut [(Archetype, &'static mut Table)]> {
+    pub(crate) fn table_slice_mut(&self) -> Option<&mut [(Archetype, &'static mut Table)]> {
         match self {
             Shard::Map { tables } => panic!("not a table slice"),
-            Shard::Linear { tables } =>  Some( unsafe { tables.get().as_mut().unwrap() }),
+            Shard::Linear { tables } => Some(unsafe { tables.get().as_mut().unwrap() }),
         }
     }
 }
@@ -82,7 +86,11 @@ impl Registry {
             .table_map_mut()
             .expect("main shard should be a table map")
             .entry(archetype.clone())
-            .or_insert_with(|| unsafe { Box::into_raw(Box::new(Table::with_archetype(archetype))).as_mut().unwrap() });
+            .or_insert_with(|| unsafe {
+                Box::into_raw(Box::new(Table::with_archetype(archetype)))
+                    .as_mut()
+                    .unwrap()
+            });
         let src =
             iter::once(components).chain(src.map(|src| unsafe { src.erase_component_data() }));
         table.extend(src).collect::<Entities>()
@@ -106,7 +114,9 @@ impl Registry {
         }
     }
     pub(crate) fn shard(&mut self, archetype: Archetype) -> Shard {
-        let mut shard = Shard::Linear { tables: vec![].into() };
+        let mut shard = Shard::Linear {
+            tables: vec![].into(),
+        };
 
         let mut table_take = vec![];
         if let Some(tables) = self.0.table_map() {

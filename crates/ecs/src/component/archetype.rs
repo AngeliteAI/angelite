@@ -51,7 +51,7 @@ impl From<Meta> for Archetype {
 impl Archetype {
     pub const MAX: usize = 256;
     pub fn size(&self) -> usize {
-        dbg!(self.offset_of(self.count()))
+        (self.offset_of(self.count()))
     }
     pub fn count(&self) -> usize {
         self.len()

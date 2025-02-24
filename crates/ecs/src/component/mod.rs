@@ -2,11 +2,13 @@ use derive_more::derive::{Deref, DerefMut};
 use std::fmt::Formatter;
 use std::{any::TypeId, fmt, mem, ptr, sync::Arc};
 
+pub mod access;
 pub mod archetype;
 pub mod registry;
 pub mod sink;
 pub mod source;
 pub mod table;
+pub use ecs_macro::component;
 
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Debug, Deref, DerefMut, Hash)]
 pub struct Id(pub TypeId);
@@ -32,8 +34,6 @@ pub trait Component {
         Self: Sized;
 }
 
-pub use ecs_macro::Component;
-
 pub struct Handle<'a>(Arc<dyn Component + 'a>);
 impl Handle<'_> {
     fn as_mut_ptr(&mut self) -> *mut u8 {
@@ -41,6 +41,14 @@ impl Handle<'_> {
         //Well here technically two but were just hacking it to get the raw pointer
         let ptr = Arc::into_raw(self.0.clone()) as *mut _;
         ptr
+    }
+    fn vtable(&self) -> *const () {
+        //SAFETY: Arc only has one strong reference to the component
+        //Well here technically two but were just hacking it to get the raw pointer
+        let ptr = Arc::into_raw(self.0.clone()) as *const dyn Component;
+        let (_, vtable) =
+            unsafe { mem::transmute::<*const dyn Component, (*const u8, *const ())>(ptr) };
+        vtable
     }
 }
 

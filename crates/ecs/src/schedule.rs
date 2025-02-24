@@ -7,6 +7,7 @@ use base::rt::join::UnorderedJoin;
 use base::{collections::queue::Queue, rt::spawn};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env::args;
+use std::iter;
 
 #[derive(Default)]
 pub struct Schedule {
@@ -42,16 +43,18 @@ impl Schedule {
 
             for (node_id, mut node) in batch {
                 // Prepare node input data
-                node.put.prepare(&mut world.registry);
+                let table_count = node.put.prepare(&mut world.registry);
 
                 // Create system task
                 join.push(async move {
                     // Execute system
                     dbg!("stock");
-                    (node.system)(node.rx.clone())
-                        .await
-                        .map_err(|_| ())
-                        .expect("YO");
+                    for _ in 0..table_count {
+                        (node.system)(node.rx.clone())
+                            .await
+                            .map_err(|_| ())
+                            .expect("YO");
+                    }
                     dbg!("poop");
                     (node_id, node)
                 });

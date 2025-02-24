@@ -1,4 +1,7 @@
+use crate::component::source::Source;
+use crate::entity::Entity;
 use base::collections::{array::Array, arrayvec::ArrayVec};
+use base::rng::transform::DistributionTransform;
 use core::fmt;
 use std::fmt::{Formatter, format};
 use std::{
@@ -10,10 +13,7 @@ use std::{
     ptr, slice,
     sync::Arc,
 };
-use base::rng::transform::DistributionTransform;
-use crate::component::source::Source;
-use crate::entity::Entity;
-
+use base::array;
 use super::{Component, Handle, Meta, archetype::Archetype};
 
 pub struct Data {
@@ -39,10 +39,7 @@ pub trait Erase {
 
 impl<C: Component> Erase for C {
     fn erase(self: &mut Arc<Self>) -> Data {
-        let ptr = ptr::slice_from_raw_parts(
-            Arc::as_ptr(self),
-            mem::size_of::<C>(),
-        );
+        let ptr = ptr::slice_from_raw_parts(Arc::as_ptr(self), mem::size_of::<C>());
         Data {
             //SAFETY illegal hack
             ptr: ptr as *mut _,
@@ -96,6 +93,20 @@ impl Table {
 
     fn pages_mut(&self) -> impl Iterator<Item = &mut Page> {
         unsafe { self.pages.get().as_mut().unwrap() }.iter_mut()
+    }
+
+    pub fn handle(&self, mut idx: usize, component: usize) -> &Handle {
+        self.pages()
+            .find(|page| {
+                let count = page.count();
+                let chosen = idx < count;
+                if !chosen {
+                    idx -= count;
+                }
+                chosen
+            })
+            .map(|page| page.handle(idx, component))
+            .expect("Index out of bounds")
     }
 
     pub fn entity(&self, mut idx: usize) -> Entity {
@@ -185,10 +196,7 @@ impl Table {
         match pages.len() {
             0 => 0,
             1 => pages.first().unwrap().count(),
-            x => {
-                (x - 1) * Page::capacity(&self.archetype)
-                + pages.last().as_ref().unwrap().count()
-            }
+            x => (x - 1) * Page::capacity(&self.archetype) + pages.last().as_ref().unwrap().count(),
         }
     }
 }
@@ -218,7 +226,7 @@ impl Page {
 
     pub fn new(archetype: Archetype) -> Self {
         let capacity = Self::capacity(&archetype);
-        let row_size = archetype.size();
+        let row_size = archetype.size().max(1);
         let layout = alloc::Layout::from_size_align(Page::SIZE, Page::SIZE).unwrap();
         let mut head = unsafe { alloc::alloc(layout) };
         unsafe { head.cast::<Archetype>().write(archetype) };
@@ -226,7 +234,11 @@ impl Page {
             Self {
                 capacity,
                 head,
-                state: UnsafeCell::new(State::init(head.add(mem::size_of::<Archetype>()), capacity, row_size)),
+                state: UnsafeCell::new(State::init(
+                    head.add(mem::size_of::<Archetype>()),
+                    capacity,
+                    row_size,
+                )),
             }
         }
     }
@@ -237,7 +249,7 @@ impl Page {
     }
 
     pub fn count(&self) -> usize {
-        dbg!(Self::capacity(self.archetype())) - dbg!(self.state().freed.len())
+        (Self::capacity(self.archetype())) - (self.state().freed.len())
     }
 
     pub fn state(&self) -> &mut State {
@@ -255,15 +267,21 @@ impl Page {
         Entity::new(ptr)
     }
 
-    pub fn insert(&self, components: Components) -> Option<Entity> {
+    pub fn handle(&self, index: usize, component: usize) -> &Handle {
+        &self.state().erased[(index)].as_ref().unwrap()[component]
+    }
+
+    pub fn insert(&self, components: Components<'static>) -> Option<Entity> {
         let entity = self.state().freed.pop()?;
+        self.state().erased[entity.index()] = Some(Array::new());
         let archetype = self.archetype();
         for (i, ((_handle, mut erased), meta)) in
             components.into_iter().zip(archetype.iter()).enumerate()
         {
-            erased.copy_to(dbg!(self.row_column(&entity, i)), meta);
+            self.state().erased[(entity.index())].as_mut().unwrap().push(_handle.into());
+            erased.copy_to((self.row_column(&entity, i)), meta);
         }
-        dbg!(&entity);
+        (&entity);
         Some(entity)
     }
 

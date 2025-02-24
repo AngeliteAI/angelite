@@ -151,17 +151,16 @@ pub struct Put {
     put: Sender<Cmd>,
 }
 impl Put {
-    pub(crate) fn prepare(&self, registry: &mut Registry) {
-        dbg!(self.put.is_disconnected());
+    pub(crate) fn prepare(&self, registry: &mut Registry) -> usize {
         let mut binding = (self.binding)(registry);
-        dbg!(self.put.is_disconnected());
+        let mut count = 0;
         for (supertype, table) in binding.table_vec().unwrap().drain(..) {
-            dbg!(&supertype);
             self.put
                 .clone()
                 .try_send(Cmd::Execute(supertype, table)).unwrap();
+            count += 1;
         }
-        dbg!(self.put.is_disconnected());
+        count
     }
 }
 

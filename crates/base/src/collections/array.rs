@@ -454,15 +454,15 @@ unsafe impl<T: Sync, const L: usize> Sync for Array<T, L> {}
 #[macro_export]
 macro_rules! array {
     () => ({
-        $crate::Array::<_, 0>::new()
+        base::collections::array::Array::<_, 0>::new()
     });
     ($elem:expr) => ({
-        let mut a = $crate::Array::<_, 1>::new();
+        let mut a = base::collections::array::Array::<_, 1>::new();
         a.push($elem).unwrap();
         a
     });
     ($($x:expr),+ $(,)?) => ({
-        let mut a = Array::<_, {<[()]>::len(&[$($crate::replace_expr!($x, ())),*])}>::new();
+        let mut a = Array::<_, {<[()]>::len(&[$(base::replace_expr!($x, ())),*])}>::new();
         $(
             a.push($x);
         )*
