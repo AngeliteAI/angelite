@@ -4,8 +4,11 @@
     box_as_ptr,
     unboxed_closures,
     async_fn_traits,
-    more_maybe_bounds
+    more_maybe_bounds,
+    set_ptr_value,
 )]
+#![feature(ptr_metadata)]
+
 pub mod component;
 pub mod entity;
 pub mod query;

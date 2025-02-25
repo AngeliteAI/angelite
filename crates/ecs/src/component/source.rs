@@ -1,35 +1,21 @@
-use std::{mem, ptr, sync::Arc};
-
-use base::array;
-use base::collections::array::Array;
+use std::{any::Any, mem, ptr, sync::Arc};
 
 use super::{
     Component, Handle,
     archetype::Archetype,
     table::{Components, Data, Erase},
 };
+use base::array;
+use base::collections::array::Array;
+use base::prelude::W;
+use base::rng::transform::DistributionTransform;
 
 pub trait Source: 'static {
+    type Table: ?Sized;
     unsafe fn erase_component_data<'a>(self) -> Components<'a>
     where
-        Self: 'a;
+        Self: 'a + Sized;
     unsafe fn archetype(&self) -> Archetype;
 }
 ecs_macro::source!();
 
-impl<T: Component + 'static> Source for T {
-    unsafe fn erase_component_data<'a>(mut self) -> Components<'a>
-    where
-        Self: 'a,
-    {
-        let mut this = Arc::new(self);
-        let mut arr = vec![];
-        let data = this.erase();
-        arr.push((Handle(this), data));
-        arr
-    }
-
-    unsafe fn archetype(&self) -> Archetype {
-        Archetype::from_iter([T::meta()])
-    }
-}

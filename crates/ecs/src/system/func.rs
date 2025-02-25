@@ -114,16 +114,13 @@ impl<T: Params<'static>> AsyncFnOnce<()> for Get<T> {
     extern "rust-call" fn async_call_once(self, args: ()) -> Self::CallOnceFuture {
         Getter {
             fut: Box::pin(async move {
-                loop {
-                    match self.get.try_recv() {
-                        Ok(Cmd::Execute(supertype, table)) => {
-                            return Ok(T::create(supertype, table));
-                        }
-                        Ok(Cmd::Complete) => return Err(Finished),
-                        Err(flume::TryRecvError::Empty) => yield_now().await,
-                        Err(_) => panic!("failure to retrieve system param information"),
+                let mut supertypes = Box::leak(Box::new(vec![]));
+                let mut tables = Box::leak(Box::new(vec![]));
+                    while let Ok(Cmd::Execute(supertype, table)) = self.get.try_recv() {
+                        tables.push(table);
+                        supertypes.push(supertype);
                     }
-                }
+                return Ok(T::create(supertypes, tables));
             }),
         }
     }

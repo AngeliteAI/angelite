@@ -1,6 +1,7 @@
 use derive_more::derive::{Deref, DerefMut};
 use std::fmt::Formatter;
 use std::{any::TypeId, fmt, mem, ptr, sync::Arc};
+use std::ptr::DynMetadata;
 
 pub mod access;
 pub mod archetype;
@@ -28,31 +29,26 @@ impl Meta {
     }
 }
 
-pub trait Component {
+pub trait Component: 'static {
     fn meta() -> Meta
     where
         Self: Sized;
 }
 
-pub struct Handle<'a>(Arc<dyn Component + 'a>);
-impl Handle<'_> {
-    fn as_mut_ptr(&mut self) -> *mut u8 {
+pub struct Handle(pub Box<dyn Component>, pub DynMetadata<dyn Component>);
+impl Handle {
+    fn as_mut_ptr(&mut self) -> *mut dyn Component {
         //SAFETY: Arc only has one strong reference to the component
         //Well here technically two but were just hacking it to get the raw pointer
-        let ptr = Arc::into_raw(self.0.clone()) as *mut _;
+        let ptr = &mut *self.0 as *mut _;
         ptr
     }
-    fn vtable(&self) -> *const () {
-        //SAFETY: Arc only has one strong reference to the component
-        //Well here technically two but were just hacking it to get the raw pointer
-        let ptr = Arc::into_raw(self.0.clone()) as *const dyn Component;
-        let (_, vtable) =
-            unsafe { mem::transmute::<*const dyn Component, (*const u8, *const ())>(ptr) };
-        vtable
+    fn vtable(&self) -> DynMetadata<dyn Component> {
+        self.1
     }
 }
 
-impl fmt::Debug for Handle<'_> {
+impl fmt::Debug for Handle {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Handle").finish()
     }

@@ -1,5 +1,7 @@
+use super::{Component, Handle, Meta, archetype::Archetype};
 use crate::component::source::Source;
 use crate::entity::Entity;
+use base::array;
 use base::collections::{array::Array, arrayvec::ArrayVec};
 use base::rng::transform::DistributionTransform;
 use core::fmt;
@@ -13,11 +15,9 @@ use std::{
     ptr, slice,
     sync::Arc,
 };
-use base::array;
-use super::{Component, Handle, Meta, archetype::Archetype};
 
 pub struct Data {
-    pub ptr: *mut [u8],
+    pub ptr: *mut u8,
     pub meta: Meta,
 }
 impl Data {
@@ -34,21 +34,25 @@ impl Data {
 }
 
 pub trait Erase {
-    fn erase(self: &mut Arc<Self>) -> Data;
+    fn erase(self:  Box<Self>) -> (Box<Self>, Data);
 }
 
 impl<C: Component> Erase for C {
-    fn erase(self: &mut Arc<Self>) -> Data {
-        let ptr = ptr::slice_from_raw_parts(Arc::as_ptr(self), mem::size_of::<C>());
-        Data {
-            //SAFETY illegal hack
-            ptr: ptr as *mut _,
-            meta: Meta::of::<C>(),
+    fn erase(self: Box<Self>) -> (Box<Self>, Data) {
+        let orig = Box::into_raw(self);
+        let ptr = ptr::slice_from_raw_parts(orig, mem::size_of::<C>());
+
+        unsafe {
+            (Box::from_raw(orig), Data {
+                //SAFETY illegal hack
+                ptr: ptr as *mut _,
+                meta: Meta::of::<C>(),
+            })
         }
     }
 }
 
-pub type Components<'a> = Vec<(Handle<'a>, Data)>;
+pub type Components<'a> = Vec<(Handle, Data)>;
 
 pub struct Table {
     archetype: Archetype,
@@ -77,7 +81,7 @@ pub struct Page {
 
 #[derive(Debug)]
 pub struct State {
-    erased: Vec<Option<Array<Handle<'static>, { Archetype::MAX }>>>,
+    erased: Vec<Option<Array<Handle, { Archetype::MAX }>>>,
     freed: Vec<Entity>,
 }
 
@@ -109,7 +113,7 @@ impl Table {
             .expect("Index out of bounds")
     }
 
-    pub fn entity(&self, mut idx: usize) -> Entity {
+    pub fn entity(&self, mut idx: usize) -> Option<Entity> {
         self.pages()
             .find(|page| {
                 let count = page.count();
@@ -120,7 +124,6 @@ impl Table {
                 chosen
             })
             .map(|page| page.entity(idx))
-            .expect("Index out of bounds")
     }
 
     pub fn extend(
@@ -195,7 +198,7 @@ impl Table {
         let pages = unsafe { self.pages.get().as_mut().unwrap() };
         match pages.len() {
             0 => 0,
-            1 => pages.first().unwrap().count(),
+            1 => dbg!(pages.first().unwrap().count()),
             x => (x - 1) * Page::capacity(&self.archetype) + pages.last().as_ref().unwrap().count(),
         }
     }
@@ -278,7 +281,10 @@ impl Page {
         for (i, ((_handle, mut erased), meta)) in
             components.into_iter().zip(archetype.iter()).enumerate()
         {
-            self.state().erased[(entity.index())].as_mut().unwrap().push(_handle.into());
+            self.state().erased[(entity.index())]
+                .as_mut()
+                .unwrap()
+                .push(_handle.into());
             erased.copy_to((self.row_column(&entity, i)), meta);
         }
         (&entity);
@@ -304,10 +310,10 @@ impl Page {
                 unreachable!();
             };
             let mut data = Data {
-                ptr: ptr::slice_from_raw_parts_mut(self.row_column(entity, i), meta.size),
+                ptr: self.row_column(entity, i),
                 meta: *meta,
             };
-            data.copy_from(erased[i].as_mut_ptr(), meta);
+            data.copy_from(todo!(), meta);
         }
     }
 

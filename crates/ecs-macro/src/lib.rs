@@ -1,3 +1,5 @@
+#![feature(set_ptr_value)]
+
 use itertools::Itertools;
 use parse::{Parse, ParseStream};
 use proc_macro::{Span, TokenStream};
@@ -8,14 +10,19 @@ pub fn component(attr: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as Item);
 
     match input {
-        Item::Struct(s) => component_struct(s),
+        Item::Struct(s) => component_struct(s, attr),
         Item::Trait(t) => component_trait(t, attr),
         _ => panic!("The `component` attribute can only be applied to structs and traits."),
     }
 }
 
-fn component_struct(input: ItemStruct) -> TokenStream {
+fn component_struct(input: ItemStruct, mut attr: TokenStream) -> TokenStream {
+    if attr.is_empty() {
+        attr = quote! { dyn ecs::component::Component }.into();
+    }
     let name = &input.ident;
+    let mut attr_args = parse_macro_input!(attr as AttrArgs);
+    let set = attr_args.types.remove(0);
 
     let expanded = quote! {
         #input // Keep the original struct definition
@@ -29,8 +36,30 @@ fn component_struct(input: ItemStruct) -> TokenStream {
             }
         }
 
+        impl ecs::component::source::Source for #name {
+            type Table = #set;
+            unsafe fn erase_component_data<'a>(mut self) -> ecs::component::table::Components<'a>
+            where
+                Self: 'a + Sized
+            {
+                let mut original = Box::new(self);
+                use ecs::component::table::Erase;
+                let (original, data) = original.erase();
+                let original = Box::into_raw(original as Box<Self::Table>);
+                let (_, vtable) = original.to_raw_parts();
+                let original = Box::from_raw(original);
+                let mut arr = vec![];
+                arr.push((ecs::component::Handle(original, std::mem::transmute(vtable)), data));
+                arr
+            }
+            unsafe fn archetype(&self) -> ecs::component::archetype::Archetype {
+                ecs::component::archetype::Archetype::from_iter([<#name as Component>::meta()])
+            }
+        }
+
         impl ecs::component::access::Access for #name {
-            fn access<'a>(ptr: *const u8, _vtable: *const ()) -> &'a mut Self {
+            fn access<'a>(ptr: *mut u8, vtable: std::ptr::DynMetadata<dyn Component>) -> &'a mut Self {
+
                 unsafe { &mut *(ptr as *mut #name) }
             }
 
@@ -45,7 +74,7 @@ fn component_struct(input: ItemStruct) -> TokenStream {
 
 fn component_trait(input: ItemTrait, attr: TokenStream) -> TokenStream {
     let name = &input.ident;
-    let attr_args = parse_macro_input!(attr as TraitAttrArgs);
+    let attr_args = parse_macro_input!(attr as AttrArgs);
 
     let meta_variants = attr_args.types.iter().map(|ty| {
         quote! {
@@ -58,10 +87,9 @@ fn component_trait(input: ItemTrait, attr: TokenStream) -> TokenStream {
 
         impl ecs::component::access::Access for dyn #name {
 
-             fn access<'a>(ptr: *const u8, vtable: *const ()) -> &'a mut Self {
-                 unsafe {
-                    let (data, vtable) = (ptr, vtable);
-                    std::mem::transmute::<(*const u8, *const ()), &mut Self>((data, vtable))
+            fn access<'a>(ptr: *mut u8, vtable: std::ptr::DynMetadata<dyn Component>) -> &'a mut Self {
+                unsafe {
+                    (std::ptr::from_raw_parts_mut(ptr, std::mem::transmute(vtable)) as *mut dyn #name).as_mut().unwrap()
                 }
             }
 
@@ -74,17 +102,17 @@ fn component_trait(input: ItemTrait, attr: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-struct TraitAttrArgs {
+struct AttrArgs {
     types: Vec<Type>,
 }
 
-impl Parse for TraitAttrArgs {
+impl Parse for AttrArgs {
     fn parse(input: ParseStream) -> Result<Self> {
         let types = syn::punctuated::Punctuated::<Type, Token![,]>::parse_terminated(input)?
             .into_iter()
             .collect();
 
-        Ok(TraitAttrArgs { types })
+        Ok(AttrArgs { types })
     }
 }
 
@@ -111,13 +139,17 @@ fn params_arity(arity: usize) -> proc_macro2::TokenStream {
         impl<'a, #(#input_types: Param<'a> + 'static),*> Params<'a> for #input_tuple {
 
             fn bind(registry: &mut Registry) -> Shard {
-                    let mut archetype = Archetype::default();
-                    #(#input_types::inject(&mut archetype);)*
-                    registry.shard(archetype)
+                    let mut archetypes = Vec::<Archetype>::default();
+                    #(#input_types::inject(&mut archetypes);)*
+                        let mut shard = Shard::Linear { tables: vec![].into() };
+                    for archetype in archetypes {
+                        shard += registry.shard(archetype);
+                    }
+                    shard
             }
-            fn create(archetype: Archetype, mut table: &'static mut Table) -> Self where Self: Sized {
+            fn create(archetype: &'a [Archetype], mut table: &'a mut [&'a mut Table]) -> Self where Self: Sized {
                 let table = UnsafeCell::new(table);
-                (#(#input_types::create(archetype.clone(), unsafe { table.get().as_mut().unwrap() }),)*)
+                (#(#input_types::create(archetype, unsafe { table.get().as_mut().unwrap() }),)*)
             }
         }
     }
@@ -203,43 +235,46 @@ fn query_arity(arity: usize) -> proc_macro2::TokenStream {
             type Ref = (#(<#types as Sink>::Ref,)*);
             type Mut = (#(<#types as Sink>::Mut,)*);
 
-            fn offsets() -> Array<usize, 256> {
-                let mut meta = [#(<#types as Sink>::meta(),)*];
+            fn offsets(index: usize) -> Option<Array<usize, 256>> {
+                let mut meta = [#(*<#types as Sink>::meta().get(index)?,)*];
                 let mut offset = (0..meta.len()).map(|i| meta.iter().take(i).copied().map(|meta| meta.size).sum::<usize>()).collect::<Array<_, 256>>();
                 let mut meta_offset = meta.into_iter().zip(offset).collect::<Array<_, 256>>();
                 meta_offset.sort_by_key(|(meta, _)| meta.id);
-                meta_offset.into_iter().map(|(_, offset)| offset).collect()
+                Some(meta_offset.into_iter().map(|(_, offset)| offset).collect())
             }
 
-            fn archetype() -> Archetype {
-                [#(<#types as Sink>::meta(),)*].into_iter().collect()
+            fn archetype(index: usize) -> Option<Archetype> {
+                Some([#(*<#types as Sink>::meta().get(index)?,)*].into_iter().collect())
             }
 
              fn deduce(state: &mut State, fetcher: &Fetch<Self>) -> Option<Self::Ref> {
-                if state.cursor.finished() {
+                let cursor = state.cursor;
+                if state.check(fetcher) {
                     None?
                 }
 
-                let row = state.cursor.row();
+                let row = cursor.row();
+                let table = cursor.table();
 
                 let mut index = 0;
                 Some((#(unsafe {
-                    let item = <#types as Sink>::coerce_component_data(fetcher.table.entity(row), state.offsets[index], state.supertype[index], fetcher.table.handle(row, index));
+                    let item = <#types as Sink>::coerce_component_data(fetcher.tables[table].entity(row)?, state.offsets[index], state.supertype[index], fetcher.tables[table].handle(row, index));
                     index += 1;
                     item
                 },)*))
              }
 
              fn deduce_mut(state: &mut State, fetcher: &mut Fetch<Self>) -> Option<Self::Mut> {
-                 if state.cursor.finished() {
+                 if state.check(fetcher) {
                     None?
                 }
 
                 let row = state.cursor.row();
+                let table = state.cursor.table();
 
                 let mut index = 0;
                 Some((#(unsafe {
-                    let item = <#types as Sink>::coerce_component_data_mut(fetcher.table.entity(row), state.offsets[index], state.supertype[index], fetcher.table.handle(row, index));
+                    let item = <#types as Sink>::coerce_component_data_mut(fetcher.tables[table].entity(row)?, state.offsets[index], state.supertype[index], fetcher.tables[table].handle(row, index));
                     index += 1;
                     item
                 },)*))
@@ -272,7 +307,7 @@ fn sink_arity(arity: usize) -> proc_macro2::TokenStream {
 
     quote! {
         impl<#(#input_types: Sink + 'static),*> Sink for #input_tuple {
-            unsafe fn erase_component_data<'a>(self) -> Array<(Handle<'a>, Data), 256>  where Self: 'a {
+            unsafe fn erase_component_data<'a>(self) -> Array<(ecs::component::Handle<'a>, Data), 256>  where Self: 'a {
                 let (#(#input_params,)*) = self;
                 let mut raw_data = array![#(#input_params.erase_component_data(),)*].into_iter().flatten().collect::<Array<_, 256>>();
                 raw_data.sort_by_key(|(_, data)| data.meta.id);
@@ -310,7 +345,8 @@ fn source_arity(arity: usize) -> proc_macro2::TokenStream {
 
     quote! {
         impl<#(#input_types: Source + 'static),*> Source for #input_tuple {
-            unsafe fn erase_component_data<'a>(self) -> Vec<(Handle<'a>, Data)>  where Self: 'a {
+            type Table = #input_tuple;
+            unsafe fn erase_component_data<'a>(self) -> Vec<(Handle, Data)>  where Self: 'a {
                 let (#(#input_params,)*) = self;
                 let mut raw_data = vec![#(#input_params.erase_component_data(),)*].into_iter().flatten().collect::<Vec<_>>();
                 raw_data.sort_by_key(|(_, data)| data.meta.id);

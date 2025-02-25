@@ -11,17 +11,37 @@ use std::future::pending;
 mod status {
     use ecs::component::{Component, access::Access, component};
 
-    #[component]
+    #[component(dyn Code)]
     pub struct Ok;
-    #[component]
+    #[component(dyn Code)]
     pub struct NotFound;
 
     #[component(Ok, NotFound)]
-    pub trait Code {}
+    pub trait Code: 'static + Component {
+        fn name(&self) -> &'static str;
+        fn code(&self) -> u16;
+    }
 
-    impl Code for Ok {}
+    impl Code for Ok {
+        fn name(&self) -> &'static str { "Ok "}
+        fn code(&self) -> u16 {
+            200
+        }
+    }
 
-    impl Code for NotFound {}
+    impl Code for NotFound {
+        fn name(&self) -> &'static str { "NotFound "}
+        fn code(&self) -> u16 {
+            404
+        }
+    }
+}
+
+pub fn sysa(query: Query<'_, &'_ dyn Code>) {
+    let mut count = 0;
+    for code in &query {
+        println!("{}", code.0.code())
+    }
 }
 
 #[component]
@@ -32,31 +52,9 @@ pub struct Request;
 pub struct Pending;
 
 pub struct Router {}
-
-pub fn get() {}
-
-pub fn post() {}
-
-pub fn put() {}
-
-pub fn delete() {}
-
-pub fn patch() {}
-
-pub fn head() {}
-
-pub fn options() {}
-
-pub fn sysa(query: Query<&'static dyn Code>) {
-    for (i, code) in query.into_iter().enumerate() {
-        println!("{i}");
-        //do http stuff
-    }
-}
-
 pub async fn serve(router: Router) {
     let mut world = World::default();
-    for i in 0..1000 {
+    for i in 0..10000 {
         if base::rng::rng()
             .await
             .unwrap()

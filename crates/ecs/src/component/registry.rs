@@ -1,5 +1,6 @@
 use base::collections::arrayvec::ArrayVec;
 use std::cell::UnsafeCell;
+use std::ops::AddAssign;
 use std::{collections::HashMap, iter};
 
 use crate::entity::Entity;
@@ -16,6 +17,59 @@ pub(crate) enum Shard {
     Linear {
         tables: UnsafeCell<Vec<(Archetype, &'static mut Table)>>,
     },
+}
+
+impl AddAssign<Shard> for Shard {
+    fn add_assign(&mut self, other: Shard) {
+        match (self, other) {
+            (
+                Shard::Map { tables },
+                Shard::Map {
+                    tables: other_tables,
+                },
+            ) => {
+                let tables = unsafe { tables.get().as_mut().unwrap() };
+                let other_tables = unsafe { other_tables.get().as_mut().unwrap() };
+                for (archetype, table) in other_tables.drain() {
+                    tables.insert(archetype, table);
+                }
+            }
+            (
+                Shard::Linear { tables },
+                Shard::Linear {
+                    tables: other_tables,
+                },
+            ) => {
+                let tables = unsafe { tables.get().as_mut().unwrap() };
+                let other_tables = unsafe { other_tables.get().as_mut().unwrap() };
+                tables.extend(other_tables.drain(..));
+            }
+            (
+                Shard::Linear { tables },
+                Shard::Map {
+                    tables: other_tables,
+                },
+            ) => {
+                let tables = unsafe { tables.get().as_mut().unwrap() };
+                let other_tables = unsafe { other_tables.get().as_mut().unwrap() };
+                for (archetype, table) in other_tables.drain() {
+                    tables.push((archetype, table));
+                }
+            }
+            (
+                Shard::Map { tables },
+                Shard::Linear {
+                    tables: other_tables,
+                },
+            ) => {
+                let tables = unsafe { tables.get().as_mut().unwrap() };
+                let other_tables = unsafe { other_tables.get().as_mut().unwrap() };
+                for (archetype, table) in other_tables.drain(..) {
+                    tables.insert(archetype, table);
+                }
+            }
+        }
+    }
 }
 
 impl Shard {

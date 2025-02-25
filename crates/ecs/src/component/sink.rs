@@ -19,7 +19,7 @@ pub trait Sink: ?Sized {
     {
         Self::interpret_component_data(
             Data {
-                ptr: ptr::slice_from_raw_parts_mut(dbg!(entity.data()).add(offset) as _, meta.size),
+                ptr: entity.data().add(offset) as _,
                 meta,
             },
             handle,
@@ -41,7 +41,7 @@ pub trait Sink: ?Sized {
     {
         Self::interpret_component_data_mut(
             Data {
-                ptr: ptr::slice_from_raw_parts_mut(entity.head().add(offset) as _, meta.size),
+                ptr: entity.head().add(offset),
                 meta,
             },
             handle,
@@ -52,7 +52,7 @@ pub trait Sink: ?Sized {
     where
         Self: Sized;
 
-    fn meta() -> Meta
+    fn meta() -> Vec<Meta>
     where
         Self: Sized;
 }
@@ -62,12 +62,12 @@ impl<'a, T: Access + ?Sized + 'a> Sink for &'a mut T {
     type Ref = &'a T;
 
     unsafe fn interpret_component_data(data: Data, handle: &Handle) -> Self::Ref {
-        T::access(data.ptr as *const u8, handle.vtable())
+        T::access(data.ptr, handle.vtable())
     }
     unsafe fn interpret_component_data_mut(data: Data, handle: &Handle) -> Self::Mut {
-        T::access(data.ptr as *const u8, handle.vtable())
+        T::access(data.ptr, handle.vtable())
     }
-    fn meta() -> Meta
+    fn meta() -> Vec<Meta>
     where
         Self: Sized,
     {
@@ -80,12 +80,12 @@ impl<'a, T: Access + ?Sized + 'a> Sink for &'a T {
     type Ref = &'a T;
 
     unsafe fn interpret_component_data(data: Data, handle: &Handle) -> Self::Ref {
-        T::access(data.ptr as *const u8, handle.vtable())
+        T::access(data.ptr, handle.vtable())
     }
     unsafe fn interpret_component_data_mut(data: Data, handle: &Handle) -> Self::Mut {
-        T::access(data.ptr as *const u8, handle.vtable())
+        T::access(data.ptr, handle.vtable())
     }
-    fn meta() -> Meta
+    fn meta() -> Vec<Meta>
     where
         Self: Sized,
     {

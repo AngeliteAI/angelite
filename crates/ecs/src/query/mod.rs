@@ -4,45 +4,56 @@ use crate::{
 };
 use base::rt::UnsafeLocal;
 use fetch::{Fetch, Scan};
-use std::marker::PhantomData;
+use std::{iter, marker::PhantomData, mem};
 
 use crate::world::World;
 
 pub mod fetch;
 
 //SAFETY: Query will only be used by one thread at a time, so its inner RefCell is safe.
-pub struct Query<'a, Q: fetch::Query + ?Sized>(UnsafeLocal<Fetch<'a, Q>>);
+pub struct Query<'a, Q: fetch::Query + 'static + ?Sized>(UnsafeLocal<Fetch<'a, Q>>);
 
-impl<'a, Q: fetch::Query> IntoIterator for &'a Query<'a, Q> {
+impl<'a, 'b: 'a, Q: fetch::Query> IntoIterator for &'a Query<'b, Q> {
     type Item = Q::Ref;
-    type IntoIter = Scan<&'a Fetch<'a, Q>>;
+    type IntoIter = Scan<&'b Fetch<'b, Q>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        Self::IntoIter::new(&self.0)
+        Self::IntoIter::new(unsafe { mem::transmute(&self.0) })
     }
 }
-impl<'a, Q: fetch::Query> IntoIterator for &'a mut Query<'a, Q> {
+impl<'a, 'b: 'a, Q: fetch::Query> IntoIterator for &'a mut Query<'b, Q> {
     type Item = Q::Mut;
-    type IntoIter = Scan<&'a mut Fetch<'a, Q>>;
+    type IntoIter = Scan<&'b mut Fetch<'b, Q>>;
 
     fn into_iter(mut self) -> Self::IntoIter {
-        Self::IntoIter::new_mut(&mut self.0)
+        Self::IntoIter::new_mut(unsafe { mem::transmute(&mut self.0) })
     }
 }
 
 impl<'a, Q: fetch::Query> Param<'a> for Query<'a, Q> {
-    fn inject(archetype: &mut Archetype) {
-        archetype.merge(Q::archetype())
+    fn inject(archetypes: &mut Vec<Archetype>) {
+        let mut index = 0;
+        let mut iter = iter::repeat_with(|| {
+            let archetype = Q::archetype(index);
+            index += 1;
+            archetype
+        });
+
+        while let Some(archetype) = iter.next().flatten() {
+            archetypes.push(archetype);
+        }
     }
 
-    fn create(archetype: Archetype, table: &'a mut crate::component::table::Table) -> Self
+    fn create(
+        archetypes: &'a [Archetype],
+        tables: &'a mut [&'a mut crate::component::table::Table],
+    ) -> Self
     where
         Self: Sized + 'a,
     {
-        dbg!(&table);
         Query(UnsafeLocal(Fetch {
-            supertype: archetype,
-            table,
+            supertypes: archetypes,
+            tables,
             marker: PhantomData,
         }))
     }
