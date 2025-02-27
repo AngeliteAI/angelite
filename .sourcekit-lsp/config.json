@@ -1,0 +1,23 @@
+{
+  "sourcekitd": {
+    "defaultWorkspaceType": "package",
+    "backgroundIndexing": true
+  },
+  "compilationDatabase": {
+    "searchPaths": ["."]
+  },
+  "fallbackBuildSystem": {
+    "swiftCompilerFlags": ["-sdk", "$(xcrun --show-sdk-path --sdk macosx)"],
+    "cCompilerFlags": [],
+    "cxxCompilerFlags": [],
+    "sdk": "$(xcrun --show-sdk-path --sdk macosx)"
+  },
+  "index": {
+    "updateIndexStoreTimeout": 120
+  },
+  "buildSettingsTimeout": 30000,
+  "logging": {
+    "level": "debug",
+    "privacyLevel": "public"
+  }
+}
