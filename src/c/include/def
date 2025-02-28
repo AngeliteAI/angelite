@@ -1,0 +1,36 @@
+#pragma once
+#include <stdint.h>
+#include <stdbool.h>  // For Rust's bool type
+
+/**
+ * Signed integer types with explicit bit sizes
+ */
+typedef int8_t   i8;    // Rust's i8
+typedef int16_t  i16;   // Rust's i16
+typedef int32_t  i32;   // Rust's i32
+typedef int64_t  i64;   // Rust's i64
+
+/**
+ * Unsigned integer types with explicit bit sizes
+ */
+typedef uint8_t  u8;    // Rust's u8
+typedef uint16_t u16;   // Rust's u16
+typedef uint32_t u32;   // Rust's u32
+typedef uint64_t u64;   // Rust's u64
+
+/**
+ * Floating-point types
+ */
+typedef float    f32;   // Rust's f32
+typedef double   f64;   // Rust's f64
+
+/**
+ * Size and pointer types
+ */
+typedef uintptr_t usize;   // Rust's usize (platform-dependent size)
+typedef intptr_t  isize;   // Rust's isize (platform-dependent signed size)
+
+/**
+ * Character type (Rust's char is 4 bytes for Unicode, but we use u32 for compatibility)
+ */
+typedef uint32_t rust_char;

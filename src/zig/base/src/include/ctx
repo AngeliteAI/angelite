@@ -1,0 +1,13 @@
+const io = @import("./io");
+
+// Core context functions
+pub const Context = opaque {};
+pub extern fn init(max_concurrency: u32) ?*Context;
+pub extern fn shutdown(ctx: *Context) void;
+
+// Queue operations
+pub extern fn submit(context: *Context) i32;
+pub extern fn poll(context: *Context, completions: *io.Complete, max_completions: u32, timeout_ms: i32) i32;
+
+// Error handling
+pub extern fn last_error() [*:0]const u8;

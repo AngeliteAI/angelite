@@ -1,0 +1,10 @@
+pub const Buffer = extern struct {
+    data: [*]u8,
+    capacity: u64,
+    size: u64,
+    owned: bool,
+};
+
+pub extern fn buffer_create(capacity: u64) ?*Buffer;
+pub extern fn buffer_wrap(data: [*]u8, size: u64) ?*Buffer;
+pub extern fn buffer_release(buffer: *Buffer) void;

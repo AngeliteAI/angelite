@@ -1,1 +1,8 @@
-{}
+{
+    "files.associations": {
+        "cpu": "zig",
+        "ctx": "zig",
+        "file": "zig",
+        "io": "zig"
+    }
+}
