@@ -1,4 +1,4 @@
-const io = @import("./io");
+const io = @import("io");
 
 // Core context functions
 pub const Context = opaque {};

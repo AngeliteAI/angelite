@@ -1,31 +1,28 @@
-const c = @cImport({
-    @cInclude("stdlib.h");
-});
+const cpu = @import("../include/cpu");
+const std = @import("std");
 
-pub const Buffer = extern struct {
-    data: [*]u8,
-    capacity: u64,
-    size: u64,
-    owned: bool,
-};
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 pub fn buffer_create(capacity: u64) ?*Buffer {
-    // Allocate memory for the buffer structure
-    const buffer = @as(*Buffer, @ptrCast(c.malloc(@sizeOf(Buffer)))) orelse return null;
+    // Allocate memory for the buffer struct
+    const buffer_ptr = allocator.create(Buffer) catch return null;
 
     // Allocate memory for the data
-    const data = @as([*]u8, @ptrCast(c.malloc(capacity))) orelse {
-        c.free(buffer);
+    const data = allocator.alloc(u8, capacity) catch {
+        allocator.destroy(buffer_ptr);
         return null;
     };
 
     // Initialize the buffer
-    buffer.data = data;
-    buffer.capacity = capacity;
-    buffer.size = 0;
-    buffer.owned = true;
+    buffer_ptr.* = Buffer{
+        .data = data.ptr,
+        .capacity = capacity,
+        .size = 0,
+        .owned = true, // We own this memory and are responsible for freeing it
+    };
 
-    return buffer;
+    return buffer_ptr;
 }
 
 pub fn buffer_wrap(data: [*]u8, size: u64) ?*Buffer {
