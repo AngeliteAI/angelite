@@ -2,6 +2,14 @@ const io = @import("io");
 
 const Error = extern struct {
     msg: [*:0]const u8,
+    trace: [*:0]const u8,
+
+    fn from(err: anyerror) *Error {
+        return Error{
+            .msg = @errorName(err),
+            .trace = @errorReturnTrace(),
+        };
+    }
 };
 
 // Core context functions

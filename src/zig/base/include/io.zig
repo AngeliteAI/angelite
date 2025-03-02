@@ -12,14 +12,12 @@ pub const Operation = extern struct {
     id: u64,
     type: OperationType,
     user_data: ?*anyopaque,
+    handle: *anyopaque,
 };
 
 pub const Complete = extern struct {
-    id: u64,
+    op: Operation,
     result: i32,
-    type: OperationType,
-    user_data: ?*anyopaque,
-    handle: *anyopaque,
 };
 
 pub const SeekOrigin = enum(c_int) {

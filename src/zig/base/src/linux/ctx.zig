@@ -32,7 +32,7 @@ pub fn init(desired_concurrency: usize) ?*Context {
     if (ret) |ctx| {
         return ctx;
     } else |err| {
-        lastError = Error{ .msg = @errorName(err) };
+        lastError = Error.from(err);
         return null;
     }
 }
@@ -49,8 +49,22 @@ pub fn shutdown() void {
     }
 }
 
-pub fn submit() usize {}
-pub fn poll(completions: *io.Complete, max_completions: usize) usize {}
+pub fn submit() usize {
+    if (iou.submit()) |submitted| {
+        return submitted;
+    } else |err| {
+        lastError = Error.from(err);
+        return 0;
+    }
+}
+pub fn poll(completions: *io.Complete, max_completions: usize) usize {
+    if (iou.poll(completions, max_completions)) |completed| {
+        return completed;
+    } else |err| {
+        lastError = Error.from(err);
+        return 0;
+    }
+}
 
 pub fn lastError() ?*Error {
     return &context.lastError;

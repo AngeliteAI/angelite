@@ -5,6 +5,7 @@ const util = @import("util");
 const mem = std.mem;
 const os = std.os;
 const linux = os.linux;
+const IoError = @import("err").Io;
 
 const Context = struct {
     fd: os.fd_t,
@@ -99,10 +100,10 @@ fn unmap() void {
 }
 
 fn submit() !usize {
-    var context = ctx.context() orelse return error.IoUringNotInit;
+    const context = ctx.context() orelse return error.IoErrorUringNotInit;
 
     var ioUring = context.ioUring;
-    var pendingOps = &ioUring.pendingOps;
+    const pendingOps = &ioUring.pendingOps;
 
     if (*pendingOps == 0) {
         return 0;
@@ -120,12 +121,13 @@ fn submit() !usize {
 }
 
 pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
-    var context = ctx.context().?;
+    const context = ctx.context().?;
 
-    var ioUring = context.ioUring;
+    const ioUring = context.ioUring;
 
     var ts = linux.timespec{
         .tv_sec = 0,
+
         .tv_nsec = 0,
     };
 
@@ -133,14 +135,14 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
 
     if (completed < 0) {
         return switch (-completed) {
-            os.EINVAL => error.InvalidArgument,
-            os.EAGAIN => error.ResourceUnavailable,
-            os.EFAULT => error.BadAddress,
-            os.ENOMEM => error.OutOfMemory,
-            os.EBADF => error.BadFileDescriptor,
-            os.ETIMEDOUT => error.Timeout,
-            os.EINTR => error.Interrupt,
-            else => error.Unknown,
+            os.EINVAL => IoError.InvalidArgument,
+            os.EAGAIN => IoError.ResourceUnavailable,
+            os.EFAULT => IoError.BadAddress,
+            os.ENOMEM => IoError.OutOfMemory,
+            os.EBADF => IoError.BadFileDescriptor,
+            os.ETIMEDOUT => IoError.Timeout,
+            os.EINTR => IoError.Interrupt,
+            else => IoError.Unknown       
         };
     }
 
@@ -148,15 +150,21 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
         return 0;
     }
 
-    var i: u32 = 0;
-    while (i < @intCast(completed)) : (i += 1) {   
-        var cqe = cqeOp(i);
+    var i: usize = 0;
+    while (i < completed) : (i += 1) {   
+        const cqe = cqeOp(i);
 
+        const op = @as(io.Operation, cqe.user_data); 
 
+        completions[i] = io.Completion {
+            .op = op,
+            .result = cqe.res,
+        };
     }
 }
 
-fn cqeOp(index: usize) void {
+fn cqeOp(index: usize) *linux.io_uring_cqe {
+    const context = ctx.current().?;
     const head = context.ioUring.cq.head.* + index;
     const mask = context.ioUring.cq.mask.*;
     const cqe = &context.ioUring.cq.array(linux.io_uring_cqe)[head & mask];
