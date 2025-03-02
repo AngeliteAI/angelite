@@ -36,4 +36,4 @@ pub extern fn connect(socket: *Socket, address: *const IpAddress, user_data: ?*a
 pub extern fn read(socket: *Socket, buffer: *cpu.Buffer, user_data: ?*anyopaque) u64;
 pub extern fn write(socket: *Socket, buffer: *cpu.Buffer, user_data: ?*anyopaque) u64;
 pub extern fn close(socket: *Socket, user_data: ?*anyopaque) u64;
-pub extern fn set_option(socket: *Socket, option: SocketOption, value: *const anyopaque, len: u32) bool;
+pub extern fn setOption(socket: *Socket, option: SocketOption, value: *const anyopaque, len: u32) bool;

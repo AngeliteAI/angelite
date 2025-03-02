@@ -1,4 +1,5 @@
 /target
+/zig-cache
 .DS_Store
 .env
 .obsidian
