@@ -8,6 +8,12 @@ pub const OperationType = enum(c_int) {
     FLUSH,
 };
 
+pub const Operation = extern struct {
+    id: u64,
+    type: OperationType,
+    user_data: ?*anyopaque,
+};
+
 pub const Complete = extern struct {
     id: u64,
     result: i32,

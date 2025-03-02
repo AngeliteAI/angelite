@@ -19,9 +19,9 @@ pub fn current() ?*Context {
     return context;
 }
 
-pub fn init(desired_concurrency: u32) ?*Context {
+pub fn init(desired_concurrency: usize) ?*Context {
     const ret = init: {
-        var ioUring = 
+        var ioUring =
             iou.init(desired_concurrency) catch break :init error.IoUringInit;
 
         context.* = Context{ .ioUring = ioUring, .lastError = null };
@@ -32,10 +32,11 @@ pub fn init(desired_concurrency: u32) ?*Context {
     if (ret) |ctx| {
         return ctx;
     } else |err| {
-        lastError = Error { .msg = @errorName(err) }; 
+        lastError = Error{ .msg = @errorName(err) };
         return null;
     }
 }
+
 pub fn shutdown() void {
     iou.unmap();
 
@@ -48,10 +49,9 @@ pub fn shutdown() void {
     }
 }
 
-pub fn submit() i32 {}
-pub fn poll(completions: *io.Complete, max_completions: u32, timeout_ms: i32) i32 {}
+pub fn submit() usize {}
+pub fn poll(completions: *io.Complete, max_completions: usize) usize {}
 
 pub fn lastError() ?*Error {
     return &context.lastError;
 }
-
