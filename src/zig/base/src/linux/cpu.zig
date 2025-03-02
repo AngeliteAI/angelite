@@ -6,7 +6,7 @@ const Buffer = cpu.Buffer;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-pub fn create(cap: usize) ?*Buffer {
+pub fn create(capacity: usize) ?*Buffer {
     const buffer_ptr = allocator.create(Buffer) catch return null;
 
     // Allocate memory for the data
@@ -28,12 +28,7 @@ pub fn create(cap: usize) ?*Buffer {
 pub fn wrap(data: [*]u8, len: usize) ?*Buffer {
     const buffer_ptr = allocator.create(Buffer) catch return null;
 
-    buffer_ptr.* = Buffer {
-        .data = data catch return null,
-        .capacity = len,
-        .len = len,
-        .owned = false
-    };
+    buffer_ptr.* = Buffer{ .data = data catch return null, .capacity = len, .len = len, .owned = false };
 
     return buffer_ptr;
 }
@@ -45,4 +40,3 @@ pub fn release(buffer: *Buffer) bool {
 
     allocator.destroy(buffer);
 }
-

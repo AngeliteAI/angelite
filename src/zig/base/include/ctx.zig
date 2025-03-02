@@ -1,8 +1,7 @@
 const io = @import("io");
 
 const Error = extern struct {
-    internal_msg: [*:0]const u8,
-    external_msg: [*:0]const u8,
+    msg: [*:0]const u8,
 };
 
 // Core context functions
