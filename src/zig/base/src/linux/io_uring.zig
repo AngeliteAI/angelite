@@ -2,6 +2,7 @@ const ctx = @import("ctx");
 const io = @import("io");
 const std = @import("std");
 const util = @import("util");
+const osio = @import("os_io");
 const mem = std.mem;
 const os = std.os;
 const linux = os.linux;
@@ -13,8 +14,14 @@ const Context = struct {
     mappings: RingMappings,
     sq: QueuePointers,
     cq: QueuePointers,
-    pending_ops: usize,
+    pendingOps: usize,
+    nextOp: usize,
 };
+
+pub fn nextOperation() usize {
+    const nextOp = &ctx.current().?.ioUring.nextOp;
+    return @atomicRmw(usize, nextOp, .Add, 1, .Acquire);
+}
 
 pub fn init(desired_concurrency: usize) !Context {
     var params = mem.zeroes(linux.io_uring_params);
@@ -134,16 +141,7 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
     const completed = linux.io_uring_enter(ioUring.fd, 0, max_completions, linux.IORING_ENTER_GETEVENTS, &ts);
 
     if (completed < 0) {
-        return switch (-completed) {
-            os.EINVAL => IoError.InvalidArgument,
-            os.EAGAIN => IoError.ResourceUnavailable,
-            os.EFAULT => IoError.BadAddress,
-            os.ENOMEM => IoError.OutOfMemory,
-            os.EBADF => IoError.BadFileDescriptor,
-            os.ETIMEDOUT => IoError.Timeout,
-            os.EINTR => IoError.Interrupt,
-            else => IoError.Unknown,
-        };
+        return osio.convertError(-completed);
     }
 
     if (completed == 0) {
@@ -152,7 +150,7 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
 
     var i: usize = 0;
     while (i < completed) : (i += 1) {
-        const cqe = cqeOp(i);
+        const cqe = completionByIndex(i);
 
         const op = @as(io.Operation, cqe.user_data);
 
@@ -163,10 +161,43 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
     }
 }
 
-fn cqeOp(index: usize) *linux.io_uring_cqe {
+fn completionByIndex(index: usize) *linux.io_uring_cqe {
     const context = ctx.current().?;
     const head = context.ioUring.cq.head.* + index;
     const mask = context.ioUring.cq.mask.*;
     const cqe = &context.ioUring.cq.array(linux.io_uring_cqe)[head & mask];
     return cqe;
+}
+
+pub fn nextSubmission() !*linux.io_uring_sqe {
+    const context = ctx.current().?;
+    const iou = context.ioUring;
+    const params = iou.params;
+    const sqes = iou.mappings.sqes;
+
+    const head = iou.sq.head.*;
+    const tail = iou.sq.tail.*;
+    const mask = iou.sq.mask.*;
+
+    if (tail - head > params.sq_entries) {
+        return IoError.BufferFull;
+    }
+
+    const index = tail & mask;
+
+    const sqes_ptr = @as([*]linux.io_uring_sqe, @ptrCast(sqes.ptr));
+
+    const sqe = &sqes_ptr[index];
+
+    iou.sq.tail.* += 1;
+    iou.pendingOps += 1;
+
+    const sqe_bytes = @as([*]u8, @ptrCast(sqe))[0..@sizeOf(linux.io_uring_sqe)];
+    @memset(sqe_bytes, 0);
+
+    return sqe;
+}
+
+pub fn next() !struct { op: usize, sqe: *linux.io_uring_sqe } {
+    return .{ .op = try nextOperation(), .sqe = try nextSubmission() };
 }
