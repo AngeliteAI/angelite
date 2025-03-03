@@ -17,7 +17,7 @@ pub const IpAddress = extern struct {
     },
 };
 
-pub const SocketOption = enum(i32) {
+pub const Option = enum(i32) {
     REUSEADDR = 2,
     RCVTIMEO = 3,
     SNDTIMEO = 4,
@@ -28,12 +28,12 @@ pub const SocketOption = enum(i32) {
 };
 
 // Socket operations
-pub extern fn create(ipv6: bool) ?*Socket;
+pub extern fn create(ipv6: bool, user_data: ?*anyopaque) ?*Socket;
 pub extern fn bind(socket: *Socket, address: *const IpAddress) bool;
 pub extern fn listen(socket: *Socket, backlog: i32) bool;
-pub extern fn accept(socket: *Socket, user_data: ?*anyopaque) u64;
-pub extern fn connect(socket: *Socket, address: *const IpAddress, user_data: ?*anyopaque) u64;
-pub extern fn read(socket: *Socket, buffer: *cpu.Buffer, user_data: ?*anyopaque) u64;
-pub extern fn write(socket: *Socket, buffer: *cpu.Buffer, user_data: ?*anyopaque) u64;
-pub extern fn close(socket: *Socket, user_data: ?*anyopaque) u64;
-pub extern fn setOption(socket: *Socket, option: SocketOption, value: *const anyopaque, len: u32) bool;
+pub extern fn accept(socket: *Socket) u64;
+pub extern fn connect(socket: *Socket, address: *const IpAddress) u64;
+pub extern fn read(socket: *Socket, buffer: *cpu.Buffer) u64;
+pub extern fn write(socket: *Socket, buffer: *cpu.Buffer) u64;
+pub extern fn close(socket: *Socket) u64;
+pub extern fn setOption(socket: *Socket, option: Option, value: *const anyopaque, len: u32) bool;

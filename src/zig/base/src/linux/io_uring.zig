@@ -8,6 +8,84 @@ const os = std.os;
 const linux = os.linux;
 const IoError = @import("err").Io;
 
+pub const IoUringOp = enum(u8) {
+    NOP = 0,
+    READ = 1,
+    WRITE = 2,
+    FSYNC = 3,
+    CLOSE = 4,
+    STATX = 5,
+    READ_FIXED = 6,
+    WRITE_FIXED = 7,
+    POLL_ADD = 8,
+    POLL_REMOVE = 9,
+    SYNC_FILE_RANGE = 10,
+    SENDMSG = 11,
+    RECVMSG = 12,
+    SEND = 13,
+    RECV = 14,
+    ACCEPT = 15,
+    CONNECT = 16,
+    EPOLL_CTL = 17,
+    SPLICE = 18,
+    PROVIDE_BUFFERS = 19,
+    REMOVE_BUFFERS = 20,
+    TEE = 21,
+    SHUTDOWN = 22,
+    RENAMEAT = 23,
+    UNLINKAT = 24,
+    MKDIRAT = 25,
+    SYMLINKAT = 26,
+    LINKAT = 27,
+    MSG_RING = 28,
+    FSETXATTR = 29,
+    SETXATTR = 30,
+    FGETXATTR = 31,
+    GETXATTR = 32,
+    SOCKET = 33,
+    URING_CMD = 34,
+    SEND_ZC = 35,
+    SENDMSG_ZC = 36,
+    WAITID = 37,
+    FUTEX_WAIT = 38,
+    FUTEX_WAKE = 39,
+    FUTEX_WAITV = 40,
+    FIXED_FD_INSTALL = 41,
+    FADVISE = 42,
+    MADVISE = 43,
+    OPENAT2 = 44,
+    QUOTACTL = 45,
+    STATX_TIMESTAMP = 46,
+    BINARY = 47,
+    FDINFO = 48,
+    BIND = 49,
+    LISTEN = 50,
+    SETSOCKOPT = 51,
+    GETSOCKOPT = 52,
+    FSYNC_FILE_RANGE = 53,
+    LSEEK = 54,
+    PREAD = 55,
+    PWRITE = 56,
+
+    // Helper function to get integer value
+    pub fn value(self: IoUringOp) u8 {
+        return @intFromEnum(self);
+    }
+
+    // Helper to check if operation is available in current kernel
+    pub fn isAvailable(self: IoUringOp, kernel_version: struct { major: u32, minor: u32 }) bool {
+        return switch (self) {
+            .BIND, .LISTEN, .SETSOCKOPT, .GETSOCKOPT => (kernel_version.major > 6) or
+                (kernel_version.major == 6 and kernel_version.minor >= 0),
+            .FSYNC_FILE_RANGE, .LSEEK => (kernel_version.major > 6) or
+                (kernel_version.major == 6 and kernel_version.minor >= 0),
+            .PREAD, .PWRITE => (kernel_version.major > 6) or
+                (kernel_version.major == 6 and kernel_version.minor >= 1),
+            else => true, // Most operations available since io_uring introduction (5.1)
+        };
+    }
+};
+
 const Context = struct {
     fd: os.fd_t,
     params: linux.io_uring_params,

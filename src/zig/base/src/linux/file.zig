@@ -8,11 +8,11 @@ const mem = std.mem;
 const os = std.os;
 const linux = os.linux;
 
-const IORING_OP_READ = 1;
-const IORING_OP_WRITE = 2;
-const IORING_OP_FSYNC = 3;
-const IORING_OP_CLOSE = 4;
-const IORING_OP_LSEEK = 31;
+pub const IORING_OP_READ = iou.IoUringOp.IORING_OP_READ;
+pub const IORING_OP_WRITE = iou.IoUringOp.IORING_OP_WRITE;
+pub const IORING_OP_FSYNC = iou.IoUringOp.IORING_OP_FSYNC;
+pub const IORING_OP_CLOSE = iou.IoUringOp.IORING_OP_CLOSE;
+pub const IORING_OP_LSEEK = iou.IoUringOp.IORING_OP_LSEEK;
 
 const IoError = io.Error;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
