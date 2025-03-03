@@ -21,7 +21,7 @@ pub fn init(desired_concurrency: usize) !Context {
     const fd = linux.io_uring_setup(util.nextPowerOfTwo(desired_concurrency), &params);
     errdefer os.close(fd);
 
-    var mappings = try map();
+    const mappings = try map();
 
     return Context{ .fd = fd, .sq = QueuePointers.get(mappings.sq.ptr, params.sq_off, u32), .cq = QueuePointers.get(mappings.cq.ptr, params.cq_off, linux.io_uring_cqe), .params = params, .mappings = mappings, .pending_ops = 0 };
 }
@@ -142,7 +142,7 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
             os.EBADF => IoError.BadFileDescriptor,
             os.ETIMEDOUT => IoError.Timeout,
             os.EINTR => IoError.Interrupt,
-            else => IoError.Unknown       
+            else => IoError.Unknown,
         };
     }
 
@@ -151,12 +151,12 @@ pub fn poll(completions: *io.Complete, max_completions: usize) !usize {
     }
 
     var i: usize = 0;
-    while (i < completed) : (i += 1) {   
+    while (i < completed) : (i += 1) {
         const cqe = cqeOp(i);
 
-        const op = @as(io.Operation, cqe.user_data); 
+        const op = @as(io.Operation, cqe.user_data);
 
-        completions[i] = io.Completion {
+        completions[i] = io.Completion{
             .op = op,
             .result = cqe.res,
         };

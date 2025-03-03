@@ -21,7 +21,7 @@ pub fn current() ?*Context {
 
 pub fn init(desired_concurrency: usize) ?*Context {
     const ret = init: {
-        var ioUring =
+        const ioUring =
             iou.init(desired_concurrency) catch break :init error.IoUringInit;
 
         context.* = Context{ .ioUring = ioUring, .lastError = null };
