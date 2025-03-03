@@ -27,13 +27,13 @@ pub const Option = enum(i32) {
     NODELAY = 8,
 };
 
-// Socket operations
+// Socket extern forward declarations
 pub extern fn create(ipv6: bool, user_data: ?*anyopaque) ?*Socket;
-pub extern fn bind(socket: *Socket, address: *const IpAddress) bool;
-pub extern fn listen(socket: *Socket, backlog: i32) bool;
-pub extern fn accept(socket: *Socket) u64;
-pub extern fn connect(socket: *Socket, address: *const IpAddress) u64;
-pub extern fn read(socket: *Socket, buffer: *cpu.Buffer) u64;
-pub extern fn write(socket: *Socket, buffer: *cpu.Buffer) u64;
-pub extern fn close(socket: *Socket) u64;
-pub extern fn setOption(socket: *Socket, option: Option, value: *const anyopaque, len: u32) bool;
+pub extern fn bind(sock: *Socket, address: *const IpAddress) bool;
+pub extern fn listen(sock: *Socket, backlog: i32) bool;
+pub extern fn accept(sock: *Socket) bool;
+pub extern fn connect(sock: *Socket, address: *const IpAddress) bool;
+pub extern fn recv(sock: *Socket, buffer: *cpu.Buffer) bool;
+pub extern fn send(sock: *Socket, buffer: *cpu.Buffer) bool;
+pub extern fn close(sock: *Socket) bool;
+pub extern fn setOption(sock: *Socket, option: Option, value: *const anyopaque, len: u32) bool;

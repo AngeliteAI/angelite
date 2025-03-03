@@ -5,7 +5,20 @@ pub const io = @import("linux/io.zig");
 pub const iou = @import("linux/io_uring.zig");
 pub const socket = @import("linux/socket.zig");
 
-// Re-export specific functions if needed for a cleaner API
-pub const buffer_create = cpu.buffer_create;
-pub const buffer_wrap = cpu.buffer_wrap;
-pub const buffer_release = cpu.buffer_release;
+pub const cpuBufferCreate = cpu.create;
+pub const cpuBufferWrap = cpu.wrap;
+pub const cpuBufferRelease = cpu.release;
+
+pub const Socket = socket.Socket;
+pub const IpAddress = socket.IpAddress;
+pub const Option = socket.Option;
+
+pub const socketCreate = socket.create;
+pub const socketBind = socket.bind;
+pub const socketListen = socket.listen;
+pub const socketAccept = socket.accept;
+pub const socketConnect = socket.connect;
+pub const socketRecv = socket.recv;
+pub const socketSend = socket.send;
+pub const socketClose = socket.close;
+pub const socketSetOption = socket.setOption;
