@@ -9,6 +9,23 @@ pub const cpuBufferCreate = cpu.create;
 pub const cpuBufferWrap = cpu.wrap;
 pub const cpuBufferRelease = cpu.release;
 
+pub const ctxCurrent = ctx.current;
+pub const ctxInit = ctx.init;
+pub const ctxShutdown = ctx.shutdown;
+pub const ctxSubmit = ctx.submit;
+pub const ctxPoll = ctx.poll;
+pub const ctxLastError = ctx.lastError;
+
+pub const File = file.File;
+pub const fileCreate = file.create;
+pub const fileOpen = file.open;
+pub const fileRead = file.read;
+pub const fileWrite = file.write;
+pub const fileSeek = file.seek;
+pub const fileFlush = file.flush;
+pub const fileClose = file.close;
+pub const fileSize = file.size;
+
 pub const Socket = socket.Socket;
 pub const IpAddress = socket.IpAddress;
 pub const Option = socket.Option;

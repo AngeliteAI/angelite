@@ -18,6 +18,8 @@ const IoError = io.Error;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
+const lastError = ctx.lastError;
+
 pub const File = struct {
     fd: os.fd_t,
     path: [*:0]const u8,
@@ -161,3 +163,66 @@ pub const File = struct {
         size_out.* = @as(usize, @intCast(stat.size));
     }
 };
+
+pub fn create(user_data: ?*anyopaque) ?*File {
+    return File.create(user_data) catch |err| {
+        lastError().* = Error.from(err);
+        return null;
+    };
+}
+
+pub fn open(file: *File, path: [*:0]const u8, mode: i32) bool {
+    file.open(path, mode) catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}
+
+pub fn read(file: *File, buffer: *cpu.Buffer, offset: i64) bool {
+    file.read(buffer, offset) catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}
+
+pub fn write(file: *File, buffer: *cpu.Buffer, offset: i64) bool {
+    file.write(buffer, offset) catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}
+
+pub fn seek(file: *File, offset: i64, origin: io.SeekOrigin) bool {
+    file.seek(offset, origin) catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}
+
+pub fn flush(file: *File) bool {
+    file.flush() catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}
+
+pub fn close(file: *File) bool {
+    file.close() catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}
+
+pub fn size(file: *File, size_out: *u64) bool {
+    file.size(size_out) catch |err| {
+        lastError().* = Error.from(err);
+        return false;
+    };
+    return true;
+}

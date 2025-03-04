@@ -75,6 +75,7 @@ pub mod prelude {
 }
 
 pub mod collections;
+pub mod ffi;
 pub mod io;
 pub mod math;
 pub mod rng;
