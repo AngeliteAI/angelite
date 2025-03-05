@@ -1,11 +1,4 @@
 use std::ffi::{CStr, c_void};
-use std::mem;
-use std::pin::Pin;
-use std::ptr::DynMetadata;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-
-use crate::rt::{worker::current_worker, yield_now};
-use crate::time::{Duration, Millis};
 
 /// Operation type as defined in Zig
 #[repr(C)]
@@ -99,6 +92,7 @@ pub struct IpAddress {
 
 /// IP Address union matching Zig's addr union
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub union IpAddrUnion {
     pub ipv4: Ipv4Addr,
     pub ipv6: Ipv6Addr,
@@ -106,6 +100,7 @@ pub union IpAddrUnion {
 
 /// IPv4 address structure matching Zig's ipv4 struct
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ipv4Addr {
     pub addr: [u8; 4],
     pub port: u16,
@@ -113,6 +108,7 @@ pub struct Ipv4Addr {
 
 /// IPv6 address structure matching Zig's ipv6 struct
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ipv6Addr {
     pub addr: [u8; 16],
     pub port: u16,
@@ -131,6 +127,12 @@ pub enum SocketOption {
 }
 
 // External functions from Zig
+// Context func#[repr(C)]
+pub enum HandleType {
+    FILE,
+    SOCKET,
+}
+
 extern "C" {
     // Context functions
     pub fn current() -> *mut Context;
@@ -144,6 +146,9 @@ extern "C" {
     pub fn cpuBufferCreate(cap: usize) -> *mut Buffer;
     pub fn cpuBufferWrap(data: *mut u8, len: usize) -> *mut Buffer;
     pub fn cpuBufferRelease(buffer: *mut Buffer) -> bool;
+
+    // Gen I/O
+    pub fn handleType(handle: *mut std::ffi::c_void) -> *mut HandleType;
 
     // File functions
     pub fn fileCreate(user_data: *mut c_void) -> *mut File;

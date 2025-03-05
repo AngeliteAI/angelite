@@ -34,3 +34,7 @@ pub const ModeFlags = packed struct {
     truncate: bool = false,
     _padding: u26 = 0,
 };
+
+pub const HandleType = enum { FILE, SOCKET };
+
+pub extern fn handleType(handle: *anyopaque) HandleType;

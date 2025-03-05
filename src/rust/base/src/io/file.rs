@@ -1,7 +1,11 @@
-pub struct File {}
+use crate::ffi;
 
-impl File {}
+pub struct File(ffi::File);
 
-mod ffi {
-    extern "C" {}
+impl File {
+    fn open(path: Path) -> Self {}
+
+    fn create(path: Path) -> Self {}
+
+    fn close(self) {}
 }
