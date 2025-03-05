@@ -116,10 +116,10 @@ impl<T: Params<'static>> AsyncFnOnce<()> for Get<T> {
             fut: Box::pin(async move {
                 let mut supertypes = Box::leak(Box::new(vec![]));
                 let mut tables = Box::leak(Box::new(vec![]));
-                    while let Ok(Cmd::Execute(supertype, table)) = self.get.try_recv() {
-                        tables.push(table);
-                        supertypes.push(supertype);
-                    }
+                while let Ok(Cmd::Execute(supertype, table)) = self.get.try_recv() {
+                    tables.push(table);
+                    supertypes.push(supertype);
+                }
                 return Ok(T::create(supertypes, tables));
             }),
         }
@@ -154,7 +154,8 @@ impl Put {
         for (supertype, table) in binding.table_vec().unwrap().drain(..) {
             self.put
                 .clone()
-                .try_send(Cmd::Execute(supertype, table)).unwrap();
+                .try_send(Cmd::Execute(supertype, table))
+                .unwrap();
             count += 1;
         }
         count

@@ -24,6 +24,7 @@ pub const fileWrite = file.write;
 pub const fileSeek = file.seek;
 pub const fileFlush = file.flush;
 pub const fileClose = file.close;
+pub const fileRelease = file.release;
 pub const fileSize = file.size;
 
 pub const Socket = socket.Socket;
@@ -38,4 +39,5 @@ pub const socketConnect = socket.connect;
 pub const socketRecv = socket.recv;
 pub const socketSend = socket.send;
 pub const socketClose = socket.close;
+pub const socketRelease = socket.release;
 pub const socketSetOption = socket.setOption;

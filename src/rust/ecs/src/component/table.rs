@@ -34,7 +34,7 @@ impl Data {
 }
 
 pub trait Erase {
-    fn erase(self:  Box<Self>) -> (Box<Self>, Data);
+    fn erase(self: Box<Self>) -> (Box<Self>, Data);
 }
 
 impl<C: Component> Erase for C {
@@ -43,11 +43,14 @@ impl<C: Component> Erase for C {
         let ptr = ptr::slice_from_raw_parts(orig, mem::size_of::<C>());
 
         unsafe {
-            (Box::from_raw(orig), Data {
-                //SAFETY illegal hack
-                ptr: ptr as *mut _,
-                meta: Meta::of::<C>(),
-            })
+            (
+                Box::from_raw(orig),
+                Data {
+                    //SAFETY illegal hack
+                    ptr: ptr as *mut _,
+                    meta: Meta::of::<C>(),
+                },
+            )
         }
     }
 }

@@ -324,8 +324,8 @@ pub fn create(ipv6: bool, ty: io.SocketType, user_data: ?*anyopaque) ?*Socket {
 
     return sock;
 }
-pub fn release(socket: *Socket) bool {
-    allocator.free(socket) catch return false;
+pub fn release(sock: *Socket) bool {
+    allocator.free(sock) catch return false;
     return true;
 }
 pub fn bind(sock: *Socket, address: *const IpAddress) bool {

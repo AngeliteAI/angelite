@@ -4,16 +4,35 @@ use std::{
 };
 
 use crate::{
-    ffi::{self, HandleType},
+    ffi::{self, HandleType, SocketType},
     io::{
-        self, Completion, Operation, OperationId, file::File, net::Connection, net::Listener,
-        net::Socket,
+        self, Completion, Operation, OperationId,
+        file::File,
+        net::{Connection, Listener, Socket},
     },
 };
 
 pub static INIT: AtomicBool = AtomicBool::new(false);
 
 pub struct Context(*mut ffi::Context);
+
+pub enum HandleType {
+    File,
+    Socket,
+    Listener,
+    Connection,
+}
+
+impl HandleType {
+    fn from_raw(ptr: *mut ()) {
+        match ffi::handleType(ffi.op.handle).unwrap().read() {
+            HandleType::File => File::from_raw(ffi.op.handle as *mut _),
+            HandleType::Socket => {
+                let info = ffi::socketInfo(ffi.op.handle as *mut _);
+            }
+        }
+    }
+}
 
 impl Context {
     fn current() -> Context {
@@ -22,7 +41,7 @@ impl Context {
                 ffi::init(14);
             }
         }
-        Context(unsafe { ffi::current() })
+        Context(unsafe { ffi::current().unwrap() })
     }
 
     fn submit(&self) {
@@ -56,10 +75,7 @@ impl Context {
                     io::Operation {
                         id: OperationId(ffi.op.id),
                         ty: mem::transmute(ffi.op.type_),
-                        handle: match ffi::handleType(ffi.op.handle).read() {
-                            HandleType::File => File::from_raw(ffi.op.handle),
-                            HandleType::Socket => Socket::from_raw(ffi.op.handle),
-                        },
+                        handle: todo!(),
                         user_data: ffi.op.user_data as _,
                     },
                     io::Completion(ffi.result),

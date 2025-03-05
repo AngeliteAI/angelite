@@ -1,7 +1,7 @@
 use derive_more::derive::{Deref, DerefMut};
 use std::fmt::Formatter;
-use std::{any::TypeId, fmt, mem, ptr, sync::Arc};
 use std::ptr::DynMetadata;
+use std::{any::TypeId, fmt, mem, ptr, sync::Arc};
 
 pub mod access;
 pub mod archetype;

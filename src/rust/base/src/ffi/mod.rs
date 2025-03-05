@@ -340,6 +340,7 @@ unsafe extern "C" {
     pub fn fileSeek(file: *mut File, offset: i64, origin: SeekOrigin) -> bool;
     pub fn fileFlush(file: *mut File) -> bool;
     pub fn fileClose(file: *mut File) -> bool;
+    pub fn fileRelease(sock: *mut Socket) -> bool;
     pub fn fileSize(file: *mut File, size: *mut u64) -> bool;
 
     // Socket functions
@@ -355,6 +356,7 @@ unsafe extern "C" {
     pub fn socketRecv(sock: *mut Socket, buffer: *mut Buffer) -> bool;
     pub fn socketSend(sock: *mut Socket, buffer: *mut Buffer) -> bool;
     pub fn socketClose(sock: *mut Socket) -> bool;
+    pub fn socketRelease(sock: *mut Socket) -> bool;
     pub fn socketSetOption(
         sock: *mut Socket,
         option: SocketOption,

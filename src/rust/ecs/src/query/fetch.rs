@@ -39,7 +39,7 @@ pub struct Cursor {
 }
 
 impl Cursor {
-    fn init(tables: & [&mut Table]) -> Cursor {
+    fn init(tables: &[&mut Table]) -> Cursor {
         Self {
             route: Default::default(),
             max: Vector(Simd([tables[0].count(), tables.len()])),
@@ -58,9 +58,9 @@ impl AddAssign<usize> for Cursor {
     fn add_assign(&mut self, rhs: usize) {
         self.route += Vector::<2, usize>::X;
         for i in (0..1).rev() {
-            if self.route[i] >= self.max[i]  {
+            if self.route[i] >= self.max[i] {
                 self.route[i] = 0;
-                self.route[i+1] +=1;
+                self.route[i + 1] += 1;
             }
         }
     }
@@ -71,7 +71,7 @@ impl Cursor {
         self.route[0] == self.max[0]
     }
     fn table_finished(&self) -> bool {
-         self.route[1] == self.max[1]
+        self.route[1] == self.max[1]
     }
 }
 

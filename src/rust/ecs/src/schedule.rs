@@ -69,7 +69,7 @@ impl Schedule {
                 self.graph.nodes.insert(completed_id.clone(), node);
                 nodes_completed.insert(completed_id.clone());
 
-               // update dependent nodes
+                // update dependent nodes
                 for dependent in self.graph.dependents(&completed_id) {
                     if let Some(pending_count) = nodes_pending.get_mut(&dependent) {
                         *pending_count -= 1;

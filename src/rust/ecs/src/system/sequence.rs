@@ -83,8 +83,11 @@ impl<
         iter::once(self.id())
     }
 }
-impl<F: Func<Input, Blocking<Output>> + Clone, Input: Params<'static>, Output: Params<'static> + Outcome>
-    Sequence<System<Input, Output, Blocking<Output>>> for F
+impl<
+    F: Func<Input, Blocking<Output>> + Clone,
+    Input: Params<'static>,
+    Output: Params<'static> + Outcome,
+> Sequence<System<Input, Output, Blocking<Output>>> for F
 {
     type Input = Input;
     type Output = Output;

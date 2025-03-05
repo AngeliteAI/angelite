@@ -49,7 +49,7 @@ pub const File = struct {
             .user_data = self.user_data,
             .handle = self,
         };
-        
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_READ,
             .flags = 0,
@@ -76,7 +76,7 @@ pub const File = struct {
             .user_data = self.user_data,
             .handle = self,
         };
-        
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_WRITE,
             .flags = 0,
@@ -100,7 +100,7 @@ pub const File = struct {
             .CURRENT => std.os.SEEK.CUR,
             .END => std.os.SEEK.END,
         };
-        
+
         const slot = try iou.next();
 
         const op = io.Operation{
@@ -109,7 +109,7 @@ pub const File = struct {
             .user_data = self.user_data,
             .handle = self,
         };
-        
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_LSEEK,
             .flags = 0,
@@ -135,7 +135,7 @@ pub const File = struct {
             .user_data = self.user_data,
             .handle = self,
         };
-        
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_FSYNC,
             .flags = 0,
@@ -159,7 +159,7 @@ pub const File = struct {
             .user_data = self.user_data,
             .handle = self,
         };
-        
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_CLOSE,
             .flags = 0,
@@ -168,7 +168,7 @@ pub const File = struct {
             .buf_index = 0,
             .__pad2 = [2]u64{0} ** 2,
         };
-        
+
         self.opened = false;
     }
 
@@ -185,7 +185,7 @@ pub const File = struct {
 
 // FFI-compatible functions
 pub fn create(user_data: ?*anyopaque) ?*File {
-    var file = allocator.create(File) catch {
+    const file = allocator.create(File) catch {
         ctx.setLastError(.OUT_OF_MEMORY);
         return null;
     };
@@ -212,7 +212,7 @@ pub fn open(file: *File, path: [*:0]const u8, mode: i32) bool {
         return false;
     }
 
-    if(path == null) {
+    if (path == null) {
         ctx.setLastError(.INVALID_ARGUMENT);
         return false;
     }
@@ -221,12 +221,17 @@ pub fn open(file: *File, path: [*:0]const u8, mode: i32) bool {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 
 pub fn read(file: *File, buffer: *cpu.Buffer, offset: i64) bool {
-    if (file == null || buffer == null) {
+    if (file == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    if (buffer == null) {
         ctx.setLastError(.INVALID_ARGUMENT);
         return false;
     }
@@ -235,21 +240,25 @@ pub fn read(file: *File, buffer: *cpu.Buffer, offset: i64) bool {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 
 pub fn write(file: *File, buffer: *cpu.Buffer, offset: i64) bool {
-    if (file == null || buffer == null) {
+    if (file == null) {
         ctx.setLastError(.INVALID_ARGUMENT);
         return false;
     }
 
+    if (buffer == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
     file.write(buffer, offset) catch |e| {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 
@@ -263,7 +272,7 @@ pub fn seek(file: *File, offset: i64, origin: io.SeekOrigin) bool {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 
@@ -277,7 +286,7 @@ pub fn flush(file: *File) bool {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 
@@ -291,12 +300,17 @@ pub fn close(file: *File) bool {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 
 pub fn size(file: *File, size_out: *u64) bool {
-    if (file == null || size_out == null) {
+    if (file == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    if (size_out == null) {
         ctx.setLastError(.INVALID_ARGUMENT);
         return false;
     }
@@ -305,7 +319,7 @@ pub fn size(file: *File, size_out: *u64) bool {
         ctx.setLastError(err.Error.fromError(e));
         return false;
     };
-    
+
     return true;
 }
 

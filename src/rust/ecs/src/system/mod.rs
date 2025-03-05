@@ -1,8 +1,8 @@
-use std::pin::Pin;
-use flume::Receiver;
-use base::rt::Handle;
-use func::{Finished, Return};
 use crate::system::func::Cmd;
+use base::rt::Handle;
+use flume::Receiver;
+use func::{Finished, Return};
+use std::pin::Pin;
 
 pub mod func;
 pub mod graph;
