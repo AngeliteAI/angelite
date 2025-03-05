@@ -5,7 +5,10 @@ use std::{
 
 use crate::{
     ffi::{self, HandleType},
-    io::{self, Completion, Operation, OperationId, file::File, socket::Socket},
+    io::{
+        self, Completion, Operation, OperationId, file::File, net::Connection, net::Listener,
+        net::Socket,
+    },
 };
 
 pub static INIT: AtomicBool = AtomicBool::new(false);

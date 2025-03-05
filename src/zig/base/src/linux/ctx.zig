@@ -1,40 +1,33 @@
+// src/zig/base/src/linux/ctx.zig
 const io = @import("io");
 const iou = @import("io_uring");
 const std = @import("std");
 const util = @import("util");
+const err = @import("err");
 const mem = std.mem;
 const os = std.os;
 const linux = os.linux;
 
-const Error = @import("ctx").Error;
-
 pub const Context = extern struct {
     ioUring: iou.Context,
-    lastError: ?*Error,
+    lastErrorCode: err.Error,
 };
 
 var context = mem.zeroes(Context);
 
 pub fn current() ?*Context {
-    return context;
+    return &context;
 }
 
 pub fn init(desired_concurrency: usize) ?*Context {
-    const ret = init: {
-        const ioUring =
-            iou.init(desired_concurrency) catch break :init error.IoUringInit;
-
-        context.* = Context{ .ioUring = ioUring, .lastError = null };
-
-        break :init context;
+    const ioUring = iou.init(desired_concurrency) catch |e| {
+        context.lastErrorCode = err.Error.fromError(e);
+        return null;
     };
 
-    if (ret) |ctx| {
-        return ctx;
-    } else |err| {
-        lastError = Error.from(err);
-        return null;
-    }
+    context = Context{ .ioUring = ioUring, .lastErrorCode = .OK };
+
+    return &context;
 }
 
 pub fn shutdown() void {
@@ -43,29 +36,35 @@ pub fn shutdown() void {
     if (context.fd != -1) {
         os.close(context.fd);
     }
-
-    if (context.allocator) |allocator| {
-        allocator.destroy(context);
-    }
 }
 
 pub fn submit() usize {
     if (iou.submit()) |submitted| {
         return submitted;
-    } else |err| {
-        lastError = Error.from(err);
-        return 0;
-    }
-}
-pub fn poll(completions: *io.Complete, max_completions: usize) usize {
-    if (iou.poll(completions, max_completions)) |completed| {
-        return completed;
-    } else |err| {
-        lastError = Error.from(err);
+    } else |e| {
+        context.lastErrorCode = err.Error.fromError(e);
         return 0;
     }
 }
 
-pub fn lastError() ?*Error {
-    return &context.lastError;
+pub fn poll(completions: *io.Complete, max_completions: usize) usize {
+    if (iou.poll(completions, max_completions)) |completed| {
+        return completed;
+    } else |e| {
+        context.lastErrorCode = err.Error.fromError(e);
+        return 0;
+    }
+}
+
+pub fn lastError() ?*err.Error {
+    if (context.lastErrorCode != err.Error.OK) {
+        return &context.lastErrorCode;
+    } else {
+        return null;
+    }
+}
+
+// Helper to set the last error
+fn setLastError(errorCode: err.Error) void {
+    context.lastErrorCode = errorCode;
 }

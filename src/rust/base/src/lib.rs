@@ -10,7 +10,10 @@
     async_fn_traits,
     unboxed_closures,
     thread_id_value,
-    negative_impls
+    negative_impls,
+    gen_blocks,
+    async_iterator,
+    if_let_guard
 )]
 
 use derive_more::derive::{Deref, DerefMut};

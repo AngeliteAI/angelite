@@ -1,9 +1,8 @@
 pub mod file;
-pub mod socket;
+pub mod net;
 
 pub enum Handle {
     File(file::File),
-    Socket(socket::Socket),
 }
 
 pub struct OperationId(pub(crate) u64);

@@ -1,22 +1,14 @@
+// src/zig/base/include/ctx.zig
 const io = @import("io");
+const err = @import("err");
 
-const Error = extern struct {
-    msg: [*:0]const u8,
-    trace: [*:0]const u8,
-
-    fn from(err: anyerror) *Error {
-        return Error{
-            .msg = @errorName(err),
-            .trace = @errorReturnTrace(),
-        };
-    }
-};
+// Use just the Error enum
+pub const Error = err.Error;
 
 // Core context functions
 pub const Context = opaque {};
 
 pub extern fn current() ?*Context;
-
 pub extern fn init(desired_concurrency: usize) ?*Context;
 pub extern fn shutdown() void;
 
@@ -24,5 +16,5 @@ pub extern fn shutdown() void;
 pub extern fn submit() usize;
 pub extern fn poll(completions: *io.Complete, max_completions: usize) usize;
 
-// Error handling
+// Error handling - now returns just the error code
 pub extern fn lastError() ?*Error;

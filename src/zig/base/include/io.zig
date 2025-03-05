@@ -35,6 +35,8 @@ pub const ModeFlags = packed struct {
     _padding: u26 = 0,
 };
 
+pub const SockType = enum { STREAM, DGRAM };
+
 pub const HandleType = enum { FILE, SOCKET };
 
 pub extern fn handleType(handle: *anyopaque) HandleType;

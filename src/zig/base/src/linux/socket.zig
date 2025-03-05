@@ -1,18 +1,14 @@
 const io = @import("io");
 const cpu = @import("cpu");
 const socket = @import("socket");
-const osio = @import("os_io");
 const ctx = @import("ctx");
 const iou = @import("io_uring");
 const std = @import("std");
 const util = @import("util");
-const mem = mem;
+const err = @import("err");
+const mem = std.mem;
 const os = std.os;
 const linux = os.linux;
-
-const INET = os.INET;
-const INET6 = os.INET6;
-const SOCK_STREAM = os.SOCK.STREAM;
 
 pub const IORING_OP_CLOSE = iou.IoUringOp.IORING_OP_CLOSE;
 pub const IORING_OP_ACCEPT = iou.IoUringOp.IORING_OP_ACCEPT;
@@ -24,36 +20,49 @@ pub const IORING_OP_LISTEN = iou.IoUringOp.IORING_OP_LISTEN;
 
 const IpAddress = socket.IpAddress;
 
-const IoError = io.Error;
-
-const Error = ctx.Error;
-
-const lastError = ctx.lastError;
-
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 pub const Socket = struct {
+    ty: io.HandleType,
     fd: os.fd_t,
     ipv6: bool,
-    address: *IpAddress,
     user_data: ?*anyopaque,
+    connected: bool,
+    bound: bool,
+    listening: bool,
 
-    pub fn create(ipv6: bool, user_data: ?*anyopaque) !*Socket {
-        const sock = gpa.allocate(Socket) orelse return null;
-        const domain = if (ipv6) INET6 orelse INET;
-        const fd = os.self(domain, SOCK_STREAM, 0);
+    fn bind(self: *Socket, address: *const IpAddress) !void {
+        if (self.bound) {
+            return error.AddressInUse;
+        }
 
-        sock.* = Socket{ .fd = fd, .user_data = user_data };
+        if (self.ipv6 != address.is_ipv6) {
+            return error.InvalidArgument;
+        }
 
-        sock;
-    }
+        var sock_addr: union {
+            ipv4: os.sockaddr.in,
+            ipv6: os.sockaddr.in6,
+        } = undefined;
 
-    pub fn bind(self: *Socket, address: *const IpAddress) !void {
-        if (self.ipv6 != address.is_ipv6)
-            return IoError.InvalidArgument;
+        var addr_len: os.socklen_t = undefined;
 
-        const sock_addr = try prepareAddress(address);
+        if (address.is_ipv6) {
+            var addr = &sock_addr.ipv6;
+            addr.* = mem.zeroes(os.sockaddr.in6);
+            addr.family = os.AF.INET6;
+            addr.port = mem.nativeToBig(u16, address.addr.ipv6.port);
+            mem.copy(u8, &addr.addr, &address.addr.ipv6.addr);
+            addr_len = @sizeOf(os.sockaddr.in6);
+        } else {
+            var addr = &sock_addr.ipv4;
+            addr.* = mem.zeroes(os.sockaddr.in);
+            addr.family = os.AF.INET;
+            addr.port = mem.nativeToBig(u16, address.addr.ipv4.port);
+            mem.copy(u8, &addr.addr, &address.addr.ipv4.addr);
+            addr_len = @sizeOf(os.sockaddr.in);
+        }
 
         const slot = try iou.next();
 
@@ -63,16 +72,29 @@ pub const Socket = struct {
             .user_data = self.user_data,
             .handle = self,
         };
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_BIND,
             .fd = self.fd,
-            .addr = @ptrCast(&sock_addr.addr),
-            .len = sock_addr.len,
-            .user_data = @ptrCast(&op),
+            .addr = @intFromPtr(&sock_addr),
+            .len = addr_len,
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
+
+        self.bound = true;
     }
 
-    pub fn listen(self: *Socket, backlog: i32) !void {
+    fn listen(self: *Socket, backlog: i32) !void {
+        if (!self.bound) {
+            return error.InvalidArgument;
+        }
+
+        if (self.listening) {
+            return error.InvalidArgument;
+        }
+
         const slot = try iou.next();
 
         const op = io.Operation{
@@ -81,15 +103,24 @@ pub const Socket = struct {
             .user_data = self.user_data,
             .handle = self,
         };
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_LISTEN,
             .fd = self.fd,
             .len = @intCast(backlog),
-            .user_data = @ptrCast(&op),
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
+
+        self.listening = true;
     }
 
-    pub fn accept(self: *Socket) !void {
+    fn accept(self: *Socket) !void {
+        if (!self.listening) {
+            return error.InvalidArgument;
+        }
+
         const slot = try iou.next();
 
         const op = io.Operation{
@@ -98,17 +129,47 @@ pub const Socket = struct {
             .user_data = self.user_data,
             .handle = self,
         };
+
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_ACCEPT,
             .fd = self.fd,
-            .user_data = @ptrCast(&op),
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
     }
-    pub fn connect(self: *Socket, address: *const IpAddress) !void {
-        if (self.ipv6 != address.is_ipv6)
-            return IoError.InvalidArgument;
 
-        const sock_addr = try prepareAddress(address);
+    fn connect(self: *Socket, address: *const IpAddress) !void {
+        if (self.connected) {
+            return error.ConnectionRefused;
+        }
+
+        if (self.ipv6 != address.is_ipv6) {
+            return error.InvalidArgument;
+        }
+
+        var sock_addr: union {
+            ipv4: os.sockaddr.in,
+            ipv6: os.sockaddr.in6,
+        } = undefined;
+
+        var addr_len: os.socklen_t = undefined;
+
+        if (address.is_ipv6) {
+            var addr = &sock_addr.ipv6;
+            addr.* = mem.zeroes(os.sockaddr.in6);
+            addr.family = os.AF.INET6;
+            addr.port = mem.nativeToBig(u16, address.addr.ipv6.port);
+            mem.copy(u8, &addr.addr, &address.addr.ipv6.addr);
+            addr_len = @sizeOf(os.sockaddr.in6);
+        } else {
+            var addr = &sock_addr.ipv4;
+            addr.* = mem.zeroes(os.sockaddr.in);
+            addr.family = os.AF.INET;
+            addr.port = mem.nativeToBig(u16, address.addr.ipv4.port);
+            mem.copy(u8, &addr.addr, &address.addr.ipv4.addr);
+            addr_len = @sizeOf(os.sockaddr.in);
+        }
 
         const slot = try iou.next();
 
@@ -122,17 +183,26 @@ pub const Socket = struct {
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_CONNECT,
             .fd = self.fd,
-            .addr = @ptrCast(&sock_addr.addr),
-            .len = sock_addr.len,
-            .user_data = @ptrCast(&op),
+            .addr = @intFromPtr(&sock_addr),
+            .len = addr_len,
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
+
+        self.connected = true;
     }
-    pub fn recv(self: *Socket, buffer: *cpu.Buffer) !void {
+
+    fn recv(self: *Socket, buffer: *cpu.Buffer) !void {
+        if (!self.connected) {
+            return error.BadSocketDescriptor;
+        }
+
         const slot = try iou.next();
 
         const op = io.Operation{
             .id = slot.op,
-            .type = io.OperationType.RECV,
+            .type = io.OperationType.READ,
             .user_data = self.user_data,
             .handle = self,
         };
@@ -140,30 +210,40 @@ pub const Socket = struct {
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_RECV,
             .fd = self.fd,
-            .addr = @ptrCast(buffer.data),
-            .len = buffer.capacity,
-            .user_data = @ptrCast(&op),
+            .addr = @intFromPtr(buffer.data),
+            .len = buffer.cap,
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
     }
-    pub fn send(self: *Socket, buffer: *cpu.Buffer) !void {
+
+    fn send(self: *Socket, buffer: *cpu.Buffer) !void {
+        if (!self.connected) {
+            return error.BadSocketDescriptor;
+        }
+
         const slot = try iou.next();
 
         const op = io.Operation{
             .id = slot.op,
-            .type = io.OperationType.RECV,
+            .type = io.OperationType.WRITE,
             .user_data = self.user_data,
             .handle = self,
         };
 
         slot.sqe.* = linux.io_uring_sqe{
-            .opcode = IORING_OP_RECV,
+            .opcode = IORING_OP_SEND,
             .fd = self.fd,
-            .addr = @ptrCast(buffer.data),
+            .addr = @intFromPtr(buffer.data),
             .len = buffer.len,
-            .user_data = @ptrCast(&op),
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
     }
-    pub fn close(self: *Socket) !void {
+
+    fn close(self: *Socket) !void {
         const slot = try iou.next();
 
         const op = io.Operation{
@@ -176,100 +256,213 @@ pub const Socket = struct {
         slot.sqe.* = linux.io_uring_sqe{
             .opcode = IORING_OP_CLOSE,
             .fd = self.fd,
-            .user_data = @ptrCast(&op),
-        };
-    }
-    pub fn setOption(self: *Socket, option: socket.Option, value: *const anyopaque, len: u32) !void {
-        const level = switch (option.level) {
-            .Socket => os.SOL_SOCKET,
-            .Tcp => os.IPPROTO_TCP,
-            .Ipv4 => os.IPPROTO_IP,
-            .Ipv6 => os.IPPROTO_IPV6,
-            else => return IoError.InvalidArgument,
+            .user_data = @intFromPtr(&op),
+            .buf_index = 0,
+            .__pad2 = [2]u64{0} ** 2,
         };
 
-        try os.setsockopt(self.fd, level, @intFromEnum(option.name), @ptrCast(value), len);
+        self.connected = false;
+        self.bound = false;
+        self.listening = false;
+    }
+
+    fn setOption(self: *Socket, option: socket.Option, value: *const anyopaque, len: u32) !void {
+        const level = switch (option) {
+            .REUSEADDR => os.SOL.SOCKET,
+            .RCVTIMEO, .SNDTIMEO => os.SOL.SOCKET,
+            .KEEPALIVE => os.SOL.SOCKET,
+            .LINGER => os.SOL.SOCKET,
+            .BUFFER_SIZE => os.SOL.SOCKET,
+            .NODELAY => os.IPPROTO.TCP,
+            else => return error.InvalidArgument,
+        };
+
+        const optname = switch (option) {
+            .REUSEADDR => os.SO.REUSEADDR,
+            .RCVTIMEO => os.SO.RCVTIMEO,
+            .SNDTIMEO => os.SO.SNDTIMEO,
+            .KEEPALIVE => os.SO.KEEPALIVE,
+            .LINGER => os.SO.LINGER,
+            .BUFFER_SIZE => os.SO.RCVBUF,
+            .NODELAY => os.TCP.NODELAY,
+            else => return error.InvalidArgument,
+        };
+
+        try os.setsockopt(self.fd, level, optname, value, len);
     }
 };
 
-fn prepareAddress(comptime T: type, address: socket.IpAddress) !T {
-    switch (T) {
-        os.sockaddr.in6 => {
-            var addr: os.sockaddr.in6 = mem.zeroes(os.sockaddr.in6);
-            addr.family = INET6;
-            addr.port = mem.nativeToBig(u16, address.addr.ipv6.port);
-            mem.copy(u8, &addr.addr, &address.addr.ipv6.addr);
-            return addr;
-        },
-        os.sockaddr.in => {
-            var addr: os.sockaddr.in = std.mem.zeroes(os.sockaddr.in);
-            addr.family = INET;
-            addr.port = std.mem.nativeToBig(u16, address.addr.ipv4.port);
-            std.mem.copy(u8, &addr.addr, &address.addr.ipv4.addr);
-            return addr;
-        },
-    }
-}
+// FFI-compatible functions
+pub fn create(ipv6: bool, ty: io.SocketType, user_data: ?*anyopaque) ?*Socket {
+    const domain = if (ipv6) os.AF.INET6 else os.AF.INET;
 
-pub fn create(ipv6: bool, user_data: ?*anyopaque) ?*Socket {
-    return Socket.create(ipv6, user_data) catch |err| {
-        lastError().* = Error.from(err);
+    const sock = allocator.create(Socket) catch {
+        ctx.setLastError(.OUT_OF_MEMORY);
         return null;
     };
+
+    const os_ty = switch (ty) {
+        io.SocketType.STREAM => os.SOCK.STREAM,
+        io.SocketType.DGRAM => os.SOCK.DGRAM,
+    };
+
+    const fd = os.socket(domain, os_ty, 0) catch {
+        ctx.setLastError(.NETWORK_UNREACHABLE);
+        allocator.destroy(sock);
+        return null;
+    };
+
+    sock.* = Socket{
+        .ty = io.HandleType.Socket,
+        .fd = fd,
+        .ipv6 = ipv6,
+        .user_data = user_data,
+        .connected = false,
+        .bound = false,
+        .listening = false,
+    };
+
+    return sock;
+}
+pub fn release(socket: *Socket) bool {
+    allocator.free(socket) catch return false;
+    return true;
 }
 pub fn bind(sock: *Socket, address: *const IpAddress) bool {
-    sock.bind(address) catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+    if (address == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+    sock.bind(address) catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn listen(sock: *Socket, backlog: i32) bool {
-    sock.listen(backlog) catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.listen(backlog) catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn accept(sock: *Socket) bool {
-    sock.accept() catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.accept() catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn connect(sock: *Socket, address: *const IpAddress) bool {
-    sock.connect(address) catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+    if (address == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.connect(address) catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn recv(sock: *Socket, buffer: *cpu.Buffer) bool {
-    sock.recv(buffer) catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+    if (buffer == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.recv(buffer) catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn send(sock: *Socket, buffer: *cpu.Buffer) bool {
-    sock.send(buffer) catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    if (buffer == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.send(buffer) catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn close(sock: *Socket) bool {
-    sock.close() catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.close() catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
 }
+
 pub fn setOption(sock: *Socket, option: socket.Option, value: *const anyopaque, len: u32) bool {
-    sock.setOption(option, value, len) catch |err| {
-        lastError().* = Error.from(err);
+    if (sock == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    if (value == null) {
+        ctx.setLastError(.INVALID_ARGUMENT);
+        return false;
+    }
+
+    sock.setOption(option, value, len) catch |e| {
+        ctx.setLastError(err.Error.fromError(e));
         return false;
     };
+
     return true;
+}
+
+// Helper function to destroy a socket object
+pub fn destroy(sock: *Socket) void {
+    os.close(sock.fd);
+    allocator.destroy(sock);
 }

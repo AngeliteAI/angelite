@@ -36,4 +36,5 @@ pub extern fn connect(sock: *Socket, address: *const IpAddress) bool;
 pub extern fn recv(sock: *Socket, buffer: *cpu.Buffer) bool;
 pub extern fn send(sock: *Socket, buffer: *cpu.Buffer) bool;
 pub extern fn close(sock: *Socket) bool;
+pub extern fn release(sock: *Socket) bool;
 pub extern fn setOption(sock: *Socket, option: Option, value: *const anyopaque, len: u32) bool;
