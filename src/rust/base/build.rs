@@ -19,7 +19,7 @@ fn build_ffi(manifest_dir: &PathBuf) {
         .envs([
             ("X_API_KEY", env!("X_API_KEY")),
             ("CHAT_SYSTEM", include_str!("system_prompt")),
-            ("CHAT_USER", &paths),
+            ("CHAT_USER", &format!("ZIG->RUST\n\n{paths:?}")),
         ])
         .args(["build.py"])
         .output()
@@ -41,11 +41,11 @@ fn build_ffi(manifest_dir: &PathBuf) {
         "cargo:warning=Generated LLM completion {}",
         &String::from_utf8_lossy(&output.stderr)
     );
-    println!("cargo:warning=Generated LLM output {:?}", &ffi_content);
 
     // Parse the FFI content and extract file paths and their contents
     let parsed_files = parse_ffi_content(&ffi_content);
-    println!("cargo:warning=Generated LLM output {:?}", &parsed_files);
+
+    fs::remove_dir_all("src/bindings");
 
     // Write each file to its respective path
     for (file_path, content) in parsed_files {
@@ -58,6 +58,10 @@ fn build_ffi(manifest_dir: &PathBuf) {
                 .expect(&format!("Failed to create directories for {}", file_path));
         }
 
+        println!(
+            "cargo:warning=Writing FFI bindings at {}",
+            full_path.display()
+        );
         // Write the content to the file
         let mut file =
             fs::File::create(&full_path).expect(&format!("Failed to create {}", file_path));
@@ -86,12 +90,13 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
 
     // Define a regex pattern to match file paths in comments
     // e.g. "// /workspace/src/rust/base/bindings/c/ctx.rs"
-    let path_pattern = Regex::new(r"^// (/src/.*\.rs)$").unwrap();
+    let path_pattern = Regex::new(r"^// (/?)src/.*\.rs$").unwrap();
 
     // Split the content by lines for processing
     let lines: Vec<&str> = content.lines().collect();
 
     for line in lines {
+        println!("cargo:warning=1{}", &line);
         // Check if we're entering or leaving a code block
         if line.trim() == "```rust" {
             in_code_block = true;
@@ -103,8 +108,10 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
 
         // Check if the line contains a file path
         if let Some(captures) = path_pattern.captures(line.trim()) {
+            println!("cargo:warning=2{:?}", &captures);
             // If we have a current path already, save its content before moving on
             if let Some(path) = current_path.take() {
+                println!("cargo:warning=3{}", &path);
                 if !current_content.is_empty() {
                     result.push((path, current_content.trim().to_string()));
                     current_content.clear();
@@ -112,8 +119,14 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
             }
 
             // Extract the new path from the regex capture
-            if let Some(path_match) = captures.get(1) {
-                current_path = Some(path_match.as_str().to_string());
+            if let Some(path_match) = captures.get(0) {
+                current_path = Some(
+                    path_match
+                        .as_str()
+                        .trim_start_matches("//")
+                        .trim()
+                        .to_string(),
+                );
             }
         } else if current_path.is_some() && in_code_block {
             // Only accumulate content if we're inside a code block and have a current path
@@ -125,6 +138,7 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
     // Add the last file if there's anything pending
     if let Some(path) = current_path {
         if !current_content.is_empty() {
+            println!("cargo:warning=4{}", &path);
             result.push((path, current_content.trim().to_string()));
         }
     }

@@ -1,4 +1,4 @@
-use crate::bindings;
+use crate::bindings::file as ffi;
 
 pub struct File(*mut ffi::File);
 
