@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    ffi::{self, HandleType, SocketType},
+    bindings::{self},
     io::{
         self, Completion, Operation, OperationId,
         file::File,
@@ -14,7 +14,7 @@ use crate::{
 
 pub static INIT: AtomicBool = AtomicBool::new(false);
 
-pub struct Context(*mut ffi::Context);
+pub struct Context(*mut bindings::Context);
 
 pub enum HandleType {
     File,
@@ -25,10 +25,10 @@ pub enum HandleType {
 
 impl HandleType {
     fn from_raw(ptr: *mut ()) {
-        match ffi::handleType(ffi.op.handle).unwrap().read() {
-            HandleType::File => File::from_raw(ffi.op.handle as *mut _),
-            HandleType::Socket => {
-                let info = ffi::socketInfo(ffi.op.handle as *mut _);
+        match unsafe { bindings::handleType(ptr as *mut _).unwrap().read() } {
+            bindings::HandleType::File => todo!(),
+            bindings::HandleType::Socket => {
+                let info = todo!(); //bindings::socketInfo(ffi.op.handle as *mut _);
             }
         }
     }
@@ -38,24 +38,24 @@ impl Context {
     fn current() -> Context {
         if !INIT.load(atomic::Ordering::Relaxed) {
             unsafe {
-                ffi::init(14);
+                bindings::init(14);
             }
         }
-        Context(unsafe { ffi::current().unwrap() })
+        Context(unsafe { bindings::current().unwrap() })
     }
 
     fn submit(&self) {
-        unsafe { ffi::submit() };
+        unsafe { bindings::submit() };
     }
 
     fn poll(&self) -> Vec<(Operation, Completion)> {
-        let complete = vec![];
+        let mut complete = vec![];
 
         loop {
-            let mut potential = Vec::<ffi::Complete>::new();
+            let mut potential = Vec::<bindings::Complete>::new();
             potential.reserve_exact(1000);
 
-            let mut completed = unsafe { ffi::poll(potential.as_mut_ptr(), 1000) };
+            let mut completed = unsafe { bindings::poll(potential.as_mut_ptr(), 1000) };
 
             if completed == 0 {
                 break;
@@ -70,15 +70,15 @@ impl Context {
 
         complete
             .into_iter()
-            .map(|ffi| unsafe {
+            .map(|bindings| unsafe {
                 (
                     io::Operation {
-                        id: OperationId(ffi.op.id),
-                        ty: mem::transmute(ffi.op.type_),
+                        id: OperationId(bindings.op.id),
+                        ty: mem::transmute(bindings.op.type_),
                         handle: todo!(),
-                        user_data: ffi.op.user_data as _,
+                        user_data: bindings.op.user_data as _,
                     },
-                    io::Completion(ffi.result),
+                    io::Completion(bindings.result),
                 )
             })
             .collect()

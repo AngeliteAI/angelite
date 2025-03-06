@@ -17,3 +17,6 @@ num-traits = "0.2.19"
 paste = "1.0.15"
 flume = "*"
 pin-project = "1.1.8"
+
+[build-dependencies]
+regex = "1.9.0"  # Add regex for parsing comments in the build script

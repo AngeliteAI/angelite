@@ -7,6 +7,7 @@ pub enum Handle {
 
 pub struct OperationId(pub(crate) u64);
 
+#[repr(C)]
 pub enum OperationType {
     Accept,
     Connect,
