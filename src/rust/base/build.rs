@@ -45,6 +45,7 @@ fn build_ffi(manifest_dir: &PathBuf) {
 
     // Parse the FFI content and extract file paths and their contents
     let parsed_files = parse_ffi_content(&ffi_content);
+    println!("cargo:warning=Generated LLM output {:?}", &parsed_files);
 
     // Write each file to its respective path
     for (file_path, content) in parsed_files {
@@ -85,7 +86,7 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
 
     // Define a regex pattern to match file paths in comments
     // e.g. "// /workspace/src/rust/base/bindings/c/ctx.rs"
-    let path_pattern = Regex::new(r"^// (/workspace/.*\.rs)$").unwrap();
+    let path_pattern = Regex::new(r"^// (/src/.*\.rs)$").unwrap();
 
     // Split the content by lines for processing
     let lines: Vec<&str> = content.lines().collect();
@@ -282,4 +283,3 @@ fn build_zig_library(manifest_dir: &PathBuf, target_dir: &PathBuf, profile: &str
     // Rebuild if Zig sources change
     println!("cargo:rerun-if-changed=../../zig");
 }
-
