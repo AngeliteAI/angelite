@@ -6,6 +6,15 @@ pub enum Handle {
     Socket(net::Socket),
 }
 
+impl Handle {
+    fn latest_operation_id(&self) {
+        match self {
+            Handle::File(_) => todo!(),
+            Handle::Socket(socket) => socket.latest_operation_id(),
+        }
+    }
+}
+
 pub struct OperationId(pub(crate) u64);
 
 #[repr(C)]
@@ -43,11 +52,16 @@ macro_rules! raw {
 }
 
 mod future {
+    use std::task::Poll;
+
     use crate::io::OperationId;
 
     use super::Handle;
 
-    pub struct Stall<'a>(OperationId, &'a Handle);
+    pub struct Stall<'a> {
+        operation_id: OperationId,
+        handle: &'a Handle,
+    }
 
     impl Future for Stall<'_> {
         type Output = ();
@@ -55,6 +69,11 @@ mod future {
             self: std::pin::Pin<&mut Self>,
             cx: &mut std::task::Context<'_>,
         ) -> std::task::Poll<Self::Output> {
+            if self.operation_id < self.handle.latest_operation_id() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
         }
     }
 }
