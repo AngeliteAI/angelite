@@ -18,4 +18,3 @@ pub trait Source: 'static {
     unsafe fn archetype(&self) -> Archetype;
 }
 ecs_macro::source!();
-

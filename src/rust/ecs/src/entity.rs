@@ -1,6 +1,6 @@
-use std::mem;
-use crate::component::{archetype::Archetype, table::Page};
 use crate::component::source::Source;
+use crate::component::{archetype::Archetype, table::Page};
+use std::mem;
 
 #[derive(Debug)]
 pub struct Entity {

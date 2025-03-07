@@ -1,12 +1,12 @@
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    fmt,
-};
-use flume::Receiver;
-use crate::system::func::Cmd;
 use super::{
     System,
     func::{Id, Provider, Put, Wrap},
+};
+use crate::system::func::Cmd;
+use flume::Receiver;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
 };
 
 pub struct Node {
@@ -14,7 +14,7 @@ pub struct Node {
     pub(crate) put: Put,
     name: String,
     id: Id,
-    pub(crate) rx: Receiver<Cmd>
+    pub(crate) rx: Receiver<Cmd>,
 }
 
 unsafe impl Send for Node {}
@@ -47,7 +47,7 @@ impl Graph {
             id,
             system,
             put,
-            rx
+            rx,
         };
         self.nodes.insert(id, node);
     }

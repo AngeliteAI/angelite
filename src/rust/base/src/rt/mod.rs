@@ -1,7 +1,9 @@
 use std::{
+    async_iter::AsyncIterator,
     cell::{OnceCell, UnsafeCell},
     marker::PhantomData,
     mem::{self, ManuallyDrop},
+    ops::{self},
     pin::{Pin, pin},
     sync::{
         Arc, OnceLock,
@@ -40,6 +42,7 @@ pub struct Remote;
 pub trait Kind: Copy {
     type Call;
     type Fut;
+    type Coro;
 
     fn waker(id: Key<Self>) -> Waker
     where
@@ -50,6 +53,7 @@ pub trait Kind: Copy {
 impl Kind for Local {
     type Call = Box<dyn FnOnce()>;
     type Fut = Pin<Box<dyn Future<Output = ()>>>;
+    type Coro = Pin<Box<dyn AsyncIterator<Item = ()>>>;
 
     fn waker(id: Key<Self>) -> Waker
     where
@@ -69,6 +73,7 @@ impl Kind for Local {
 impl Kind for Remote {
     type Call = Box<dyn FnOnce() + Send>;
     type Fut = Pin<Box<dyn Future<Output = ()> + Send>>;
+    type Coro = Pin<Box<dyn AsyncIterator<Item = ()>>>;
 
     fn waker(id: Key<Self>) -> Waker
     where
@@ -157,6 +162,7 @@ impl<K: Kind> Key<K> {
 pub enum Act<K: Kind> {
     Call(ManuallyDrop<UnsafeCell<K::Call>>),
     Fut(#[pin] K::Fut),
+    Coro(#[pin] K::Coro),
 }
 
 pub static KEY: AtomicUsize = AtomicUsize::new(0);
@@ -187,6 +193,11 @@ impl Work {
                         let pinned = pin!(fut);
                         pinned.poll(&mut block_on(context()))
                     }
+                    Some(Act::Coro(coro)) => {
+                        block_on(current_worker()).unwrap().waker = Some(key.waker().into());
+                        let pinned = pin!(coro);
+                        pinned.poll_next(&mut block_on(context())).map(|_| ())
+                    }
                     None => unreachable!(),
                 }
             }
@@ -202,6 +213,11 @@ impl Work {
                         block_on(current_worker()).unwrap().waker = Some(key.waker().into());
                         let pinned = pin!(fut);
                         pinned.poll(&mut block_on(context()))
+                    }
+                    Some(Act::Coro(coro)) => {
+                        block_on(current_worker()).unwrap().waker = Some(key.waker().into());
+                        let pinned = pin!(coro);
+                        pinned.poll_next(&mut block_on(context())).map(|_| ())
                     }
                     None => unreachable!(),
                 }
@@ -513,6 +529,24 @@ impl<T> IntoFuture for Handle<T> {
     fn into_future(self) -> Self::IntoFuture {
         HandleRecv(self.0)
     }
+}
+
+pub async fn spawn_generator<C: AsyncIterator<Item = ()> + 'static + Send>(coro: C) {
+    let (tx, rx) = unbounded();
+    let handle = Handle(rx.clone());
+
+    let coro = async gen move {
+        let pinned = pin!(coro);
+        tx.send(UnsafeLocal(pinned.poll_next(&mut block_on(context()))));
+        yield;
+    };
+
+    Remote::schedule(Task {
+        key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
+        act: Some(Act::Coro(
+            Box::pin(coro) as Pin<Box<dyn AsyncIterator<Item = ()>>>
+        )),
+    });
 }
 
 pub async fn spawn_blocking<F: FnOnce() -> T + Send + 'static + Clone, T: Send + 'static>(

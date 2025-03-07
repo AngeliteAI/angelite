@@ -1,9 +1,9 @@
 use std::iter;
 
+use super::{Component, Meta};
+use crate::system::sequence::Sequence;
 use base::collections::array::Array;
 use derive_more::derive::{Deref, DerefMut};
-use crate::system::sequence::Sequence;
-use super::{Component, Meta};
 
 #[derive(Clone, Ord, Eq, PartialEq, Default, Debug, Deref, DerefMut, Hash)]
 pub struct Archetype(Vec<Meta>);

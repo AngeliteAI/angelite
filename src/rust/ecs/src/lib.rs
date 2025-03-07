@@ -5,7 +5,7 @@
     unboxed_closures,
     async_fn_traits,
     more_maybe_bounds,
-    set_ptr_value,
+    set_ptr_value
 )]
 #![feature(ptr_metadata)]
 

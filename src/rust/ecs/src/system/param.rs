@@ -10,7 +10,7 @@ use std::cell::UnsafeCell;
 pub trait Param<'a>: Send {
     fn inject(archetype: &mut Vec<Archetype>);
     fn create(archetype: &'a [Archetype], table: &'a mut [&'a mut Table]) -> Self
-     where
+    where
         Self: Sized + 'a;
 }
 

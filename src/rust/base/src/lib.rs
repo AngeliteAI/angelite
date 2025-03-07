@@ -10,7 +10,10 @@
     async_fn_traits,
     unboxed_closures,
     thread_id_value,
-    negative_impls
+    negative_impls,
+    gen_blocks,
+    async_iterator,
+    if_let_guard
 )]
 
 use derive_more::derive::{Deref, DerefMut};
@@ -74,7 +77,11 @@ pub mod prelude {
     };
 }
 
+mod bindings;
 pub mod collections;
+pub mod ctx;
+mod ffi;
+pub mod io;
 pub mod math;
 pub mod rng;
 pub mod rt;

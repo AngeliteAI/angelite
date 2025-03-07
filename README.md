@@ -4,14 +4,26 @@ A suite of integrated development tools built for performance-critical engineeri
 
 ## Core Products
 
-### Prism
+### angelite.chat
 
-Epic war simulator, play with or against friends.
+Explore conversational spaces with an english rubberducker that enables you to think outside the box.
+
+### angelite.dev
+
+Dual git-and-cargo repository that integrates with the cargo build system.
+
+### angelite.ai
+
+AI communication technologies.
 
 ### api.diy
 
 Declarative game BaaS with automatic scaling, validation, and documentation. Deploy production-ready APIs in minutes.
 spec includes an (eventual) high-performance development environment with real-time collaboration, hardware-accelerated code analysis, and native debugging support for distributed systems.
+
+### Prism
+
+Epic war simulator, play with or against friends.
 
 ## Technical Overview
 

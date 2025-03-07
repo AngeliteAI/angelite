@@ -1,0 +1,14 @@
+{
+  "zig_exe_path": "zig",
+  "build_runner_path": "./build.zig",
+  "zig_lib_path": "",
+  "enable_snippets": true,
+  "warn_style": true,
+  "enable_semantic_tokens": true,
+  "operator_completions": true,
+  "include_at_in_builtins": false,
+  "max_detail_length": 1024,
+  "include_dirs": [
+    "./src/zig/base/src/include"
+  ]
+}
