@@ -1,8 +1,14 @@
-extern "C" {
+use crate::bindings::io;
+use libc;
+
+#[repr(C)]
+pub struct Context {}
+
+unsafe extern "C" {
     #[link_name = "ctxCurrent"]
-    pub fn current() -> *mut libc::c_void;
+    pub fn current() -> std::option::Option<*mut Context>;
     #[link_name = "ctxInit"]
-    pub fn init(desired_concurrency: usize) -> *mut libc::c_void;
+    pub fn init(desired_concurrency: usize) -> std::option::Option<*mut Context>;
     #[link_name = "ctxShutdown"]
     pub fn shutdown();
     #[link_name = "ctxSubmit"]
@@ -10,7 +16,5 @@ extern "C" {
     #[link_name = "ctxPoll"]
     pub fn poll(completions: *mut io::Complete, max_completions: usize) -> usize;
     #[link_name = "ctxLastError"]
-    pub fn last_error() -> *mut err::Error;
+    pub fn last_error() -> std::option::Option<*mut crate::bindings::err::Error>;
 }
-
-pub struct Context {}

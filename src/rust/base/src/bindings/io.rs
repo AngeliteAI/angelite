@@ -1,15 +1,20 @@
+use libc;
+use std::mem::ManuallyDrop;
+
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationType {
-    Accept = 0,
-    Connect = 1,
-    Read = 2,
-    Write = 3,
-    Close = 4,
-    Seek = 5,
-    Flush = 6,
+    Accept,
+    Connect,
+    Read,
+    Write,
+    Close,
+    Seek,
+    Flush,
 }
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub struct Operation {
     pub id: u64,
     pub r#type: OperationType,
@@ -18,41 +23,48 @@ pub struct Operation {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub struct Complete {
     pub op: Operation,
     pub result: i32,
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeekOrigin {
-    Begin = 0,
-    Current = 1,
-    End = 2,
+    Begin,
+    Current,
+    End,
 }
 
-#[repr(C, packed)]
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ModeFlags {
     pub read: bool,
     pub write: bool,
     pub append: bool,
     pub create: bool,
     pub truncate: bool,
-    _padding: u26,
+    pub _padding: [u8; 4], // 26 bits = 3.25 bytes, round up to 4
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SockType {
-    Stream = 0,
-    Dgram = 1,
+    Stream,
+    Dgram,
 }
 
 #[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandleType {
-    File = 0,
-    Socket = 1,
+    File,
+    Socket,
 }
 
-extern "C" {
-    #[link_name = "handleType"]
+unsafe extern "C" {
+    #[link_name = "ioHandleType"]
     pub fn handle_type(handle: *mut libc::c_void) -> HandleType;
+    #[link_name = "ioLastOperationId"]
+    pub fn last_operation_id() -> u64;
 }

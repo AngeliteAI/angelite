@@ -1,4 +1,5 @@
-#[repr(i32)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     Ok = 0,
     OutOfMemory = 1,
@@ -20,11 +21,4 @@ pub enum Error {
     SubmissionQueueFull = 51,
     SystemLimitReached = 60,
     Unknown = 999,
-}
-
-extern "C" {
-    #[link_name = "fromOsError"]
-    pub fn from_os_error(code: i32) -> Error;
-    #[link_name = "fromError"]
-    pub fn from_error(err: *mut libc::c_void) -> Error;
 }

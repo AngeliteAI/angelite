@@ -1,16 +1,20 @@
-extern "C" {
-    #[link_name = "cpuBufferCreate"]
-    pub fn create(cap: usize) -> *mut libc::c_void;
-    #[link_name = "cpuBufferWrap"]
-    pub fn wrap(data: *mut u8, len: usize) -> *mut libc::c_void;
-    #[link_name = "cpuBufferRelease"]
-    pub fn release(buffer: *mut libc::c_void) -> bool;
-}
+use libc;
+use std::mem::ManuallyDrop;
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub struct Buffer {
     pub data: *mut u8,
     pub len: usize,
     pub cap: usize,
     pub owned: bool,
+}
+
+unsafe extern "C" {
+    #[link_name = "cpuBufferCreate"]
+    pub fn create(cap: usize) -> std::option::Option<*mut Buffer>;
+    #[link_name = "cpuBufferWrap"]
+    pub fn wrap(data: *mut u8, len: usize) -> *mut Buffer;
+    #[link_name = "cpuBufferRelease"]
+    pub fn release(buffer: *mut Buffer) -> bool;
 }

@@ -54,19 +54,18 @@ raw!(Connection, *mut ffi::Socket);
 
 impl Listener {
     fn accept(&self) -> Accept<'a> {
-        let operation_id = OperationId(0);
-        unsafe { ffi::accept(self.0, &mut operation_id as *mut _ as *mut _) }
-        future::Accept(operation_id, self.0)
+        unsafe { ffi::accept(self.listener.0) }
+        ctx::Accept { listener: self }
     }
 }
 
 mod future {
-    use crate::io::OperationId;
-
-    pub struct Accept(OperationId, *mut ffi::Socket);
+    pub struct Accept<'a> {
+        listener: &'a Listener,
+    }
 
     impl Future for Accept<'_> {
-        type Output = *mut ffi::Socket;
+        type Output = Connection;
         fn poll(
             self: std::pin::Pin<&mut Self>,
             cx: &mut std::task::Context<'_>,

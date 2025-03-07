@@ -1,6 +1,9 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
-use crate::bindings::socket::{IpAddress, IpAddressUnion, IpV4Address, IpV6Address};
+use crate::bindings::{
+    err::Error,
+    socket::{IpAddress, IpAddressUnion, IpAddressV4, IpAddressV6},
+};
 
 impl From<SocketAddr> for IpAddress {
     fn from(socket_addr: SocketAddr) -> Self {
@@ -12,7 +15,7 @@ impl From<SocketAddr> for IpAddress {
                 IpAddress {
                     is_ipv6: false,
                     addr: IpAddressUnion {
-                        ipv4: IpV4Address {
+                        ipv4: IpAddressV4 {
                             addr: ipv4_bytes,
                             port,
                         },
@@ -26,7 +29,7 @@ impl From<SocketAddr> for IpAddress {
                 IpAddress {
                     is_ipv6: true,
                     addr: IpAddressUnion {
-                        ipv6: IpV6Address {
+                        ipv6: IpAddressV6 {
                             addr: ipv6_bytes,
                             port,
                         },
@@ -53,3 +56,16 @@ impl From<IpAddress> for SocketAddr {
         }
     }
 }
+
+pub trait CheckOperation {
+    fn check_operation(self) -> Result<(), Error>;
+}
+
+impl CheckOperation for bool {
+    fn check_operation(self) -> Result<(), Error> {
+        self.then_some(())
+            .ok_or(unsafe { crate::bindings::ctx::last_error().unwrap().read() })
+    }
+}
+
+pub struct OperationId(u64);
