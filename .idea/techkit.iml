@@ -17,6 +17,16 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/meshpipe/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/prism/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/http/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/api-diy/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/base-macro/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/base/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/ecs-macro/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/ecs/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/fleet/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/http/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/meshpipe/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/prism/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/rust/techkit/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
