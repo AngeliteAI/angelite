@@ -1,0 +1,19 @@
+<div id="sidebar" class="select-none absolute flex flex-col top-0 left-0 z-50 h-full w-[50px]">
+    <span class="icon">
+    <img src="/icon.png" class=" h-[40px]"/>
+    </span>
+    <span class="flex-grow"/>
+    <span class="icon">
+    <img src="/sidebar.png" class="sidebar-icon invert h-[30px]"/>
+    </span>
+</div>
+
+<span id="trigger" class="absolute h-full w-[200px]">
+</span>
+
+<style>
+    .icon {
+        @apply flex justify-center items-center h-[50px] cursor-pointer;
+    }
+
+</style>
