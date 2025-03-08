@@ -40,3 +40,4 @@ pub const SockType = enum { STREAM, DGRAM };
 pub const HandleType = enum { FILE, SOCKET };
 
 pub extern fn handleType(handle: *anyopaque) HandleType;
+pub extern fn lastOperationId() u64;

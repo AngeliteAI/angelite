@@ -9,6 +9,7 @@ client = OpenAI(
 
 completion = client.chat.completions.create(
     model="grok-2-latest",
+    temperature = 0.0,
     messages=[
         {"role": "system", "content": os.environ["CHAT_SYSTEM"]},
         {"role": "user", "content": os.environ["CHAT_USER"]},

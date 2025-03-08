@@ -4,17 +4,18 @@ use std::{
 };
 
 use crate::{
-    bindings::{self},
-    io::{
-        self, Completion, Operation, OperationId,
-        file::File,
-        net::{Connection, Listener, Socket},
+    bindings::{
+        ctx as ffi,
+        file::*,
+        io::{self, Complete, Operation},
+        socket::*,
     },
+    io::OperationId,
 };
 
 pub static INIT: AtomicBool = AtomicBool::new(false);
 
-pub struct Context(*mut bindings::Context);
+pub struct Context(*mut ffi::Context);
 
 pub enum HandleType {
     File,
@@ -25,10 +26,10 @@ pub enum HandleType {
 
 impl HandleType {
     fn from_raw(ptr: *mut ()) {
-        match unsafe { bindings::handleType(ptr as *mut _).unwrap().read() } {
-            bindings::HandleType::File => todo!(),
-            bindings::HandleType::Socket => {
-                let info = todo!(); //bindings::socketInfo(ffi.op.handle as *mut _);
+        match unsafe { io::handle_type(ptr as *mut _) } {
+            io::HandleType::File => todo!(),
+            io::HandleType::Socket => {
+                let info = todo!(); //ffi::socketInfo(ffi.op.handle as *mut _);
             }
         }
     }
@@ -38,24 +39,24 @@ impl Context {
     fn current() -> Context {
         if !INIT.load(atomic::Ordering::Relaxed) {
             unsafe {
-                bindings::init(14);
+                ffi::init(14);
             }
         }
-        Context(unsafe { bindings::current().unwrap() })
+        Context(unsafe { ffi::current().unwrap() })
     }
 
     fn submit(&self) {
-        unsafe { bindings::submit() };
+        unsafe { ffi::submit() };
     }
 
-    fn poll(&self) -> Vec<(Operation, Completion)> {
+    fn poll(&self) -> Vec<(crate::io::Operation, crate::io::Complete)> {
         let mut complete = vec![];
 
         loop {
-            let mut potential = Vec::<bindings::Complete>::new();
+            let mut potential = Vec::<io::Complete>::new();
             potential.reserve_exact(1000);
 
-            let mut completed = unsafe { bindings::poll(potential.as_mut_ptr(), 1000) };
+            let mut completed = unsafe { ffi::poll(potential.as_mut_ptr(), 1000) };
 
             if completed == 0 {
                 break;
@@ -70,15 +71,24 @@ impl Context {
 
         complete
             .into_iter()
-            .map(|bindings| unsafe {
+            .map(|comp| unsafe {
                 (
-                    io::Operation {
-                        id: OperationId(bindings.op.id),
-                        ty: mem::transmute(bindings.op.type_),
-                        handle: todo!(),
-                        user_data: bindings.op.user_data as _,
+                    crate::io::Operation {
+                        id: OperationId(comp.op.id),
+                        ty: mem::transmute(comp.op.r#type),
+                        handle: unsafe {
+                            match comp.op.handle.cast::<io::HandleType>().read() {
+                                io::HandleType::File => crate::io::Handle::File(
+                                    crate::io::file::File::from_raw(comp.op.handle as *mut _),
+                                ),
+                                io::HandleType::Socket => crate::io::Handle::Socket(
+                                    crate::io::net::Socket::from_raw(comp.op.handle as *mut _),
+                                ),
+                            }
+                        },
+                        user_data: comp.op.user_data as *mut _,
                     },
-                    io::Completion(bindings.result),
+                    crate::io::Complete(comp.result),
                 )
             })
             .collect()

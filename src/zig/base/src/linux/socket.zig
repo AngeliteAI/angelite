@@ -32,7 +32,7 @@ pub const Socket = struct {
     bound: bool,
     listening: bool,
 
-    fn bind(self: *Socket, address: *const IpAddress) !void {
+    fn bind(self: *Socket, address: *const IpAddress) !u64 {
         if (self.bound) {
             return error.AddressInUse;
         }
@@ -84,9 +84,10 @@ pub const Socket = struct {
         };
 
         self.bound = true;
+        return slot.op;
     }
 
-    fn listen(self: *Socket, backlog: i32) !void {
+    fn listen(self: *Socket, backlog: i32) !u64 {
         if (!self.bound) {
             return error.InvalidArgument;
         }
@@ -114,9 +115,10 @@ pub const Socket = struct {
         };
 
         self.listening = true;
+        return slot.op;
     }
 
-    fn accept(self: *Socket) !void {
+    fn accept(self: *Socket) !u64 {
         if (!self.listening) {
             return error.InvalidArgument;
         }
@@ -137,9 +139,10 @@ pub const Socket = struct {
             .buf_index = 0,
             .__pad2 = [2]u64{0} ** 2,
         };
+        return slot.op;
     }
 
-    fn connect(self: *Socket, address: *const IpAddress) !void {
+    fn connect(self: *Socket, address: *const IpAddress) !u64 {
         if (self.connected) {
             return error.ConnectionRefused;
         }
@@ -191,9 +194,10 @@ pub const Socket = struct {
         };
 
         self.connected = true;
+        return slot.op;
     }
 
-    fn recv(self: *Socket, buffer: *cpu.Buffer) !void {
+    fn recv(self: *Socket, buffer: *cpu.Buffer) !u64 {
         if (!self.connected) {
             return error.BadSocketDescriptor;
         }
@@ -216,9 +220,10 @@ pub const Socket = struct {
             .buf_index = 0,
             .__pad2 = [2]u64{0} ** 2,
         };
+        return slot.op;
     }
 
-    fn send(self: *Socket, buffer: *cpu.Buffer) !void {
+    fn send(self: *Socket, buffer: *cpu.Buffer) !u64 {
         if (!self.connected) {
             return error.BadSocketDescriptor;
         }
@@ -241,6 +246,8 @@ pub const Socket = struct {
             .buf_index = 0,
             .__pad2 = [2]u64{0} ** 2,
         };
+
+        return slot.op;
     }
 
     fn close(self: *Socket) !void {
