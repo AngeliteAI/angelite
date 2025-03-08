@@ -13,7 +13,9 @@ export default defineConfig({
 			outdir: './src/lib/paraglide'
 		})
 	],
-
+  server: {
+    allowedHosts: true,
+  },
 	test: {
 		workspace: [
 			{
