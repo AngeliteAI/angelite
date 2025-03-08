@@ -6,3 +6,7 @@
 .build
 */node_modules/
 */yes/
+**/node_modules/**
+**/yes/**
+**/.svelte-kit/**
+**/build/**
