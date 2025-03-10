@@ -1,11 +1,10 @@
-const path = require('path');
-
 /** @type {import('tailwindcss').Config} */
-  module.exports = {
-content: [
+export default {
+  
+  content: [
     './src/**/*.{html,js,svelte,ts}',
-path.join(path.dirname(require.resolve('angelite')), '**/*.{html,js,svelte,ts}'),
-],
+  ],
+  // ...
   theme: {
       colors: {
         // Add your custom colors here
@@ -19,4 +18,4 @@ path.join(path.dirname(require.resolve('angelite')), '**/*.{html,js,svelte,ts}')
       },
   },
   // other config options...
-};
+}
