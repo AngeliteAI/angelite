@@ -1,7 +1,8 @@
 <script>
+let { cssWidth = "100%", slider = $bindable()  } = $props();
+
 import {onMount} from 'svelte';
     import { browser } from '$app/environment'; 
-let { slider = $bindable() } = $props();
 var sliderWidth = $state();
 let smoothing = 1.01;
 let sliderSelectorNodePx = $state(0);
@@ -43,7 +44,7 @@ function up() {
 }
 </script>
 
-<div id="slider" bind:offsetWidth={sliderWidth} bind:this={sliderNode} class="container relative w-full h-10">
+<div id="slider" bind:offsetWidth={sliderWidth} style:width={cssWidth} bind:this={sliderNode} class="container relative h-10">
     <span class="background absolute w-full top-4.5 h-1 border rounded-full"></span>
     <span id="selector" bind:offsetWidth={sliderSelectorNodePx} on:mousedown={() => click()} on:mouseup={up()}  style:left={sliderLeftPx} class=" circle absolute w-5 h-5 max-w-5 max-h-5 top-2.5 bg-accent rounded-full">
     <p class="top-5 left-[-125px] right-[-125px] text-center absolute">{Math.floor(1e+6 * (Math.pow(Math.E, slider) - 1))}</p>
