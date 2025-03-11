@@ -1,8 +1,8 @@
 <script>
-    let { min, max } = $props();
+    let { min, max, special } = $props();
 </script>
 
-<div style="min-width: {min}; max-width: {max};" class="button cursor-pointer border rounded-sm p-3 bg-accent text-background text-xl"><slot/></div>
+<div style="min-width: {min}; max-width: {max};" class:bg-secondary={!special} class:bg-accent={special} class="button cursor-pointer border rounded-sm p-3 bg-secondary text-background text-xl"><slot/></div>
 
 <style>
 :global(.accent-button) * {

@@ -1,6 +1,6 @@
 <script>
     import {onMount} from "svelte";
-    import { Slider } from "angelite/ui";
+    import { SliderCaption } from "angelite/ui";
     import { Button } from "angelite/ui";
     let app_url = "";
     let slider = $state(0.5);
@@ -100,12 +100,13 @@
     <span class="relative select-none w-full">
     <h1 class="text-4xl">Transparent and Flexible Pricing.</h1>
     <h2 class="text-2xl text-hint">
-        Usage based to scale with you.<br/>Move the slider to understand your usage.
+        Usage based to scale with you. <br/>Or commit for greater savings.
+    
     </h2>
         <br/>
         <br/>
                     <span class="select-none ">
-            <a href={app_url} ><Button min='300px' max='300px'><h1 class="text-2xl">Get Started</h1></Button></a>
+            <a href={app_url} ><Button min='300px' max='300px' special=true><h1 class="text-2xl">Get Started (for free)</h1></Button><h2 class="text-hint">(no credit card required)</h2></a>
             </span>
 
         <br/>
@@ -114,30 +115,28 @@
         <br/>
     <div class="relative left-1/10 width-8/10">
     <h1 class="text-2xl">Bind (generation)</h1>
-    <h2 class="text-1xl text-hint">Measured in compiled lines.</h2>
+    <h2 class="text-1xl text-hint">Move the slider to measure usage</h2>
     <br/>
-    <p>+ {credits} credits</p>
-    <Slider bind:slider={slider} cssWidth="80%" convert={lines}/>
-    <h1>= {credits} credits</h1>
+    <SliderCaption bind:slider={slider} convertMoney={(slider) => Math.floor(slider * 10000) / 100} convertProduct={(slider) => Math.floor(slider * 1000) * 100} money = "credits" product = "lines of input and output code." />
     </div>
     </span>
     <br/>
     <br/>
     <br/>
-    <div class="border border-accent rounded h-100">
+    <div class="border border-secondary rounded h-100">
     <span class="select-none 
  relative 
     w-full flex justify-center">
     <div class="box-border inset-0 flex flex-row flex-grow">
       {#each tiersDim as tier, i (i)}
-      <div class="relative inset-0 flex-grow h-25 rounded-xs border-secondary text-center transition-all" class:border-secondary={!tiersFact[i].active} class:border={!tiersFact[i].active} class:border-accent={tiersFact[i].active} class:border-4={tiersFact[i].active}>
+      <div class="relative inset-0 flex-grow h-25 rounded-xs text-center transition-all" class:border-hint={!tiersFact[i].active} class:border={!tiersFact[i].active} class:border-accent={tiersFact[i].active} class:border-4={tiersFact[i].active}>
         <span class:text-hint={!tiersFact[i].active} class:text-accent={tiersFact[i].active}>
         <h1 class="absolute left-0 right-0 leading-20 align-middle text-4xl">{tier.name}</h1>
         <h2 class="absolute left-0 right-0 leading-35 align-middle text-xl transition-all" >
-        {#if tiersDim[i-1] && tierActive(credits, i)}
-            {credits} 
-        {:else}
-            {#if tiersDim[i - 1]} {tiersDim[i - 1].min} {:else} Free as in Gratuity {/if}
+        {#if tiersDim[i - 1]}
+            > {tiersDim[i - 1].min} credits / m.
+        {:else} 
+            10 credits free
         {/if}
         </h2>
         </span>
