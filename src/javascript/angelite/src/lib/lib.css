@@ -10,13 +10,14 @@
 
 @theme {
     --color-*: initial;
-    --color-primary: #4D88FF;
-    --color-accent: #00FFFF;
-    --color-background: #080812;
-    --color-text: #FFFFFF;
-    --color-secondary: #B0B0B0;
-    --color-success: #34C759;
-    --color-error: #FF3B30;
+    --color-primary: #CDCDCD;       /* A soft, glowing blue for an angelic touch */
+    --color-secondary: #5A7EFF;     /* A muted blue-gray for side elements */
+    --color-accent: #00c5e3;        /* A vibrant cyan for highlights */
+    --color-background: #1d1e20;    /* A dark blue-gray, inspired by Twitter’s dark mode */
+    --color-text: #E6F0FA;          /* A very light blue for readability with an ethereal vibe */
+    --color-hint: #A0B0C0; /* A lighter blue-gray for less prominent text */
+    --color-success: #34C759;       /* Apple’s green for positive states */
+    --color-error: #FF3B30;         /* Apple’s red for errors */
 }
 
 html {

@@ -96,10 +96,10 @@
     </script>
 
 <div id="hero" class="relative flex flex-col justify-end items-start h-full">
-    <div id="details" class="border-accent p-4 border w-full rounded">
+    <div id="details" class="p-4  w-full rounded">
     <span class="relative select-none w-full">
     <h1 class="text-4xl">Transparent and Flexible Pricing.</h1>
-    <h2 class="text-2xl text-secondary">
+    <h2 class="text-2xl text-hint">
         Usage based to scale with you.<br/>Move the slider to understand your usage.
     </h2>
         <br/>
@@ -114,7 +114,7 @@
         <br/>
     <div class="relative left-1/10 width-8/10">
     <h1 class="text-2xl">Bind (generation)</h1>
-    <h2 class="text-1xl text-secondary">Measured in compiled lines.</h2>
+    <h2 class="text-1xl text-hint">Measured in compiled lines.</h2>
     <br/>
     <p>+ {credits} credits</p>
     <Slider bind:slider={slider} cssWidth="80%" convert={lines}/>
@@ -131,7 +131,7 @@
     <div class="box-border inset-0 flex flex-row flex-grow">
       {#each tiersDim as tier, i (i)}
       <div class="relative inset-0 flex-grow h-25 rounded-xs border-secondary text-center transition-all" class:border-secondary={!tiersFact[i].active} class:border={!tiersFact[i].active} class:border-accent={tiersFact[i].active} class:border-4={tiersFact[i].active}>
-        <span class:text-secondary={!tiersFact[i].active} class:text-accent={tiersFact[i].active}>
+        <span class:text-hint={!tiersFact[i].active} class:text-accent={tiersFact[i].active}>
         <h1 class="absolute left-0 right-0 leading-20 align-middle text-4xl">{tier.name}</h1>
         <h2 class="absolute left-0 right-0 leading-35 align-middle text-xl transition-all" >
         {#if tiersDim[i-1] && tierActive(credits, i)}
