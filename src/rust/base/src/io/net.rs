@@ -35,9 +35,9 @@ socket_struct!(Connection);
 socket_struct!(Listener);
 
 macro_rules! socket_create {
-    ($name:ident,  $out:tt, $ty:expr) => {
+    ($out:tt, $ty:expr) => {
         impl $out {
-            async fn $name(addrs: impl ToSocketAddrs) -> Result<$out, ()> {
+            async fn create(addrs: impl ToSocketAddrs) -> Result<$out, ()> {
                 for addr in addrs.to_socket_addrs().map_err(|_| ())? {
                     let ipv6 = matches!(addr, SocketAddr::V6(_));
                     let mut op = Box::pin(0u64);
@@ -48,7 +48,10 @@ macro_rules! socket_create {
                     let handle = super::Handle::$out(unsafe { $out::from_raw(socket) });
                     let handle_ref = &handle;
 
-                    crate::stall!(handle_ref, op, { ffi::bind(socket, &addr.into(), optr) });
+                    let result =
+                        crate::stall!(handle_ref, op, { ffi::bind(socket, &addr.into(), optr) });
+
+                    dbg!(result);
                 }
 
                 return Err(());
@@ -57,9 +60,9 @@ macro_rules! socket_create {
     };
 }
 
-socket_create!(bind, Socket, io::SockType::Dgram);
-socket_create!(listen, Listener, io::SockType::Stream);
-socket_create!(connect, Connection, io::SockType::Stream);
+socket_create!(Socket, io::SockType::Dgram);
+socket_create!(Listener, io::SockType::Stream);
+socket_create!(Connection, io::SockType::Stream);
 
 raw!(Socket, *mut ffi::Socket);
 raw!(Listener, *mut ffi::Socket);
