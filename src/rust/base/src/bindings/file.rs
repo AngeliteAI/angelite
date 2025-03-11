@@ -2,13 +2,15 @@ use crate::bindings::cpu;
 use libc;
 
 #[repr(C)]
-pub struct File {}
+pub struct File {
+    // Opaque type, no fields
+}
 
 unsafe extern "C" {
     #[link_name = "fileCreate"]
     pub fn create(user_data: *mut libc::c_void) -> std::option::Option<*mut File>;
     #[link_name = "fileOpen"]
-    pub fn open(file: *mut File, path: *const libc::c_char, mode: i32) -> bool;
+    pub fn open(file: *mut File, path: *const i8, mode: i32) -> bool;
     #[link_name = "fileRead"]
     pub fn read(file: *mut File, buffer: *mut cpu::Buffer, offset: i64) -> bool;
     #[link_name = "fileWrite"]

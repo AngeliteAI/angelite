@@ -73,7 +73,7 @@ impl Kind for Local {
 impl Kind for Remote {
     type Call = Box<dyn FnOnce() + Send>;
     type Fut = Pin<Box<dyn Future<Output = ()> + Send>>;
-    type Coro = Pin<Box<dyn AsyncIterator<Item = ()>>>;
+    type Coro = Pin<Box<dyn AsyncIterator<Item = ()> + Send>>;
 
     fn waker(id: Key<Self>) -> Waker
     where
@@ -544,7 +544,7 @@ pub async fn spawn_generator<C: AsyncIterator<Item = ()> + 'static + Send>(coro:
     Remote::schedule(Task {
         key: Key(KEY.fetch_add(1, Ordering::AcqRel), PhantomData),
         act: Some(Act::Coro(
-            Box::pin(coro) as Pin<Box<dyn AsyncIterator<Item = ()>>>
+            Box::pin(coro) as Pin<Box<dyn AsyncIterator<Item = ()> + Send + 'static>>
         )),
     });
 }
