@@ -1,5 +1,5 @@
 use libc;
-use std::mem::ManuallyDrop;
+use std::fmt::Debug;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub enum OperationType {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Operation {
     pub id: u64,
     pub r#type: OperationType,
@@ -23,7 +23,7 @@ pub struct Operation {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Complete {
     pub op: Operation,
     pub result: i32,

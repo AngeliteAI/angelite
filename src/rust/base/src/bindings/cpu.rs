@@ -1,8 +1,8 @@
 use libc;
-use std::mem::ManuallyDrop;
+use std::fmt::Debug;
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Buffer {
     pub data: *mut u8,
     pub len: usize,

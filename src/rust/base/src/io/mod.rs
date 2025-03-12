@@ -4,17 +4,21 @@ pub mod net;
 pub enum Handle {
     File(file::File),
     Socket(net::Socket),
+    Listener(net::Listener),
+    Connection(net::Connection),
 }
 
 impl Handle {
-    fn latest_operation_id(&self) {
+    fn latest_operation_id(&self) -> OperationId {
         match self {
             Handle::File(_) => todo!(),
             Handle::Socket(socket) => socket.latest_operation_id(),
+            _ => todo!(),
         }
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct OperationId(pub(crate) u64);
 
 #[repr(C)]
@@ -42,10 +46,13 @@ macro_rules! raw {
     ($in:ty, $ffi:ty) => {
         impl $in {
             pub unsafe fn into_raw(self) -> $ffi {
-                self.0
+                self.handle
             }
             pub unsafe fn from_raw(raw: $ffi) -> Self {
-                Self(raw)
+                Self {
+                    handle: raw,
+                    ..Default::default()
+                }
             }
         }
     };
@@ -58,9 +65,25 @@ mod future {
 
     use super::Handle;
 
+    #[macro_export]
+    macro_rules! stall {
+        ($handle:ident, $op:ident, $ffi:expr) => {{
+            *$op = 0u64;
+            let ret = unsafe { $ffi };
+            if let Err(err) = ret.check_operation() {
+                panic!("error");
+            }
+            (crate::io::future::Stall {
+                operation_id: OperationId(*$op),
+                handle: $handle,
+            })
+            .await
+        }};
+    }
+
     pub struct Stall<'a> {
-        operation_id: OperationId,
-        handle: &'a Handle,
+        pub operation_id: OperationId,
+        pub handle: &'a Handle,
     }
 
     impl Future for Stall<'_> {

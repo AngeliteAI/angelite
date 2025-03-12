@@ -18,6 +18,15 @@ macro_rules! socket_struct {
             handle: *mut ffi::Socket,
             indicator: Pin<Box<u64>>,
         }
+
+        impl Default for $name {
+            fn default() -> $name {
+                $name {
+                    handle: ptr::null_mut(),
+                    indicator: Box::pin(0),
+                }
+            }
+        }
     };
 }
 
@@ -26,30 +35,23 @@ socket_struct!(Connection);
 socket_struct!(Listener);
 
 macro_rules! socket_create {
-    ($name:ident, $out:tt, $ty:expr) => {
+    ($out:tt, $ty:expr) => {
         impl $out {
-            fn $name(addrs: impl ToSocketAddrs) -> Result<$out, ()> {
+            async fn create(addrs: impl ToSocketAddrs) -> Result<$out, ()> {
                 for addr in addrs.to_socket_addrs().map_err(|_| ())? {
                     let ipv6 = matches!(addr, SocketAddr::V6(_));
-                    let indicator = Box::pin(0u64);
+                    let mut op = Box::pin(0u64);
+                    let optr = &mut *op.as_mut() as *mut u64;
                     let socket = unsafe {
-                        ffi::create(ipv6, $ty, indicator.as_mut_ptr())
-                            .expect("failed to allocate socket")
+                        ffi::create(ipv6, $ty, optr as *mut _).expect("failed to allocate socket")
                     };
+                    let handle = super::Handle::$out(unsafe { $out::from_raw(socket) });
+                    let handle_ref = &handle;
 
-                    match unsafe { ffi::bind(socket, &addr.into()).check_operation() } {
-                        Ok(_)
-                            if let Ok(_) =
-                                unsafe { ffi::listen(socket, 1000).check_operation() } =>
-                        {
-                            return Ok($out(socket));
-                        }
-                        Err(_) => {
-                            unsafe { ffi::release(socket) };
-                            continue;
-                        }
-                        _ => continue,
-                    }
+                    let result =
+                        crate::stall!(handle_ref, op, { ffi::bind(socket, &addr.into(), optr) });
+
+                    dbg!(result);
                 }
 
                 return Err(());
@@ -58,16 +60,16 @@ macro_rules! socket_create {
     };
 }
 
-socket_create!(bind, Socket, io::SockType::Dgram);
-socket_create!(listen, Listener, io::SockType::Stream);
-socket_create!(connect, Connection, io::SockType::Stream);
+socket_create!(Socket, io::SockType::Dgram);
+socket_create!(Listener, io::SockType::Stream);
+socket_create!(Connection, io::SockType::Stream);
 
 raw!(Socket, *mut ffi::Socket);
 raw!(Listener, *mut ffi::Socket);
 raw!(Connection, *mut ffi::Socket);
 
 impl Socket {
-    fn latest_operation_id(&self) -> OperationId {
-        OperationId(**self.indicator)
+    pub fn latest_operation_id(&self) -> OperationId {
+        OperationId(*self.indicator)
     }
 }

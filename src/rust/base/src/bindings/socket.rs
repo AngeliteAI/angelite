@@ -1,9 +1,11 @@
 use crate::bindings::cpu;
+use crate::bindings::io;
 use libc;
-use std::mem::ManuallyDrop;
 
 #[repr(C)]
-pub struct Socket {}
+pub struct Socket {
+    // Opaque type, no fields
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -20,14 +22,14 @@ pub union IpAddressUnion {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct IpAddressV4 {
     pub addr: [u8; 4],
     pub port: u16,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct IpAddressV6 {
     pub addr: [u8; 16],
     pub port: u16,
@@ -47,7 +49,7 @@ pub enum Option {
 
 unsafe extern "C" {
     #[link_name = "socketCreate"]
-    pub fn create(ipv6: bool, sock_type: crate::bindings::io::SockType, user_data: *mut libc::c_void) -> std::option::Option<*mut Socket>;
+    pub fn create(ipv6: bool, sock_type: io::SockType, user_data: *mut libc::c_void) -> std::option::Option<*mut Socket>;
     #[link_name = "socketBind"]
     pub fn bind(sock: *mut Socket, address: *const IpAddress, op_id: *mut u64) -> bool;
     #[link_name = "socketListen"]

@@ -1,8 +1,11 @@
 use crate::bindings::io;
+use crate::bindings::err;
 use libc;
 
 #[repr(C)]
-pub struct Context {}
+pub struct Context {
+    // Opaque type, no fields
+}
 
 unsafe extern "C" {
     #[link_name = "ctxCurrent"]
@@ -16,5 +19,5 @@ unsafe extern "C" {
     #[link_name = "ctxPoll"]
     pub fn poll(completions: *mut io::Complete, max_completions: usize) -> usize;
     #[link_name = "ctxLastError"]
-    pub fn last_error() -> std::option::Option<*mut crate::bindings::err::Error>;
+    pub fn last_error() -> std::option::Option<*mut err::Error>;
 }

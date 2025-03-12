@@ -37,12 +37,6 @@ fn build_ffi(manifest_dir: &PathBuf) {
 
     let ffi_content = ffi_content.replace("\\n", "\n").replace("\\t", "\t");
 
-    println!(
-        "cargo:warning=Generated LLM completion {}",
-        &String::from_utf8_lossy(&output.stderr)
-    );
-
-    // Parse the FFI content and extract file paths and their contents
     let parsed_files = parse_ffi_content(&ffi_content);
 
     fs::remove_dir_all("src/bindings");
@@ -58,10 +52,6 @@ fn build_ffi(manifest_dir: &PathBuf) {
                 .expect(&format!("Failed to create directories for {}", file_path));
         }
 
-        println!(
-            "cargo:warning=Writing FFI bindings at {}",
-            full_path.display()
-        );
         // Write the content to the file
         let mut file =
             fs::File::create(&full_path).expect(&format!("Failed to create {}", file_path));
@@ -96,7 +86,6 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
     let lines: Vec<&str> = content.lines().collect();
 
     for line in lines {
-        println!("cargo:warning=1{}", &line);
         // Check if we're entering or leaving a code block
         if line.trim() == "```rust" {
             in_code_block = true;
@@ -108,10 +97,8 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
 
         // Check if the line contains a file path
         if let Some(captures) = path_pattern.captures(line.trim()) {
-            println!("cargo:warning=2{:?}", &captures);
             // If we have a current path already, save its content before moving on
             if let Some(path) = current_path.take() {
-                println!("cargo:warning=3{}", &path);
                 if !current_content.is_empty() {
                     result.push((path, current_content.trim().to_string()));
                     current_content.clear();
@@ -138,7 +125,6 @@ fn parse_ffi_content(content: &str) -> Vec<(String, String)> {
     // Add the last file if there's anything pending
     if let Some(path) = current_path {
         if !current_content.is_empty() {
-            println!("cargo:warning=4{}", &path);
             result.push((path, current_content.trim().to_string()));
         }
     }
