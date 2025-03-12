@@ -1,6 +1,14 @@
 <script>
+	import 'angelite/styles';
+	import { Main } from 'angelite/ui';
+	import { Sidebar } from 'angelite/ui';
+
 	import '../app.css';
 	let { children } = $props();
 </script>
 
-{@render children()}
+<Sidebar />
+
+<Main>
+	{@render children()}
+</Main>

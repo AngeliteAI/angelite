@@ -146,7 +146,7 @@
     @apply w-[var(--menu-size)] h-full;
     top: 0;
     bottom: 0;
-    border-right: 1px var(--color-accent) solid;
+    border-right: var(--spacing) var(--color-accent) solid;
     transition: left 0.3s  cubic-bezier(0.4, 0, 1, 1), right 0.2s cubic-bezier(0.4, 0, 1, 1);
     left: var(--menu-size-neg);
     right: 0;

@@ -26,5 +26,11 @@ html {
 }
 
 * {
+    @apply focus:outline-none;
     font-family: "Rubik";
+}
+
+*::selection {
+  background-color: transparent;
+  /* or your preferred color */
 }
