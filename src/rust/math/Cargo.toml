@@ -1,0 +1,13 @@
+[package]
+name = "math"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+math-macro = { version = "*", path = "../math-macro" }
+derive_more = { version = "1.0.0", features = ["deref", "from", "deref_mut"] }
+num-traits = "0.2.19"
+libc="*"
+paste = "1.0.15"
+flume = "*"
+pin-project = "1.1.8"

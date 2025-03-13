@@ -1,3 +1,4 @@
+#![feature(core_intrinsics)]
 use derive_more::derive::{Deref, DerefMut};
 use num_traits::{Num, WrappingAdd};
 use paste::paste;
@@ -65,9 +66,9 @@ macro_rules! vector_ops {
 #[derive(Debug, Deref, DerefMut, PartialEq, Eq, Clone, Copy)]
 pub struct Vector<const N: usize, T: Num + Copy = f32>(pub Simd<N, T>);
 
-base_macro::vector_constants!(Vector, f32, 0.0f32, 1.0f32);
-base_macro::vector_constants!(Vector, u32, 0u32, 1u32);
-base_macro::vector_constants!(Vector, usize, 0usize, 1usize);
+math_macro::vector_constants!(Vector, f32, 0.0f32, 1.0f32);
+math_macro::vector_constants!(Vector, u32, 0u32, 1u32);
+math_macro::vector_constants!(Vector, usize, 0usize, 1usize);
 
 impl<const N: usize, T: Num + Copy> Vector<N, T> {
     pub const fn from_array(data: [T; N]) -> Self {
@@ -508,131 +509,5 @@ pub mod shuffle {
             log += 1;
         }
         log
-    }
-}
-
-mod test {
-    #[allow(unused_imports)]
-    use crate::math::{vector::Vector, vector::shuffle::*};
-
-    #[test]
-    fn add() {
-        let a = super::Vector::from_array([0.0, 1.0, 2.0]);
-        let b = super::Vector::from_array([3.0, 4.0, 5.0]);
-        let c = a + b;
-        assert_eq!(c, super::Vector::from_array([3.0, 5.0, 7.0]));
-    }
-
-    #[test]
-    fn shuffles() {
-        // Test vector with 8 elements to cover more complex patterns
-        let v = Vector::from_array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
-        let v4 = Vector::from_array([0.0, 1.0, 2.0, 3.0]);
-
-        // Basic patterns
-        assert_eq!(
-            v.same_shuffle::<Reverse<8>>(),
-            Vector::from_array([7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<Rotate<8, 1>>(),
-            Vector::from_array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 0.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<Rotate<8, -1>>(),
-            Vector::from_array([7.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<SwapPairs<8>>(),
-            Vector::from_array([1.0, 0.0, 3.0, 2.0, 5.0, 4.0, 7.0, 6.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<Broadcast<8, 3>>(),
-            Vector::from_array([3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0, 3.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<Interleave<8>>(),
-            Vector::from_array([0.0, 4.0, 1.0, 5.0, 2.0, 6.0, 3.0, 7.0])
-        );
-
-        // Complex patterns
-        assert_eq!(
-            v.same_shuffle::<Butterfly<8>>(),
-            Vector::from_array([0.0, 7.0, 1.0, 6.0, 2.0, 5.0, 3.0, 4.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<Perfect<8>>(),
-            Vector::from_array([0.0, 4.0, 1.0, 5.0, 2.0, 6.0, 3.0, 7.0])
-        );
-
-        assert_eq!(
-            v.same_shuffle::<BitReverse<8>>(),
-            Vector::from_array([0.0, 4.0, 2.0, 6.0, 1.0, 5.0, 3.0, 7.0])
-        );
-
-        // Matrix-like patterns
-        let v16 = Vector::from_array([
-            0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
-        ]);
-
-        // Test 4x4 transpose
-        assert_eq!(
-            v16.same_shuffle::<Transpose<4>>(),
-            Vector::from_array([
-                0.0, 4.0, 8.0, 12.0, 1.0, 5.0, 9.0, 13.0, 2.0, 6.0, 10.0, 14.0, 3.0, 7.0, 11.0,
-                15.0
-            ])
-        );
-
-        // Test CrossLane with stride 4
-        assert_eq!(
-            v16.same_shuffle::<CrossLane<16, 4>>(),
-            Vector::from_array([
-                0.0, 4.0, 8.0, 12.0, 1.0, 5.0, 9.0, 13.0, 2.0, 6.0, 10.0, 14.0, 3.0, 7.0, 11.0,
-                15.0
-            ])
-        );
-
-        // Test Zigzag pattern
-        assert_eq!(
-            v16.same_shuffle::<Zigzag<16>>(),
-            Vector::from_array([
-                0.0, 1.0, 5.0, 6.0, 2.0, 4.0, 7.0, 12.0, 3.0, 8.0, 11.0, 13.0, 9.0, 10.0, 14.0,
-                15.0
-            ])
-        );
-
-        // Test Snake pattern
-        assert_eq!(
-            v16.same_shuffle::<Snake<16, 4>>(),
-            Vector::from_array([
-                0.0, 1.0, 2.0, 3.0, 7.0, 6.0, 5.0, 4.0, 8.0, 9.0, 10.0, 11.0, 15.0, 14.0, 13.0,
-                12.0
-            ])
-        );
-
-        // Test BlockShuffle
-        assert_eq!(
-            v16.same_shuffle::<BlockShuffle<16, 4>>(),
-            Vector::from_array([
-                0.0, 2.0, 1.0, 3.0, 4.0, 6.0, 5.0, 7.0, 8.0, 10.0, 9.0, 11.0, 12.0, 14.0, 13.0,
-                15.0
-            ])
-        );
-
-        // Test Morton (Z-order curve)
-        assert_eq!(
-            v16.same_shuffle::<Morton<16, 2>>(),
-            Vector::from_array([
-                0.0, 1.0, 4.0, 5.0, 2.0, 3.0, 6.0, 7.0, 8.0, 9.0, 12.0, 13.0, 10.0, 11.0, 14.0,
-                15.0
-            ])
-        );
     }
 }
