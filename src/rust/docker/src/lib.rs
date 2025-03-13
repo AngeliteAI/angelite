@@ -40,7 +40,7 @@ impl From<serde_json::Error> for DockerError {
 }
 
 /// Container configuration parameters
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ContainerConfig {
     pub env_vars: HashMap<String, String>,
     pub ports: Vec<(u16, u16)>,
@@ -64,8 +64,11 @@ pub struct CommandResult {
 /// Docker image information
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageInfo {
+    #[serde(rename = "Id")]
     pub id: String,
+    #[serde(rename = "Created")]
     pub created: String,
+    #[serde(rename = "Size")]
     pub size: u64,
     #[serde(rename = "RepoTags")]
     pub repo_tags: Vec<String>,
@@ -190,10 +193,10 @@ impl Container {
                 self.info = Some(info);
                 Ok(())
             }
-            Err(_) => {
+            Err(e) => {
                 self.id = None;
                 self.info = None;
-                Ok(())
+                Err(e)
             }
         }
     }
@@ -330,7 +333,7 @@ impl Image {
 
     /// Refresh image information
     pub fn refresh(&mut self) -> Result<(), DockerError> {
-        match Docker::inspect_image(&self.full_name()) {
+        match Docker::inspect_image(self.full_name()) {
             Ok(info) => {
                 self.id = Some(info.id.clone());
                 self.info = Some(info);
@@ -389,8 +392,7 @@ impl Docker {
         S: AsRef<str>,
     {
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-        let output = Command::new("docker").args(&args_ref).output()?;
-
+        let output = dbg!(Command::new("docker").args(&args_ref).output()?);
         if output.status.success() {
             Ok(String::from_utf8(output.stdout)?)
         } else {
@@ -487,7 +489,8 @@ impl Docker {
     /// Pull an image from registry
     pub fn pull_image(name: impl AsRef<str>, tag: impl AsRef<str>) -> Result<(), DockerError> {
         let full_name = format!("{}:{}", name.as_ref(), tag.as_ref());
-        Docker::command(["pull", &full_name])?;
+        let args = ["pull", full_name.as_str()];
+        Docker::command(args)?;
         Ok(())
     }
 
@@ -503,61 +506,74 @@ impl Docker {
         container_name: impl AsRef<str>,
         config: &ContainerConfig,
     ) -> Result<Container, DockerError> {
-        let mut args = vec!["container", "create", "--name", container_name.as_ref()];
+        // Create vector of owned strings
+        let mut args_owned = Vec::new();
+        args_owned.push("container".to_string());
+        args_owned.push("create".to_string());
+        args_owned.push("--name".to_string());
+        args_owned.push(container_name.as_ref().to_string());
 
         // Add environment variables
         for (key, value) in &config.env_vars {
-            args.push("-e");
-            args.push(&format!("{}={}", key, value));
+            args_owned.push("-e".to_string());
+            let env_var = format!("{}={}", key, value);
+            args_owned.push(env_var);
         }
 
         // Add port mappings
         for (host, container) in &config.ports {
-            args.push("-p");
-            args.push(&format!("{}:{}", host, container));
+            args_owned.push("-p".to_string());
+            let port_mapping = format!("{}:{}", host, container);
+            args_owned.push(port_mapping);
         }
 
         // Add volume mappings
         for (host, container) in &config.volumes {
-            args.push("-v");
-            args.push(&format!("{}:{}", host, container));
+            args_owned.push("-v".to_string());
+            let volume_mapping = format!("{}:{}", host, container);
+            args_owned.push(volume_mapping);
         }
 
         // Add network if specified
         if let Some(network) = &config.network {
-            args.push("--network");
-            args.push(network);
+            args_owned.push("--network".to_string());
+            args_owned.push(network.clone());
         }
 
         // Add restart policy if specified
         if let Some(policy) = &config.restart_policy {
-            args.push("--restart");
-            args.push(policy);
+            args_owned.push("--restart".to_string());
+            args_owned.push(policy.clone());
         }
 
         // Add labels
         for (key, value) in &config.labels {
-            args.push("--label");
-            args.push(&format!("{}={}", key, value));
+            args_owned.push("--label".to_string());
+            let label = format!("{}={}", key, value);
+            args_owned.push(label);
         }
 
         // Add custom entrypoint if specified
         if let Some(entrypoint) = &config.entrypoint {
-            args.push("--entrypoint");
-            args.push(&entrypoint.join(" "));
+            args_owned.push("--entrypoint".to_string());
+            args_owned.push(entrypoint.join(" "));
         }
 
         // Add image name
-        args.push(image.as_ref());
+        args_owned.push(image.as_ref().to_string());
 
         // Add command if specified
         if let Some(cmd) = &config.cmd {
             for arg in cmd {
-                args.push(arg);
+                args_owned.push(arg.clone());
             }
         }
 
-        Docker::command_with_args(&args)?;
+        // Now create a vector of string slices
+        let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        // Call the function with slices
+        Docker::command_with_args(&args_ref)?;
 
         Ok(Container::new(container_name))
     }
@@ -585,12 +601,19 @@ impl Docker {
         name: impl AsRef<str>,
         cmd: &[S],
     ) -> Result<CommandResult, DockerError> {
-        let mut args = vec!["exec", name.as_ref()];
+        // Create vector of owned strings
+        let mut args_owned = Vec::new();
+        args_owned.push("exec".to_string());
+        args_owned.push(name.as_ref().to_string());
+
         for arg in cmd {
-            args.push(arg.as_ref());
+            args_owned.push(arg.as_ref().to_string());
         }
 
-        Docker::command_with_result(&args)
+        // Now create a vector of string slices
+        let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        Docker::command_with_result(&args_ref)
     }
 
     /// Get container logs
@@ -598,27 +621,39 @@ impl Docker {
         name: impl AsRef<str>,
         tail: Option<usize>,
     ) -> Result<String, DockerError> {
-        let mut args = vec!["logs"];
+        // Create vector of owned strings
+        let mut args_owned = Vec::new();
+        args_owned.push("logs".to_string());
 
         if let Some(n) = tail {
-            args.push("--tail");
-            args.push(&n.to_string());
+            args_owned.push("--tail".to_string());
+            args_owned.push(n.to_string());
         }
 
-        args.push(name.as_ref());
+        args_owned.push(name.as_ref().to_string());
 
-        Docker::command_with_args(&args)
+        // Now create a vector of string slices
+        let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        Docker::command_with_args(&args_ref)
     }
 
     /// List all containers
     pub fn list_containers(all: bool) -> Result<Vec<Container>, DockerError> {
-        let mut args = vec!["container", "ls", "--format={{.Names}}"];
+        // Create vector of owned strings
+        let mut args_owned = Vec::new();
+        args_owned.push("container".to_string());
+        args_owned.push("ls".to_string());
+        args_owned.push("--format={{.Names}}".to_string());
 
         if all {
-            args.push("-a");
+            args_owned.push("-a".to_string());
         }
 
-        let output = Docker::command_with_args(&args)?;
+        // Now create a vector of string slices
+        let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        let output = Docker::command_with_args(&args_ref)?;
         let names = output
             .lines()
             .map(|line| line.trim())
@@ -631,9 +666,16 @@ impl Docker {
 
     /// List all images
     pub fn list_images() -> Result<Vec<Image>, DockerError> {
-        let args = &["image", "ls", "--format={{.Repository}}:{{.Tag}}"];
+        let args_owned = vec![
+            "image".to_string(),
+            "ls".to_string(),
+            "--format={{.Repository}}:{{.Tag}}".to_string(),
+        ];
 
-        let output = Docker::command_with_args(args)?;
+        // Now create a vector of string slices
+        let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        let output = Docker::command_with_args(&args_ref)?;
         let image_tags = output
             .lines()
             .map(|line| line.trim())
@@ -658,16 +700,25 @@ impl Docker {
         tag: impl AsRef<str>,
         dockerfile: Option<impl AsRef<Path>>,
     ) -> Result<CommandResult, DockerError> {
-        let mut args = vec!["build", "-t", tag.as_ref()];
+        // Create vector of owned strings
+        let mut args_owned = Vec::new();
+        args_owned.push("build".to_string());
+        args_owned.push("-t".to_string());
+        args_owned.push(tag.as_ref().to_string());
 
         if let Some(path) = dockerfile {
-            args.push("-f");
-            args.push(path.as_ref().to_str().unwrap_or("Dockerfile"));
+            args_owned.push("-f".to_string());
+            let path_str = path.as_ref().to_str().unwrap_or("Dockerfile").to_string();
+            args_owned.push(path_str);
         }
 
-        args.push(context_path.as_ref().to_str().unwrap_or("."));
+        let context_str = context_path.as_ref().to_str().unwrap_or(".").to_string();
+        args_owned.push(context_str);
 
-        Docker::command_with_result(&args)
+        // Now create a vector of string slices
+        let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+        Docker::command_with_result(&args_ref)
     }
 
     /// Check Docker daemon status
