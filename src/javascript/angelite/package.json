@@ -31,6 +31,9 @@
     ".": {
       "svelte": "./src/lib/index.js"
     },
+    "./render": {
+      "svelte": "./src/lib/render/index.js"
+    },
     "./ui": {
       "svelte": "./src/lib/ui/index.js"
     },
