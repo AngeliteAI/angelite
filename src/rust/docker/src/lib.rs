@@ -1,111 +1,7 @@
-use std::{error::Error, fmt, fs::File, io::Write, path::Path, process::Command};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, error::Error, fmt, path::Path, process::Command};
 
-use image::Image;
-
-pub trait Model {
-    fn get_image_name(&self) -> &str;
-    fn get_params(&self) -> Params;
-}
-
-#[derive(Debug, Clone)]
-pub struct Params {
-    pub env_vars: Vec<(String, String)>,
-    pub ports: Vec<(u16, u16)>,
-    pub volumes: Vec<(String, String)>,
-}
-
-impl Default for Params {
-    fn default() -> Self {
-        Self {
-            env_vars: Vec::new(),
-            ports: Vec::new(),
-            volumes: Vec::new(),
-        }
-    }
-}
-
-pub struct Docker {}
-
-mod image {
-    use serde::Deserialize;
-
-    use crate::Docker;
-
-    pub struct Image {
-        pub name: String,
-        pub tag: String,
-        pub manifests: Manifests,
-        pub remotes: Remotes,
-    }
-
-    impl Image {
-        pub fn new(name: impl AsRef<str>, tag: impl AsRef<str>) -> Image {
-            Self {
-                manifests: Manifests::pull(name.as_ref(), tag.as_ref()),
-                remotes: Remotes::pull(name.as_ref(), tag.as_ref()),
-                name: name.as_ref().to_string(),
-                tag: tag.as_ref().to_string(),
-            }
-        }
-
-        pub fn full_name(&self) -> String {
-            format!("{}:{}", self.name, self.tag)
-        }
-    }
-
-    #[derive(Deserialize)]
-    pub struct Remotes {
-        remotes: Vec<Remote>,
-    }
-
-    impl Remotes {
-        fn pull(name: impl AsRef<str>, tag: impl AsRef<str>) -> Self {
-            let full_name = format!("{}:{}", name.as_ref(), tag.as_ref());
-            let data = Docker::command(["image", "inspect", &full_name])
-                .unwrap_or_else(|e| panic!("Failed to inspect image {}: {}", full_name, e));
-
-            serde_json::from_str::<Self>(&data)
-                .unwrap_or_else(|e| panic!("Failed to parse image data for {}: {}", full_name, e))
-        }
-    }
-
-    #[derive(Deserialize)]
-    pub struct Remote {
-        id: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Manifests {
-        manifests: Vec<Manifest>,
-    }
-
-    impl Manifests {
-        fn pull(name: impl AsRef<str>, tag: impl AsRef<str>) -> Self {
-            let full_name = format!("{}:{}", name.as_ref(), tag.as_ref());
-            // Fixed typo: "maniest" -> "manifest"
-            let data = Docker::command(["manifest", "inspect", &full_name])
-                .unwrap_or_else(|e| panic!("Failed to inspect manifest {}: {}", full_name, e));
-
-            serde_json::from_str::<Self>(&data).unwrap_or_else(|e| {
-                panic!("Failed to parse manifest data for {}: {}", full_name, e)
-            })
-        }
-    }
-
-    #[derive(Deserialize)]
-    pub struct Platform {
-        architecture: String,
-        os: String,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Manifest {
-        size: String,
-        digest: String,
-        platform: Platform,
-    }
-}
-
+/// Error type for Docker operations
 #[derive(Debug)]
 pub struct DockerError {
     message: String,
@@ -135,124 +31,359 @@ impl From<std::string::FromUtf8Error> for DockerError {
     }
 }
 
+impl From<serde_json::Error> for DockerError {
+    fn from(err: serde_json::Error) -> Self {
+        DockerError {
+            message: format!("JSON error: {}", err),
+        }
+    }
+}
+
+/// Container configuration parameters
+#[derive(Debug, Clone, Default)]
+pub struct ContainerConfig {
+    pub env_vars: HashMap<String, String>,
+    pub ports: Vec<(u16, u16)>,
+    pub volumes: Vec<(String, String)>,
+    pub cmd: Option<Vec<String>>,
+    pub entrypoint: Option<Vec<String>>,
+    pub network: Option<String>,
+    pub labels: HashMap<String, String>,
+    pub restart_policy: Option<String>,
+}
+
+/// Command execution result
+#[derive(Debug, Clone)]
+pub struct CommandResult {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+/// Docker image information
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageInfo {
+    pub id: String,
+    pub created: String,
+    pub size: u64,
+    #[serde(rename = "RepoTags")]
+    pub repo_tags: Vec<String>,
+    #[serde(rename = "Architecture")]
+    pub architecture: Option<String>,
+    #[serde(rename = "Os")]
+    pub os: Option<String>,
+}
+
+/// Container information
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContainerInfo {
+    #[serde(rename = "Id")]
+    pub id: String,
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Image")]
+    pub image: String,
+    #[serde(rename = "State")]
+    pub state: ContainerState,
+    #[serde(rename = "Config")]
+    pub config: Option<ContainerConfig>,
+    #[serde(rename = "NetworkSettings")]
+    pub network_settings: Option<NetworkSettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContainerState {
+    #[serde(rename = "Status")]
+    pub status: String,
+    #[serde(rename = "Running")]
+    pub running: bool,
+    #[serde(rename = "Paused")]
+    pub paused: bool,
+    #[serde(rename = "Restarting")]
+    pub restarting: bool,
+    #[serde(rename = "ExitCode")]
+    pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NetworkSettings {
+    #[serde(rename = "IPAddress")]
+    pub ip_address: String,
+    #[serde(rename = "Ports")]
+    pub ports: Option<HashMap<String, Vec<PortBinding>>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PortBinding {
+    #[serde(rename = "HostIp")]
+    pub host_ip: String,
+    #[serde(rename = "HostPort")]
+    pub host_port: String,
+}
+
+/// Container represents a Docker container
 pub struct Container {
     name: String,
-    exists: bool,
-    running: bool,
+    id: Option<String>,
+    info: Option<ContainerInfo>,
 }
 
 impl Container {
+    /// Create a new Container instance
     pub fn new(name: impl AsRef<str>) -> Self {
         let name_str = name.as_ref().to_string();
-        let exists = Docker::container_exists(&name_str);
-        let running = if exists {
-            Docker::container_running(&name_str)
-        } else {
-            false
+        let mut container = Self {
+            name: name_str,
+            id: None,
+            info: None,
         };
 
-        Self {
-            name: name_str,
-            exists,
-            running,
-        }
+        // Try to get container info
+        let _ = container.refresh();
+
+        container
     }
 
+    /// Get container name
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Get container ID if available
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+
+    /// Check if container exists
     pub fn exists(&self) -> bool {
-        self.exists
+        self.id.is_some()
     }
 
+    /// Check if container is running
     pub fn running(&self) -> bool {
-        self.running
+        if let Some(info) = &self.info {
+            info.state.running
+        } else {
+            false
+        }
     }
 
-    pub fn start(&self) -> Result<(), DockerError> {
-        if !self.exists {
+    /// Get container status
+    pub fn status(&self) -> Option<&str> {
+        self.info.as_ref().map(|info| info.state.status.as_str())
+    }
+
+    /// Get container IP address
+    pub fn ip_address(&self) -> Option<&str> {
+        self.info
+            .as_ref()
+            .and_then(|info| info.network_settings.as_ref())
+            .map(|network| network.ip_address.as_str())
+    }
+
+    /// Refresh container information
+    pub fn refresh(&mut self) -> Result<(), DockerError> {
+        match Docker::inspect_container(&self.name) {
+            Ok(info) => {
+                self.id = Some(info.id.clone());
+                self.info = Some(info);
+                Ok(())
+            }
+            Err(_) => {
+                self.id = None;
+                self.info = None;
+                Ok(())
+            }
+        }
+    }
+
+    /// Start the container
+    pub fn start(&mut self) -> Result<(), DockerError> {
+        if !self.exists() {
             return Err(DockerError {
                 message: format!("Container {} does not exist", self.name),
             });
         }
 
-        if self.running {
+        if self.running() {
             return Ok(());
         }
 
-        Docker::command(["container", "start", &self.name])?;
+        Docker::start_container(&self.name)?;
+        self.refresh()?;
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<(), DockerError> {
-        if !self.exists {
+    /// Stop the container
+    pub fn stop(&mut self) -> Result<(), DockerError> {
+        if !self.exists() {
             return Err(DockerError {
                 message: format!("Container {} does not exist", self.name),
             });
         }
 
-        if !self.running {
+        if !self.running() {
             return Ok(());
         }
 
-        Docker::command(["container", "stop", &self.name])?;
+        Docker::stop_container(&self.name)?;
+        self.refresh()?;
         Ok(())
     }
 
-    pub fn remove(&self) -> Result<(), DockerError> {
-        if !self.exists {
+    /// Remove the container
+    pub fn remove(&mut self) -> Result<(), DockerError> {
+        if !self.exists() {
             return Ok(());
         }
 
-        if self.running {
+        if self.running() {
             self.stop()?;
         }
 
-        Docker::command(["container", "rm", &self.name])?;
+        Docker::remove_container(&self.name)?;
+        self.id = None;
+        self.info = None;
         Ok(())
     }
 
-    pub fn exec<S: AsRef<str>>(&self, cmd: &[S]) -> Result<String, DockerError> {
-        if !self.exists {
+    /// Execute a command in the container
+    pub fn exec<S: AsRef<str>>(&self, cmd: &[S]) -> Result<CommandResult, DockerError> {
+        if !self.exists() {
             return Err(DockerError {
                 message: format!("Container {} does not exist", self.name),
             });
         }
 
-        if !self.running {
+        if !self.running() {
             return Err(DockerError {
                 message: format!("Container {} is not running", self.name),
             });
         }
 
-        let mut args = vec!["exec", &self.name];
-        for arg in cmd {
-            args.push(arg.as_ref());
+        Docker::exec_container(&self.name, cmd)
+    }
+
+    /// Get container logs
+    pub fn logs(&self, tail: Option<usize>) -> Result<String, DockerError> {
+        if !self.exists() {
+            return Err(DockerError {
+                message: format!("Container {} does not exist", self.name),
+            });
         }
 
-        Docker::command(
-            args.try_into()
-                .unwrap_or_else(|_| panic!("Invalid command arguments")),
-        )
+        Docker::container_logs(&self.name, tail)
     }
 }
 
-pub struct BuildOutput {
-    pub success: bool,
-    pub stdout: String,
-    pub stderr: String,
-    pub image_name: String,
+/// Docker image representation
+pub struct Image {
+    name: String,
+    tag: String,
+    id: Option<String>,
+    info: Option<ImageInfo>,
 }
 
-// Include Dockerfile templates at compile time
-mod templates {
-    pub const RUST_BUILD: &str = include_str!("../templates/rust_build.dockerfile");
-    pub const RUST_BUILD_CHECK: &str = include_str!("../templates/rust_build_check.dockerfile");
-    pub const RUST_BUILD_RELEASE: &str = include_str!("../templates/rust_build_release.dockerfile");
+impl Image {
+    /// Create a new Image instance
+    pub fn new(name: impl AsRef<str>, tag: impl AsRef<str>) -> Self {
+        let name_str = name.as_ref().to_string();
+        let tag_str = tag.as_ref().to_string();
+        let mut image = Self {
+            name: name_str,
+            tag: tag_str,
+            id: None,
+            info: None,
+        };
+
+        // Try to get image info
+        let _ = image.refresh();
+
+        image
+    }
+
+    /// Get image name
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get image tag
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    /// Get full image name (name:tag)
+    pub fn full_name(&self) -> String {
+        format!("{}:{}", self.name, self.tag)
+    }
+
+    /// Get image ID if available
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+
+    /// Check if image exists locally
+    pub fn exists(&self) -> bool {
+        self.id.is_some()
+    }
+
+    /// Refresh image information
+    pub fn refresh(&mut self) -> Result<(), DockerError> {
+        match Docker::inspect_image(&self.full_name()) {
+            Ok(info) => {
+                self.id = Some(info.id.clone());
+                self.info = Some(info);
+                Ok(())
+            }
+            Err(_) => {
+                self.id = None;
+                self.info = None;
+                Ok(())
+            }
+        }
+    }
+
+    /// Pull the image from registry
+    pub fn pull(&mut self) -> Result<(), DockerError> {
+        Docker::pull_image(&self.name, &self.tag)?;
+        self.refresh()?;
+        Ok(())
+    }
+
+    /// Remove the image
+    pub fn remove(&mut self) -> Result<(), DockerError> {
+        if !self.exists() {
+            return Ok(());
+        }
+
+        Docker::remove_image(&self.full_name())?;
+        self.id = None;
+        self.info = None;
+        Ok(())
+    }
+
+    /// Create a container from this image
+    pub fn create_container(
+        &self,
+        container_name: impl AsRef<str>,
+        config: &ContainerConfig,
+    ) -> Result<Container, DockerError> {
+        if !self.exists() {
+            return Err(DockerError {
+                message: format!("Image {} does not exist", self.full_name()),
+            });
+        }
+
+        Docker::create_container(&self.full_name(), container_name, config)
+    }
 }
+
+/// Main Docker API
+pub struct Docker;
 
 impl Docker {
+    /// Execute a Docker command with fixed number of arguments
     pub fn command<S, const N: usize>(args: [S; N]) -> Result<String, DockerError>
     where
         S: AsRef<str>,
@@ -261,35 +392,54 @@ impl Docker {
         let output = Command::new("docker").args(&args_ref).output()?;
 
         if output.status.success() {
-            // Successfully executed command
             Ok(String::from_utf8(output.stdout)?)
         } else {
-            // Command failed
             let error = String::from_utf8(output.stderr)?;
             Err(DockerError { message: error })
         }
     }
 
-    pub fn command_with_output<S: AsRef<str>>(
-        args: &[S],
-    ) -> Result<(bool, String, String), DockerError> {
+    /// Execute a Docker command with variable arguments
+    pub fn command_with_args<S: AsRef<str>>(args: &[S]) -> Result<String, DockerError> {
+        let args_ref: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
+        let output = Command::new("docker").args(&args_ref).output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8(output.stdout)?)
+        } else {
+            let error = String::from_utf8(output.stderr)?;
+            Err(DockerError { message: error })
+        }
+    }
+
+    /// Execute a Docker command and get detailed result
+    pub fn command_with_result<S: AsRef<str>>(args: &[S]) -> Result<CommandResult, DockerError> {
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
         let output = Command::new("docker").args(&args_ref).output()?;
 
         let stdout = String::from_utf8(output.stdout)?;
         let stderr = String::from_utf8(output.stderr)?;
+        let exit_code = output.status.code().unwrap_or(-1);
 
-        Ok((output.status.success(), stdout, stderr))
+        Ok(CommandResult {
+            success: output.status.success(),
+            stdout,
+            stderr,
+            exit_code,
+        })
     }
 
+    /// Create a new Image object
     pub fn image(name: impl AsRef<str>, tag: impl AsRef<str>) -> Image {
         Image::new(name, tag)
     }
 
+    /// Create a new Container object
     pub fn container(name: impl AsRef<str>) -> Container {
         Container::new(name)
     }
 
+    /// Check if a container exists
     pub fn container_exists(name: impl AsRef<str>) -> bool {
         let result = Command::new("docker")
             .args(["container", "inspect", name.as_ref()])
@@ -301,6 +451,7 @@ impl Docker {
         }
     }
 
+    /// Check if a container is running
     pub fn container_running(name: impl AsRef<str>) -> bool {
         let result = Command::new("docker")
             .args([
@@ -320,226 +471,294 @@ impl Docker {
         }
     }
 
-    pub fn pull_image(name: impl AsRef<str>, tag: impl AsRef<str>) -> Result<Image, DockerError> {
-        let full_name = format!("{}:{}", name.as_ref(), tag.as_ref());
-        Docker::command(["pull", &full_name])?;
-        Ok(Image::new(name, tag))
+    /// Get detailed information about a container
+    pub fn inspect_container(name: impl AsRef<str>) -> Result<ContainerInfo, DockerError> {
+        let output =
+            Docker::command(["container", "inspect", "--format={{json .}}", name.as_ref()])?;
+        Ok(serde_json::from_str(&output)?)
     }
 
+    /// Get detailed information about an image
+    pub fn inspect_image(name: impl AsRef<str>) -> Result<ImageInfo, DockerError> {
+        let output = Docker::command(["image", "inspect", "--format={{json .}}", name.as_ref()])?;
+        Ok(serde_json::from_str(&output)?)
+    }
+
+    /// Pull an image from registry
+    pub fn pull_image(name: impl AsRef<str>, tag: impl AsRef<str>) -> Result<(), DockerError> {
+        let full_name = format!("{}:{}", name.as_ref(), tag.as_ref());
+        Docker::command(["pull", &full_name])?;
+        Ok(())
+    }
+
+    /// Remove an image
+    pub fn remove_image(name: impl AsRef<str>) -> Result<(), DockerError> {
+        Docker::command(["rmi", name.as_ref()])?;
+        Ok(())
+    }
+
+    /// Create a container from an image
     pub fn create_container(
-        image: &Image,
+        image: impl AsRef<str>,
         container_name: impl AsRef<str>,
-        params: &Params,
+        config: &ContainerConfig,
     ) -> Result<Container, DockerError> {
         let mut args = vec!["container", "create", "--name", container_name.as_ref()];
 
         // Add environment variables
-        for (key, value) in &params.env_vars {
+        for (key, value) in &config.env_vars {
             args.push("-e");
             args.push(&format!("{}={}", key, value));
         }
 
         // Add port mappings
-        for (host, container) in &params.ports {
+        for (host, container) in &config.ports {
             args.push("-p");
             args.push(&format!("{}:{}", host, container));
         }
 
         // Add volume mappings
-        for (host, container) in &params.volumes {
+        for (host, container) in &config.volumes {
             args.push("-v");
             args.push(&format!("{}:{}", host, container));
         }
 
-        // Add image name
-        args.push(&image.full_name());
+        // Add network if specified
+        if let Some(network) = &config.network {
+            args.push("--network");
+            args.push(network);
+        }
 
-        Docker::command(
-            args.try_into()
-                .unwrap_or_else(|_| panic!("Invalid command arguments")),
-        )?;
+        // Add restart policy if specified
+        if let Some(policy) = &config.restart_policy {
+            args.push("--restart");
+            args.push(policy);
+        }
+
+        // Add labels
+        for (key, value) in &config.labels {
+            args.push("--label");
+            args.push(&format!("{}={}", key, value));
+        }
+
+        // Add custom entrypoint if specified
+        if let Some(entrypoint) = &config.entrypoint {
+            args.push("--entrypoint");
+            args.push(&entrypoint.join(" "));
+        }
+
+        // Add image name
+        args.push(image.as_ref());
+
+        // Add command if specified
+        if let Some(cmd) = &config.cmd {
+            for arg in cmd {
+                args.push(arg);
+            }
+        }
+
+        Docker::command_with_args(&args)?;
 
         Ok(Container::new(container_name))
     }
 
-    pub fn build_rust_crate(
-        rust_project_path: impl AsRef<Path>,
-        image_name: impl AsRef<str>,
-        log_file: Option<impl AsRef<Path>>,
-        release: bool,
-    ) -> Result<BuildOutput, DockerError> {
-        let project_path = rust_project_path.as_ref().to_string_lossy().to_string();
-        let img_name = image_name.as_ref().to_string();
-
-        // Choose the appropriate Dockerfile template
-        let dockerfile_content = if release {
-            templates::RUST_BUILD_RELEASE
-        } else {
-            templates::RUST_BUILD
-        };
-
-        // Write Dockerfile to the project directory
-        let dockerfile_path = Path::new(&project_path).join("Dockerfile");
-        let mut file = File::create(&dockerfile_path)?;
-        file.write_all(dockerfile_content.as_bytes())?;
-
-        // Build the Docker image
-        let args = &["build", "-t", &img_name, &project_path];
-        let (success, stdout, stderr) = Docker::command_with_output(args)?;
-
-        // Save logs if requested
-        if let Some(log_path) = log_file {
-            let mut log_file = File::create(log_path.as_ref())?;
-            log_file.write_all(b"--- STDOUT ---\n")?;
-            log_file.write_all(stdout.as_bytes())?;
-            log_file.write_all(b"\n--- STDERR ---\n")?;
-            log_file.write_all(stderr.as_bytes())?;
-        }
-
-        Ok(BuildOutput {
-            success,
-            stdout,
-            stderr,
-            image_name: img_name,
-        })
+    /// Start a container
+    pub fn start_container(name: impl AsRef<str>) -> Result<(), DockerError> {
+        Docker::command(["container", "start", name.as_ref()])?;
+        Ok(())
     }
 
-    pub fn check_rust_build(
-        rust_project_path: impl AsRef<Path>,
-        image_name: impl AsRef<str>,
-        log_file: Option<impl AsRef<Path>>,
-    ) -> Result<BuildOutput, DockerError> {
-        let project_path = rust_project_path.as_ref().to_string_lossy().to_string();
-        let img_name = image_name.as_ref().to_string();
-
-        // Use the check-only Dockerfile
-        let dockerfile_content = templates::RUST_BUILD_CHECK;
-
-        // Write Dockerfile to the project directory
-        let dockerfile_path = Path::new(&project_path).join("Dockerfile");
-        let mut file = File::create(&dockerfile_path)?;
-        file.write_all(dockerfile_content.as_bytes())?;
-
-        // Build the Docker image
-        let args = &["build", "-t", &img_name, &project_path];
-        let (success, stdout, stderr) = Docker::command_with_output(args)?;
-
-        // Save logs if requested
-        if let Some(log_path) = log_file {
-            let mut log_file = File::create(log_path.as_ref())?;
-            log_file.write_all(b"--- STDOUT ---\n")?;
-            log_file.write_all(stdout.as_bytes())?;
-            log_file.write_all(b"\n--- STDERR ---\n")?;
-            log_file.write_all(stderr.as_bytes())?;
-        }
-
-        Ok(BuildOutput {
-            success,
-            stdout,
-            stderr,
-            image_name: img_name,
-        })
+    /// Stop a container
+    pub fn stop_container(name: impl AsRef<str>) -> Result<(), DockerError> {
+        Docker::command(["container", "stop", name.as_ref()])?;
+        Ok(())
     }
 
-    pub fn inspect_rust_build(build_output: &BuildOutput) -> Result<bool, DockerError> {
-        if !build_output.success {
-            return Ok(false);
+    /// Remove a container
+    pub fn remove_container(name: impl AsRef<str>) -> Result<(), DockerError> {
+        Docker::command(["container", "rm", name.as_ref()])?;
+        Ok(())
+    }
+
+    /// Execute a command in a running container
+    pub fn exec_container<S: AsRef<str>>(
+        name: impl AsRef<str>,
+        cmd: &[S],
+    ) -> Result<CommandResult, DockerError> {
+        let mut args = vec!["exec", name.as_ref()];
+        for arg in cmd {
+            args.push(arg.as_ref());
         }
 
-        // Create a temporary container to inspect the build
-        let container_name = format!(
-            "inspect_{}",
-            build_output.image_name.replace(':', '_').replace('/', '_')
-        );
+        Docker::command_with_result(&args)
+    }
 
-        // First remove any existing container with this name
-        let _ = Command::new("docker")
-            .args(["rm", "-f", &container_name])
-            .output();
+    /// Get container logs
+    pub fn container_logs(
+        name: impl AsRef<str>,
+        tail: Option<usize>,
+    ) -> Result<String, DockerError> {
+        let mut args = vec!["logs"];
 
-        // Create and run the container
-        let args = &[
-            "run",
-            "--name",
-            &container_name,
-            "-d",
-            &build_output.image_name,
-        ];
-
-        let (success, _, _) = Docker::command_with_output(args)?;
-        if !success {
-            return Ok(false);
+        if let Some(n) = tail {
+            args.push("--tail");
+            args.push(&n.to_string());
         }
 
-        // Clean up the container
-        let _ = Command::new("docker")
-            .args(["rm", "-f", &container_name])
-            .output();
+        args.push(name.as_ref());
 
-        Ok(true)
+        Docker::command_with_args(&args)
+    }
+
+    /// List all containers
+    pub fn list_containers(all: bool) -> Result<Vec<Container>, DockerError> {
+        let mut args = vec!["container", "ls", "--format={{.Names}}"];
+
+        if all {
+            args.push("-a");
+        }
+
+        let output = Docker::command_with_args(&args)?;
+        let names = output
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .map(|name| Container::new(name))
+            .collect();
+
+        Ok(names)
+    }
+
+    /// List all images
+    pub fn list_images() -> Result<Vec<Image>, DockerError> {
+        let args = &["image", "ls", "--format={{.Repository}}:{{.Tag}}"];
+
+        let output = Docker::command_with_args(args)?;
+        let image_tags = output
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.contains("<none>"))
+            .collect::<Vec<_>>();
+
+        let mut images = Vec::new();
+        for image_tag in image_tags {
+            if let Some(idx) = image_tag.rfind(':') {
+                let name = &image_tag[..idx];
+                let tag = &image_tag[idx + 1..];
+                images.push(Image::new(name, tag));
+            }
+        }
+
+        Ok(images)
+    }
+
+    /// Build an image from a Dockerfile
+    pub fn build_image(
+        context_path: impl AsRef<Path>,
+        tag: impl AsRef<str>,
+        dockerfile: Option<impl AsRef<Path>>,
+    ) -> Result<CommandResult, DockerError> {
+        let mut args = vec!["build", "-t", tag.as_ref()];
+
+        if let Some(path) = dockerfile {
+            args.push("-f");
+            args.push(path.as_ref().to_str().unwrap_or("Dockerfile"));
+        }
+
+        args.push(context_path.as_ref().to_str().unwrap_or("."));
+
+        Docker::command_with_result(&args)
+    }
+
+    /// Check Docker daemon status
+    pub fn is_available() -> bool {
+        let result = Command::new("docker").args(["info"]).output();
+
+        match result {
+            Ok(output) => output.status.success(),
+            Err(_) => false,
+        }
+    }
+
+    /// Get Docker version information
+    pub fn version() -> Result<String, DockerError> {
+        Docker::command(["version", "--format={{json .}}"])
     }
 }
 
-pub fn build<M: Model>(working_dir: impl AsRef<Path>, model: &M) -> Result<Container, DockerError> {
-    let working_dir = working_dir.as_ref();
+/// Create a default container config
+pub fn default_container_config() -> ContainerConfig {
+    ContainerConfig::default()
+}
 
-    // Check if working directory exists
-    if !working_dir.exists() || !working_dir.is_dir() {
-        return Err(DockerError {
-            message: format!(
-                "Working directory does not exist: {}",
-                working_dir.display()
-            ),
-        });
+/// Build a container config with common options
+pub fn container_config() -> ContainerConfigBuilder {
+    ContainerConfigBuilder::new()
+}
+
+/// Builder for ContainerConfig
+pub struct ContainerConfigBuilder {
+    config: ContainerConfig,
+}
+
+impl ContainerConfigBuilder {
+    /// Create a new ContainerConfigBuilder
+    pub fn new() -> Self {
+        Self {
+            config: ContainerConfig::default(),
+        }
     }
 
-    let image_name = model.get_image_name();
-    let (name, tag) = if let Some(idx) = image_name.find(':') {
-        (&image_name[..idx], &image_name[idx + 1..])
-    } else {
-        (image_name, "latest")
-    };
-
-    // Pull the image first
-    let image = Docker::pull_image(name, tag)?;
-
-    // Generate a container name based on the model name
-    let container_name = format!("model_{}", name.replace('/', "_"));
-
-    // Create the container with model parameters
-    let params = model.get_params();
-    Docker::create_container(&image, &container_name, &params)
-}
-
-// For Rust crate building
-pub fn build_rust_project(
-    project_path: impl AsRef<Path>,
-    image_name: impl AsRef<str>,
-    release: bool,
-) -> Result<BuildOutput, DockerError> {
-    Docker::build_rust_crate(project_path, image_name, None, release)
-}
-
-pub fn check_rust_project(
-    project_path: impl AsRef<Path>,
-    image_name: impl AsRef<str>,
-    log_file: impl AsRef<Path>,
-) -> Result<bool, DockerError> {
-    let build_output = Docker::check_rust_build(project_path, image_name, Some(log_file))?;
-    Ok(build_output.success)
-}
-
-pub fn build_and_inspect_rust_project(
-    project_path: impl AsRef<Path>,
-    image_name: impl AsRef<str>,
-    log_file: impl AsRef<Path>,
-    release: bool,
-) -> Result<bool, DockerError> {
-    let build_output = Docker::build_rust_crate(project_path, image_name, Some(log_file), release)?;
-
-    if !build_output.success {
-        return Ok(false);
+    /// Add an environment variable
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.config.env_vars.insert(key.into(), value.into());
+        self
     }
 
-    Docker::inspect_rust_build(&build_output)
+    /// Add a port mapping
+    pub fn port(mut self, host: u16, container: u16) -> Self {
+        self.config.ports.push((host, container));
+        self
+    }
+
+    /// Add a volume mapping
+    pub fn volume(mut self, host: impl Into<String>, container: impl Into<String>) -> Self {
+        self.config.volumes.push((host.into(), container.into()));
+        self
+    }
+
+    /// Set command to run
+    pub fn cmd(mut self, args: Vec<impl Into<String>>) -> Self {
+        self.config.cmd = Some(args.into_iter().map(|s| s.into()).collect());
+        self
+    }
+
+    /// Set entrypoint
+    pub fn entrypoint(mut self, args: Vec<impl Into<String>>) -> Self {
+        self.config.entrypoint = Some(args.into_iter().map(|s| s.into()).collect());
+        self
+    }
+
+    /// Set network
+    pub fn network(mut self, network: impl Into<String>) -> Self {
+        self.config.network = Some(network.into());
+        self
+    }
+
+    /// Add a label
+    pub fn label(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.config.labels.insert(key.into(), value.into());
+        self
+    }
+
+    /// Set restart policy
+    pub fn restart(mut self, policy: impl Into<String>) -> Self {
+        self.config.restart_policy = Some(policy.into());
+        self
+    }
+
+    /// Build the ContainerConfig
+    pub fn build(self) -> ContainerConfig {
+        self.config
+    }
 }
