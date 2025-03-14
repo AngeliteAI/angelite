@@ -1,5 +1,11 @@
+# Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+# Add Cargo to PATH
 ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Add common Rust components
+RUN rustup component add rustfmt clippy
 
 # Verify Rust installation
 RUN rustc --version && \

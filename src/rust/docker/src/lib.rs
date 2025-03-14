@@ -307,7 +307,7 @@ impl Container {
             dest_dir.as_ref()
         );
 
-        let mut docker_process = Command::new("sh")
+        let mut docker_process = Command::new("bash")
             .arg("-c")
             .arg(docker_cmd)
             .stdin(std::process::Stdio::from(tar_process.stdout.unwrap()))
@@ -875,8 +875,6 @@ impl Docker {
     ) -> Result<CommandResult, DockerError> {
         // Create vector of owned strings
         let mut args_owned = Vec::new();
-        args_owned.push("exec".to_string());
-        args_owned.push(name.as_ref().to_string());
 
         for arg in cmd {
             args_owned.push(arg.as_ref().to_string());
@@ -885,7 +883,7 @@ impl Docker {
         // Now create a vector of string slices
         let args_ref: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
-        Docker::command_with_result(&args_ref)
+        Docker::command_with_result(&["exec", name.as_ref(), "bash", "-c", &args_owned.join(" ")])
     }
 
     /// Get container logs
@@ -971,10 +969,18 @@ impl Docker {
         context_path: impl AsRef<Path>,
         tag: impl AsRef<str>,
         dockerfile: Option<impl AsRef<Path>>,
+        build_args: &[(impl AsRef<str>, impl AsRef<str>)],
     ) -> Result<CommandResult, DockerError> {
         // Create vector of owned strings
         let mut args_owned = Vec::new();
         args_owned.push("build".to_string());
+
+        for (k, v) in build_args {
+            args_owned.push("--build-arg".to_string());
+            let (k, v) = (k.as_ref(), v.as_ref());
+            args_owned.push(format!("{k}={v}"));
+        }
+
         args_owned.push("-t".to_string());
         args_owned.push(tag.as_ref().to_string());
 
@@ -983,7 +989,6 @@ impl Docker {
             let path_str = path.as_ref().to_str().unwrap_or("Dockerfile").to_string();
             args_owned.push(path_str);
         }
-
         let context_str = context_path.as_ref().to_str().unwrap_or(".").to_string();
         args_owned.push(context_str);
 

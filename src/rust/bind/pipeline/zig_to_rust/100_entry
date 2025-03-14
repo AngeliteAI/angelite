@@ -1,8 +1,1 @@
-RUN echo '#!/bin/bash\n\
-echo "Container is running. Use docker exec to run commands."\n\
-tail -f /dev/null\n\
-' > /entrypoint.sh && \
-    chmod +x /entrypoint.sh
-
-# Set the entrypoint
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

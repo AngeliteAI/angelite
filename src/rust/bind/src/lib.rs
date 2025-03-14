@@ -20,6 +20,7 @@ pub struct Library {
 }
 
 pub struct Config {
+    pub workspace: PathBuf,
     pub source: Library,
     pub deps: Vec<Library>,
     pub target: Library,
@@ -37,6 +38,7 @@ use std::io::{self, Write};
 /// # Returns
 /// * `Result<PathBuf, io::Error>` - Path to the generated Dockerfile or an error
 pub fn generate_dockerfile_from_snippets(
+    temp_name: impl AsRef<str>,
     snippets_dir: impl AsRef<Path>,
 ) -> Result<PathBuf, io::Error> {
     let snippets_path = snippets_dir.as_ref();
@@ -55,7 +57,7 @@ pub fn generate_dockerfile_from_snippets(
         let entry = entry?;
         let path = entry.path();
 
-        if path.is_file() {
+        if path.is_file() && path.extension().is_none() {
             snippet_files.push(path);
         }
     }
@@ -68,7 +70,7 @@ pub fn generate_dockerfile_from_snippets(
     });
 
     // Create a temporary directory for the output
-    let temp_dir = env::temp_dir().join("dockerfile_generator");
+    let temp_dir = env::temp_dir().join(temp_name.as_ref());
     fs::create_dir_all(&temp_dir)?;
 
     // Path for the output Dockerfile
@@ -115,28 +117,59 @@ pub fn bind(cfg: Config) {
 
     let container_name = format!("build_{}", id);
 
-    // Create a container configuration
     let mut container = container_config();
 
-    let Ok(generated) = generate_dockerfile_from_snippets("./pipeline/zig_to_rust") else {
-        panic!("whoopsie daisy");
+    let dockersnippets = "./pipeline/zig_to_rust";
+    // Generate Dockerfile from snippets
+    let dockerfile_path = match generate_dockerfile_from_snippets(&container_name, dockersnippets) {
+        Ok(path) => {
+            // Log the Dockerfile content for debugging
+            if let Ok(content) = fs::read_to_string(&path) {
+                println!("Generated Dockerfile:\n{}", content);
+            }
+            path
+        }
+        Err(e) => {
+            panic!("Failed to generate Dockerfile: {}", e);
+        }
     };
 
-    dbg!(fs::read_to_string(generated));
+    let dockerfile = fs::read_to_string(&dockerfile_path);
 
-    for Library { dir, .. } in &cfg.deps {
-        let name = dir.file_name().and_then(|x| x.to_str()).unwrap();
-        container = container.volume(dir.as_os_str().to_str().unwrap(), format!("/libs/{name}"));
+    let dockerfile_path = env::current_dir().unwrap().join("Dockerfile");
+
+    fs::write(&dockerfile_path, dockerfile.unwrap());
+
+    // Build a Docker image using the generated Dockerfile
+    let image_tag = format!("zig_to_rust:{}", id);
+    let build_result = Docker::build_image(
+        dbg!(dockerfile_path.parent().unwrap()), // Context is the parent directory of the Dockerfile
+        &image_tag,
+        Some(&dockerfile_path),
+        &[("deez", "nuts")],
+    )
+    .expect("failed to build image");
+
+    // Check if image build was successful
+    if !build_result.success {
+        panic!("Failed to build Docker image: {}", build_result.stderr);
     }
+
+    // Now use the built image instead of a pulled one
+    let mut image = Image::new(
+        image_tag.split(':').next().unwrap(),
+        image_tag.split(':').nth(1).unwrap(),
+    );
 
     let mut rev_lut = HashMap::new();
 
+    let curr_env = env::current_dir().unwrap();
+    let env_parent = cfg.workspace.as_os_str().to_str().unwrap();
+    dbg!(&env_parent);
+
     let main = {
         let name = cfg.target.dir.file_name().and_then(|x| x.to_str()).unwrap();
-        container = container.volume(
-            dbg!(cfg.target.dir.as_os_str().to_str().unwrap()),
-            format!("/target/{name}"),
-        );
+        container = container.volume(env_parent, env_parent);
         let temp = cfg
             .target
             .dir
@@ -145,14 +178,14 @@ pub fn bind(cfg: Config) {
             .take(1)
             .collect::<PathBuf>();
         rev_lut.insert(
-            format!("/target"),
+            env_parent.clone(),
             temp.as_os_str().to_str().unwrap().to_owned(),
         );
         name
     };
 
     container = container.cmd(vec!["sleep", "infinity"]);
-    container = container.working_dir(format!("/target/{main}"));
+    container = container.working_dir(env_parent.clone());
 
     let mut image = Image::new("rust", "latest");
 
@@ -168,12 +201,42 @@ pub fn bind(cfg: Config) {
 
     container.start().expect("failed to start container");
 
+    container.copy_to(format!("{dockersnippets}/entry.sh"), "/entry.sh");
+    container
+        .exec(&["chmod +x /entry.sh"])
+        .expect("failed to make target");
+
+    let args = [
+        ("WORKSPACE", &format!("{}/{}", env_parent, dockersnippets)),
+        ("NAME", &"base".to_string()),
+    ];
+
+    let env = args
+        .into_iter()
+        .map(|(x, y)| format!("{x}={y}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    container
+        .exec(&[dbg!(format!("{env} /entry.sh"))])
+        .expect("failed to make target");
+
     loop {
+        let output = dbg!(
+            container
+                .exec(&["ls", "-a", "target/debug"])
+                .expect("failed to get output")
+        );
         let output = container
-            .exec(&["cargo", "build"])
+            .exec(&["RUSTFLAGS=\"-Awarnings\"", "cargo", "build"])
             .expect("failed to get output");
 
-        dbg!(&output.stderr);
+        println!("{}\n{}", &output.stdout, &output.stderr);
+
+        if output
+            .stderr
+            .contains("failed to load source for dependency")
+        {}
 
         if output
             .stderr
