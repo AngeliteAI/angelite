@@ -4,7 +4,7 @@ use std::{collections::HashMap, error::Error, fmt, path::Path, process::Command}
 /// Error type for Docker operations
 #[derive(Debug)]
 pub struct DockerError {
-    message: String,
+    pub message: String,
 }
 
 impl fmt::Display for DockerError {
@@ -39,8 +39,8 @@ impl From<serde_json::Error> for DockerError {
     }
 }
 
-/// Container configuration parameters
-#[derive(Debug, Clone, Default, Deserialize)]
+/// Container configuration parameters for creating containers
+#[derive(Debug, Clone, Default)]
 pub struct ContainerConfig {
     pub env_vars: HashMap<String, String>,
     pub ports: Vec<(u16, u16)>,
@@ -50,6 +50,45 @@ pub struct ContainerConfig {
     pub network: Option<String>,
     pub labels: HashMap<String, String>,
     pub restart_policy: Option<String>,
+    pub working_dir: Option<String>, // Add this field
+}
+/// Docker's container configuration structure used when parsing API responses
+#[derive(Debug, Clone, Deserialize)]
+pub struct DockerContainerConfig {
+    #[serde(rename = "Hostname")]
+    pub hostname: Option<String>,
+    #[serde(rename = "Domainname")]
+    pub domainname: Option<String>,
+    #[serde(rename = "User")]
+    pub user: Option<String>,
+    #[serde(rename = "AttachStdin")]
+    pub attach_stdin: Option<bool>,
+    #[serde(rename = "AttachStdout")]
+    pub attach_stdout: Option<bool>,
+    #[serde(rename = "AttachStderr")]
+    pub attach_stderr: Option<bool>,
+    #[serde(rename = "Tty")]
+    pub tty: Option<bool>,
+    #[serde(rename = "OpenStdin")]
+    pub open_stdin: Option<bool>,
+    #[serde(rename = "StdinOnce")]
+    pub stdin_once: Option<bool>,
+    #[serde(rename = "Env")]
+    pub env: Option<Vec<String>>,
+    #[serde(rename = "Cmd")]
+    pub cmd: Option<Vec<String>>,
+    #[serde(rename = "Image")]
+    pub image: Option<String>,
+    #[serde(rename = "Volumes")]
+    pub volumes: Option<serde_json::Value>, // Using Value to handle null or object
+    #[serde(rename = "WorkingDir")]
+    pub working_dir: Option<String>,
+    #[serde(rename = "Entrypoint")]
+    pub entrypoint: Option<Vec<String>>,
+    #[serde(rename = "OnBuild")]
+    pub on_build: Option<serde_json::Value>, // Using Value to handle null or array
+    #[serde(rename = "Labels")]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 /// Command execution result
@@ -90,9 +129,44 @@ pub struct ContainerInfo {
     #[serde(rename = "State")]
     pub state: ContainerState,
     #[serde(rename = "Config")]
-    pub config: Option<ContainerConfig>,
+    pub config: Option<DockerContainerConfig>,
     #[serde(rename = "NetworkSettings")]
     pub network_settings: Option<NetworkSettings>,
+    // Add fields that might be useful from Docker's output
+    #[serde(rename = "HostConfig", default)]
+    pub host_config: Option<HostConfig>,
+    #[serde(rename = "Mounts", default)]
+    pub mounts: Option<Vec<Mount>>,
+    #[serde(rename = "Created", default)]
+    pub created: Option<String>,
+    #[serde(rename = "Path", default)]
+    pub path: Option<String>,
+    #[serde(rename = "Args", default)]
+    pub args: Option<Vec<String>>,
+    #[serde(rename = "ResolvConfPath", default)]
+    pub resolv_conf_path: Option<String>,
+    #[serde(rename = "HostnamePath", default)]
+    pub hostname_path: Option<String>,
+    #[serde(rename = "HostsPath", default)]
+    pub hosts_path: Option<String>,
+    #[serde(rename = "LogPath", default)]
+    pub log_path: Option<String>,
+    #[serde(rename = "RestartCount", default)]
+    pub restart_count: Option<i32>,
+    #[serde(rename = "Driver", default)]
+    pub driver: Option<String>,
+    #[serde(rename = "Platform", default)]
+    pub platform: Option<String>,
+    #[serde(rename = "MountLabel", default)]
+    pub mount_label: Option<String>,
+    #[serde(rename = "ProcessLabel", default)]
+    pub process_label: Option<String>,
+    #[serde(rename = "AppArmorProfile", default)]
+    pub app_armor_profile: Option<String>,
+    #[serde(rename = "ExecIDs", default)]
+    pub exec_ids: Option<serde_json::Value>, // Can be null or array
+    #[serde(rename = "GraphDriver", default)]
+    pub graph_driver: Option<GraphDriver>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -125,6 +199,73 @@ pub struct PortBinding {
     pub host_port: String,
 }
 
+// Additional structs needed for full Docker API coverage
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct HostConfig {
+    #[serde(rename = "Binds", default)]
+    pub binds: Option<Vec<String>>,
+    #[serde(rename = "ContainerIDFile", default)]
+    pub container_id_file: Option<String>,
+    #[serde(rename = "LogConfig", default)]
+    pub log_config: Option<LogConfig>,
+    #[serde(rename = "NetworkMode", default)]
+    pub network_mode: Option<String>,
+    #[serde(rename = "PortBindings", default)]
+    pub port_bindings: Option<HashMap<String, Vec<PortBinding>>>,
+    #[serde(rename = "RestartPolicy", default)]
+    pub restart_policy: Option<RestartPolicy>,
+    #[serde(rename = "AutoRemove", default)]
+    pub auto_remove: Option<bool>,
+    #[serde(rename = "VolumeDriver", default)]
+    pub volume_driver: Option<String>,
+    #[serde(rename = "VolumesFrom", default)]
+    pub volumes_from: Option<serde_json::Value>, // Can be null or array
+    #[serde(rename = "ConsoleSize", default)]
+    pub console_size: Option<Vec<u32>>,
+    #[serde(rename = "Privileged", default)]
+    pub privileged: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct LogConfig {
+    #[serde(rename = "Type", default)]
+    pub log_type: Option<String>,
+    #[serde(rename = "Config", default)]
+    pub config: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RestartPolicy {
+    #[serde(rename = "Name", default)]
+    pub name: Option<String>,
+    #[serde(rename = "MaximumRetryCount", default)]
+    pub maximum_retry_count: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct Mount {
+    #[serde(rename = "Type", default)]
+    pub mount_type: Option<String>,
+    #[serde(rename = "Source", default)]
+    pub source: Option<String>,
+    #[serde(rename = "Destination", default)]
+    pub destination: Option<String>,
+    #[serde(rename = "Mode", default)]
+    pub mode: Option<String>,
+    #[serde(rename = "RW", default)]
+    pub rw: Option<bool>,
+    #[serde(rename = "Propagation", default)]
+    pub propagation: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct GraphDriver {
+    #[serde(rename = "Data", default)]
+    pub data: Option<HashMap<String, String>>,
+    #[serde(rename = "Name", default)]
+    pub name: Option<String>,
+}
+
 /// Container represents a Docker container
 pub struct Container {
     name: String,
@@ -133,6 +274,120 @@ pub struct Container {
 }
 
 impl Container {
+    pub fn copy_dir_to_with_tar(
+        &self,
+        src_dir: impl AsRef<Path>,
+        dest_dir: impl AsRef<str>,
+    ) -> Result<(), DockerError> {
+        if !self.exists() {
+            return Err(DockerError {
+                message: format!("Container {} does not exist", self.name),
+            });
+        }
+
+        let src_path = src_dir.as_ref();
+        if !src_path.is_dir() {
+            return Err(DockerError {
+                message: format!("Source path is not a directory: {:?}", src_path),
+            });
+        }
+
+        // Create a tar archive in memory
+        let mut tar_cmd = Command::new("tar");
+        tar_cmd.current_dir(src_path.parent().unwrap_or(Path::new("/")));
+        tar_cmd.args(["-cf", "-", src_path.file_name().unwrap().to_str().unwrap()]);
+
+        let tar_process = tar_cmd.stdout(std::process::Stdio::piped()).spawn()?;
+
+        // Pipe the tar output to docker exec command
+        let docker_cmd = format!(
+            "docker exec -i {} bash -c \"mkdir -p {} && tar -xf - -C {}\"",
+            self.name,
+            dest_dir.as_ref(),
+            dest_dir.as_ref()
+        );
+
+        let mut docker_process = Command::new("sh")
+            .arg("-c")
+            .arg(docker_cmd)
+            .stdin(std::process::Stdio::from(tar_process.stdout.unwrap()))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        let output = docker_process.wait_with_output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(DockerError {
+                message: format!("Failed to copy directory to container: {}", stderr),
+            });
+        }
+
+        Ok(())
+    }
+    /// Copy a file from the host to the container
+    pub fn copy_to(
+        &self,
+        src_path: impl AsRef<Path>,
+        dest_path: impl AsRef<str>,
+    ) -> Result<(), DockerError> {
+        if !self.exists() {
+            return Err(DockerError {
+                message: format!("Container {} does not exist", self.name),
+            });
+        }
+
+        let src_path_ref = src_path.as_ref();
+        let src_path_str = src_path_ref.to_str().ok_or_else(|| DockerError {
+            message: "Invalid source path".to_string(),
+        })?;
+
+        // Add a trailing slash to the source if it's a directory
+        // This ensures Docker copies the contents, not the directory itself
+        let src_for_cmd = if src_path_ref.is_dir() && !src_path_str.ends_with('/') {
+            format!("{}/", src_path_str)
+        } else {
+            src_path_str.to_string()
+        };
+
+        let dest = format!("{}:{}", self.name, dest_path.as_ref());
+
+        // Execute the docker cp command
+        let result = Command::new("docker")
+            .args(["cp", &src_for_cmd, &dest])
+            .output()?;
+
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(DockerError {
+                message: format!("Failed to copy files to container: {}", stderr),
+            });
+        }
+
+        Ok(())
+    }
+    /// Copy a file from the container to the host
+    pub fn copy_from(
+        &self,
+        src_path: impl AsRef<str>,
+        dest_path: impl AsRef<Path>,
+    ) -> Result<(), DockerError> {
+        if !self.exists() {
+            return Err(DockerError {
+                message: format!("Container {} does not exist", self.name),
+            });
+        }
+
+        // Format command using the cp subcommand
+        let src = format!("{}:{}", self.name, src_path.as_ref());
+        let dest_path_str = dest_path.as_ref().to_str().unwrap_or("");
+
+        // Execute the cp command
+        Docker::command(["cp", &src, dest_path_str])?;
+
+        Ok(())
+    }
     /// Create a new Container instance
     pub fn new(name: impl AsRef<str>) -> Self {
         let name_str = name.as_ref().to_string();
@@ -183,6 +438,16 @@ impl Container {
             .as_ref()
             .and_then(|info| info.network_settings.as_ref())
             .map(|network| network.ip_address.as_str())
+    }
+
+    /// Get container environment variables
+    pub fn env_vars(&self) -> Vec<String> {
+        self.info
+            .as_ref()
+            .and_then(|info| info.config.as_ref())
+            .and_then(|config| config.env.as_ref())
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Refresh container information
@@ -339,10 +604,10 @@ impl Image {
                 self.info = Some(info);
                 Ok(())
             }
-            Err(_) => {
+            Err(e) => {
                 self.id = None;
                 self.info = None;
-                Ok(())
+                Err(e)
             }
         }
     }
@@ -392,7 +657,7 @@ impl Docker {
         S: AsRef<str>,
     {
         let args_ref: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-        let output = dbg!(Command::new("docker").args(&args_ref).output()?);
+        let output = (Command::new("docker").args(&args_ref).output()?);
         if output.status.success() {
             Ok(String::from_utf8(output.stdout)?)
         } else {
@@ -476,7 +741,7 @@ impl Docker {
     /// Get detailed information about a container
     pub fn inspect_container(name: impl AsRef<str>) -> Result<ContainerInfo, DockerError> {
         let output =
-            Docker::command(["container", "inspect", "--format={{json .}}", name.as_ref()])?;
+            (Docker::command(["container", "inspect", "--format={{json .}}", name.as_ref()])?);
         Ok(serde_json::from_str(&output)?)
     }
 
@@ -519,7 +784,10 @@ impl Docker {
             let env_var = format!("{}={}", key, value);
             args_owned.push(env_var);
         }
-
+        if let Some(dir) = &config.working_dir {
+            args_owned.push("--workdir".to_string());
+            args_owned.push(dir.clone());
+        }
         // Add port mappings
         for (host, container) in &config.ports {
             args_owned.push("-p".to_string());
@@ -532,6 +800,10 @@ impl Docker {
             args_owned.push("-v".to_string());
             let volume_mapping = format!("{}:{}", host, container);
             args_owned.push(volume_mapping);
+        }
+
+        if config.labels.get("privileged") == Some(&"true".to_string()) {
+            args_owned.push("--privileged".to_string());
         }
 
         // Add network if specified
@@ -759,7 +1031,14 @@ impl ContainerConfigBuilder {
             config: ContainerConfig::default(),
         }
     }
-
+    pub fn privileged(mut self, enabled: bool) -> Self {
+        if enabled {
+            self.config
+                .labels
+                .insert("privileged".to_string(), "true".to_string());
+        }
+        self
+    }
     /// Add an environment variable
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.config.env_vars.insert(key.into(), value.into());
@@ -769,6 +1048,10 @@ impl ContainerConfigBuilder {
     /// Add a port mapping
     pub fn port(mut self, host: u16, container: u16) -> Self {
         self.config.ports.push((host, container));
+        self
+    }
+    pub fn working_dir(mut self, dir: impl Into<String>) -> Self {
+        self.config.working_dir = Some(dir.into());
         self
     }
 
