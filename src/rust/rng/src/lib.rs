@@ -158,7 +158,7 @@ mod range {
         ops::{Bound, Neg, RangeBounds},
     };
 
-    use crate::rng::Id;
+    use crate::Id;
 
     use super::{Distribution, Rng, Standard};
     #[derive(Clone, Copy)]
@@ -283,7 +283,7 @@ mod normal {
 
     use num_traits::Float;
 
-    use crate::rng::{Distribution, Rng, Standard};
+    use crate::{Distribution, Rng, Standard};
 
     // Normal (Gaussian) Distribution using Box-Muller transform
     #[derive(Clone, Copy)]
@@ -321,7 +321,7 @@ mod normal {
 pub use exponential::Exponential;
 mod exponential {
     use super::Random;
-    use crate::rng::{Distribution, Rng, Standard};
+    use crate::{Distribution, Rng, Standard};
     use num_traits::Float;
 
     #[derive(Clone, Copy)]
@@ -431,7 +431,7 @@ mod temporal {
 
 pub use mix::Mix;
 mod mix {
-    use crate::rng::{Distribution, Random, Rng, Standard};
+    use crate::{Distribution, Random, Rng, Standard};
     use std::marker::PhantomData;
 
     #[derive(Clone, Copy, Debug)]
@@ -485,7 +485,7 @@ mod mix {
 pub use gamma::Gamma;
 mod gamma {
     use super::Random;
-    use crate::rng::{Distribution, Rng, Standard};
+    use crate::{Distribution, Rng, Standard};
     use num_traits::Float;
 
     #[derive(Clone, Copy)]
@@ -550,7 +550,7 @@ mod gamma {
 pub use poisson::Poisson;
 mod poisson {
     use super::Random;
-    use crate::rng::{Distribution, Rng, Standard};
+    use crate::{Distribution, Rng, Standard};
     use num_traits::{Float, PrimInt};
 
     #[derive(Clone, Copy)]
@@ -590,7 +590,7 @@ pub use beta::Beta;
 use crate::{math::vector::Vector, rt::worker};
 mod beta {
     use super::Random;
-    use crate::rng::{Distribution, Gamma, Rng, Standard};
+    use crate::{Distribution, Gamma, Rng, Standard};
     use num_traits::Float;
 
     #[derive(Clone, Copy)]
@@ -622,7 +622,7 @@ mod beta {
 
 pub mod transform {
     use super::Random;
-    use crate::rng::{Distribution, Rng, Standard};
+    use crate::{Distribution, Rng, Standard};
     use num_traits::Float;
     use std::marker::PhantomData;
 
@@ -726,10 +726,7 @@ pub trait Branch: Random {
 }
 
 mod pcg {
-    use crate::{
-        Simd,
-        math::vector::{Vector, shuffle::Perfect},
-    };
+    use crate::math::vector::{Vector, shuffle::Perfect};
 
     use super::{Branch, Random};
 

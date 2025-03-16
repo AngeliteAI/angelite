@@ -22,9 +22,9 @@ name = "bind"
 version = "0.1.0"
 dependencies = [
  "docker",
+ "gemini",
  "serde",
  "serde_json",
- "thread",
 ]
 
 [[package]]
@@ -136,6 +136,14 @@ name = "futures-sink"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e575fab7d1e0dcb8d0c7bcf9a63ee213816ab51902e6d244a95819acacf1d4f7"
+
+[[package]]
+name = "gemini"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "getrandom"
@@ -318,6 +326,9 @@ dependencies = [
 [[package]]
 name = "rng"
 version = "0.1.0"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "ropey"
