@@ -7,10 +7,11 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{Arc, OnceLock},
+    thread,
     time::{Duration, SystemTime},
 };
 
-use docker::{Container, Docker, Image, container_config};
+use docker::{CommandResult, Container, Docker, Image, container_config};
 
 mod container;
 
@@ -24,17 +25,21 @@ impl ContainerExt for Container {
 
         // Ask the container for a temporary file path
         let temp_path_output = self
-            .exec(&["mktemp"])
+            .exec(&["mktemp", "-d"])
             .expect("Failed to create temporary file in container");
 
         // Parse the output to get the path (mktemp outputs the created path)
         let temp_path_str = temp_path_output.stdout.trim();
         let mut script_path = PathBuf::from(temp_path_str);
-        // Create a temporary file for the script
-        script_path.push("script.sh"); // Or another appropriate name
 
         // Write the script content to the file
-        std::fs::write(&script_path, script_content).expect("Failed to write script to container");
+        let hosttemp = env::temp_dir().join("script.sh");
+        std::fs::write(&hosttemp, script_content).expect("Failed to write script to container");
+        self.copy_to(hosttemp.to_str().unwrap(), script_path.to_str().unwrap())
+            .unwrap();
+
+        // Create a temporary file for the script
+        script_path.push("script.sh"); // Or another appropriate name
 
         Script {
             container: self,
@@ -155,7 +160,9 @@ impl Provider for Swift {
 }
 
 impl Compiler for Swift {
-    fn compile(&self, container: &Container) {}
+    fn compile(&self, container: &Container) {
+        dbg!(container.exec(&["swift", "version"]));
+    }
 }
 
 pub struct Context {
@@ -168,33 +175,38 @@ pub struct Build {
     target: Arc<dyn Compiler>,
 }
 
-impl Build {
-    fn start(image: Image) {}
-}
-
 pub struct Script<'a> {
     container: &'a Container,
     script_path: PathBuf,
 }
 
 impl Script<'_> {
-    fn run(&self) {
+    fn run(&self) -> CommandResult {
         let path = self.script_path.to_str().unwrap();
-        self.container.exec(&["chmod", "+x", path]);
-        self.container.exec(&[&*format!("/{}", path)]);
+        self.container.exec(&["chmod", "+x", path]).unwrap();
+        self.container
+            .exec(&["/bin/bash", "-c", &*format!("{}", path)])
+            .unwrap()
     }
 }
 
 impl Build {
     fn create(cfg: Config) -> Build {
         let container = {
-            let container_config =
-                container_config().working_dir(env::current_dir().unwrap().to_str().unwrap());
-            let image = Image::new("alpine", "latest");
-            let mut container = image
-                .create_container("build", &container_config.build())
+            let container_config = container_config()
+                .working_dir(env::current_dir().unwrap().to_str().unwrap())
+                .cmd(vec!["sleep", "300"]);
+            let mut image = Image::new("ubuntu", "latest");
+            image.pull().unwrap();
+            let time = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap();
-            container.refresh();
+            let id = (time.as_secs() as u128 ^ time.as_nanos() ^ time.as_millis()) as u16;
+            let mut container = image
+                .create_container(format!("build_{id}"), &container_config.build())
+                .unwrap();
+            container.refresh().unwrap();
+            dbg!(container.start().unwrap());
             container
         };
 
@@ -216,7 +228,7 @@ impl Build {
         stages.sort_by_key(|x| x.priority());
 
         for stage in stages {
-            stage.installation(&container).run();
+            dbg!(stage.installation(&container).run());
         }
 
         Self {
@@ -242,4 +254,7 @@ impl Build {
     }
 }
 
-pub fn bind(cfg: Config) {}
+pub fn bind(cfg: Config) {
+    let build = Build::create(cfg);
+    build.compile();
+}

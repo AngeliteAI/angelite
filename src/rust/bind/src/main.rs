@@ -7,8 +7,8 @@ fn main() {
         },
         deps: vec![],
         target: Library {
-            lang: Language::Rust,
-            dir: "/Users/solmidnight/work/angelite/src/rust/math/".into(),
+            lang: Language::Swift,
+            dir: "/Users/solmidnight/work/angelite/src/swift/gfx/".into(),
         },
     });
 }
