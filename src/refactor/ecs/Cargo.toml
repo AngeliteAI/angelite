@@ -10,7 +10,6 @@ repository = "https://github.com/blockglow/blockglow"
 
 [dependencies]
 derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
-base = { path = "../base" }
 typeid = "1.0.2"
 ecs-macro = { path = "../ecs-macro"}
 paste = "*"

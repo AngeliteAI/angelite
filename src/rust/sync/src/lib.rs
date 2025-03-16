@@ -1,14 +1,21 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+#![feature(unboxed_closures, async_fn_traits, negative_impls)]
+#[cfg(feature = "system")]
+pub mod backoff;
+#[cfg(feature = "system")]
+pub mod barrier;
+pub mod mutex;
+pub mod oneshot;
+#[cfg(feature = "system")]
+pub mod retry;
+#[cfg(feature = "system")]
+pub mod split;
+#[cfg(feature = "system")]
+pub mod r#yield;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub fn poll(
+    cx: &mut std::task::Context<'_>,
+    fut: impl IntoFuture<Output = ()>,
+) -> std::task::Poll<()> {
+    let fut = fut.into_future();
+    pin!(fut).poll(cx)
 }

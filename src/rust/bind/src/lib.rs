@@ -1,17 +1,37 @@
+#![feature(unboxed_closures)]
 use std::{
+    cell::{OnceCell, RefCell},
     collections::HashMap,
+    env, fs,
     path::{Path, PathBuf},
-    thread,
+    rc::Rc,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
+use thread::Local;
 
-use docker::{Docker, Image, container_config};
+use docker::{Container, Docker, Image, container_config};
 
 mod container;
+
+pub trait ContainerExt {
+    fn inject(script: impl AsRef<str>) -> Script;
+}
+
+pub enum Invalid {
+    User,
+    Agent,
+}
+
+pub enum Error {
+    Missing { path: PathBuf },
+    Invalid { src: Invalid, msg: String },
+}
 
 pub enum Language {
     Rust,
     Zig,
+    Swift,
 }
 
 pub struct Library {
@@ -20,92 +40,142 @@ pub struct Library {
 }
 
 pub struct Config {
-    pub workspace: PathBuf,
     pub source: Library,
     pub deps: Vec<Library>,
     pub target: Library,
 }
 
-use std::env;
-use std::fs::{self, File};
-use std::io::{self, Write};
+static CTX: Local<OnceCell<Context>> = OnceCell::new();
 
-/// Generate a Dockerfile from snippets in a directory and save it to a temporary location
-///
-/// # Arguments
-/// * `snippets_dir` - Directory containing Dockerfile snippet files (named like 010_base_image, 020_basic_tools, etc.)
-///
-/// # Returns
-/// * `Result<PathBuf, io::Error>` - Path to the generated Dockerfile or an error
-pub fn generate_dockerfile_from_snippets(
-    temp_name: impl AsRef<str>,
-    snippets_dir: impl AsRef<Path>,
-) -> Result<PathBuf, io::Error> {
-    let snippets_path = snippets_dir.as_ref();
+///Provides AI responses
+pub trait Model {
+    fn new(system: String) -> Self;
+    fn respond(&self, prompt: String) -> Self;
+}
 
-    // Check if the directory exists
-    if !snippets_path.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Snippets directory not found: {:?}", snippets_path),
-        ));
+///Interprets AI responses
+pub struct Interpreter {
+    model: Rc<dyn Model>,
+}
+
+pub struct Binder {
+    model: Rc<dyn Model>,
+}
+
+///Represents a stage of work
+pub trait Stage {
+    fn priority(&self) -> u64;
+    fn installation(&self, container: &Container) -> Script;
+}
+
+pub trait Provider {
+    fn setup(&self) -> Vec<Stage>;
+}
+
+pub trait Compiler: Provider {
+    fn compile(&self, container: &Container);
+}
+
+pub struct Zig;
+
+impl Provider for Zig {
+    fn setup(&self) -> Vec<Stage> {}
+}
+
+pub struct Swift {}
+
+impl Provider for Swift {
+    fn setup(&self) -> Vec<Stage> {}
+}
+
+impl Compiler for Swift {
+    fn compile(&self) {}
+}
+
+pub struct Context {
+    temp: PathBuf,
+}
+
+pub struct Build {
+    container: Container,
+    source: Arc<dyn Provider>,
+    target: Arc<dyn Compiler>,
+}
+
+impl Build {
+    fn start(image: Image) {}
+}
+
+pub struct Script<'a> {
+    container: &'a Container,
+    container_path: PathBuf,
+}
+
+impl Script<'a> {
+    fn run(&self) {
+        let path = self.container_path.to_str().unwrap();
+        self.container.exec(&["chmod", "+x", path]);
+        self.container.exec(&[&*format!("/{}", path)])
     }
+}
 
-    // Get all snippet files from the directory
-    let mut snippet_files = Vec::new();
-    for entry in fs::read_dir(snippets_path)? {
-        let entry = entry?;
-        let path = entry.path();
+impl Build {
+    fn create(cfg: Config) -> Build {
+        let container = {
+            let container_config = container_config();
+            container_config.working_dir(env::current_dir().unwrap());
+            let image = Image::new("alpine", "latest");
+            let container = image.create_container("build", container_config).unwrap();
+            container.refresh();
+            container
+        };
 
-        if path.is_file() && path.extension().is_none() {
-            snippet_files.push(path);
+        let source = Arc::new(match cfg.source {
+            Language::Zig => Zig,
+            _ => todo!(),
+        }) as Arc<dyn Provider>;
+
+        let target = Arc::new(match cfg.target {
+            Language::Swift => Swift,
+            _ => todo!(),
+        }) as Arc<dyn Compiler>;
+
+        let mut stages = vec![];
+
+        stages.extend(source.setup());
+        stages.extend(target.setup());
+
+        stages.sort_by_key(|x| x.priority());
+
+        for stage in stages {
+            stage.installation(&container).run();
+        }
+
+        Self {
+            container,
+            source,
+            target,
         }
     }
 
-    // Sort snippet files by filename (which should start with numbers)
-    snippet_files.sort_by(|a, b| {
-        let a_name = a.file_name().unwrap_or_default().to_string_lossy();
-        let b_name = b.file_name().unwrap_or_default().to_string_lossy();
-        a_name.cmp(&b_name)
-    });
+    fn include(&self, host_path: impl AsRef<Path>) {
+        let path_str = host_path.as_ref().to_str().unwrap();
+        self.container
+            .exec(&["mkdir", "-p", path_str])
+            .expect("failed to create host directory in container");
 
-    // Create a temporary directory for the output
-    let temp_dir = env::temp_dir().join(temp_name.as_ref());
-    fs::create_dir_all(&temp_dir)?;
-
-    // Path for the output Dockerfile
-    let dockerfile_path = temp_dir.join("Dockerfile");
-
-    // Create and open the output file
-    let mut output_file = File::create(&dockerfile_path)?;
-
-    // Write a header comment
-    writeln!(output_file, "# Dockerfile generated from snippets")?;
-    writeln!(output_file)?;
-
-    // Process each snippet file
-    for snippet_file in snippet_files {
-        let snippet_name = snippet_file
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
-
-        // Add a comment indicating which snippet this is
-        writeln!(output_file, "# From snippet: {}", snippet_name)?;
-
-        // Read and write the snippet content
-        let content = fs::read_to_string(&snippet_file)?;
-        writeln!(output_file, "{}", content)?;
-
-        // Add a separator between snippets
-        writeln!(output_file)?;
+        self.container
+            .copy_to(path_str, path_str)
+            .expect("failed to mount and copy host data");
     }
 
-    println!("Dockerfile generated at: {:?}", dockerfile_path);
-    Ok(dockerfile_path)
+    fn compile(&self) {
+        self.target.compile(&self.container);
+    }
 }
 
 pub fn bind(cfg: Config) {
+    let lib_name = "math";
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // Generate a unique container name
@@ -119,7 +189,7 @@ pub fn bind(cfg: Config) {
 
     let mut container = container_config();
 
-    let dockersnippets = "./pipeline/zig_to_rust";
+    let dockersnippets = "/Users/solmidnight/work/angelite/pipeline/zig_to_rust";
     // Generate Dockerfile from snippets
     let dockerfile_path = match generate_dockerfile_from_snippets(&container_name, dockersnippets) {
         Ok(path) => {
@@ -201,14 +271,16 @@ pub fn bind(cfg: Config) {
 
     container.start().expect("failed to start container");
 
-    container.copy_to(format!("{dockersnippets}/entry.sh"), "/entry.sh");
+    container
+        .copy_to(format!("{dockersnippets}/entry.sh"), "/entry.sh")
+        .unwrap();
     container
         .exec(&["chmod +x /entry.sh"])
         .expect("failed to make target");
 
     let args = [
-        ("WORKSPACE", &format!("{}/{}", env_parent, dockersnippets)),
-        ("NAME", &"base".to_string()),
+        ("WORKSPACE", &*format!("{}/{}", env_parent, dockersnippets)),
+        ("NAME", &lib_name),
     ];
 
     let env = args
@@ -217,9 +289,11 @@ pub fn bind(cfg: Config) {
         .collect::<Vec<_>>()
         .join(" ");
 
-    container
-        .exec(&[dbg!(format!("{env} /entry.sh"))])
-        .expect("failed to make target");
+    dbg!(
+        container
+            .exec(&[dbg!(format!("{env} /entry.sh"))])
+            .expect("failed to make target")
+    );
 
     loop {
         let output = dbg!(
@@ -228,7 +302,13 @@ pub fn bind(cfg: Config) {
                 .expect("failed to get output")
         );
         let output = container
-            .exec(&["RUSTFLAGS=\"-Awarnings\"", "cargo", "build"])
+            .exec(&[
+                "RUSTFLAGS=\"-Awarnings\"",
+                "cargo",
+                "build",
+                "--package",
+                lib_name,
+            ])
             .expect("failed to get output");
 
         println!("{}\n{}", &output.stdout, &output.stderr);

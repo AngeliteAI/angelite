@@ -1,24 +1,23 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct Vertex {
-    float3 position;
-    float4 color;
-};
-
-struct VertexOut {
-    float4 position [[position]];
-    float4 color;
-};
-
-vertex VertexOut vertexShader(uint vertexID [[vertex_id]],
-                              constant Vertex *vertices [[buffer(0)]]) {
-    VertexOut out;
-    out.position = float4(vertices[vertexID].position, 1.0);
-    out.color = vertices[vertexID].color;
-    return out;
+struct Params {
+    uint3 size;
 }
 
-fragment float4 fragmentShader(VertexOut in [[stage_in]]) {
-    return in.color;
+struct Result {
+    uint vertexCount;
+    uint indexCount;
 }
+
+kernel void generateVertices(
+                      device const Params* char     [[buffer(0)]]
+                      device const char* chunk      [[buffer(1)]],
+                      device Result*                [[buffer(2)]],
+                      device float3* vertices       [[buffer(3)]],
+                      device int* indices           [[buffer(4)]],
+                      uint id                       [[thread_position_in_grid]])
+{
+
+}
+

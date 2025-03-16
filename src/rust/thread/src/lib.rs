@@ -1,10 +1,11 @@
+#![feature(unboxed_closures, async_fn_traits, negative_impls, thread_id_value)]
 use std::{
     cell::UnsafeCell,
     sync::{Arc, OnceLock},
     thread::{self, Thread},
 };
 
-use crate::collections::skip::Map;
+use collections::skip::Map;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord, Default)]
 pub struct ThreadId(usize);

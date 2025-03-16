@@ -1,18 +1,13 @@
+#![feature(trait_alias)]
 pub use list::List;
 pub mod list {
+    use chrono as time;
+    use rng::{self, Random, Range};
     use std::{
         marker::PhantomData,
         ptr::{self, NonNull},
         sync::atomic::{AtomicPtr, AtomicUsize, Ordering::*},
     };
-
-    use crate::{
-        rng::{self, Random, Range},
-        rt,
-        sync::backoff::Backoff,
-        time::{Duration, Millis},
-    };
-
     // Pack ptr and mark bit into single atomic for efficient CAS
     struct AtomicMarkableReference<T> {
         val: AtomicUsize,

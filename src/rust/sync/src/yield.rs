@@ -2,12 +2,7 @@ use std::pin::pin;
 use std::sync::atomic::AtomicBool;
 use std::task::Poll::*;
 
-use crate::rt::worker::current_worker;
-use crate::rt::{poll, waker};
-use crate::{
-    rt::block_on,
-    time::{Duration, Instant, TimeUnit, wait_until},
-};
+use io::time::{Duration, Instant, TimeUnit, wait_until};
 
 pub struct Yield {
     until: Instant,

@@ -8,4 +8,3 @@ panic = "abort"
 
 [dependencies]
 http = {path = "../http"}
-base = {path = "../base"}

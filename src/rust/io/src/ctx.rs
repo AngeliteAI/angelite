@@ -49,7 +49,7 @@ impl Context {
         unsafe { ffi::submit() };
     }
 
-    fn poll(&self) -> Vec<(crate::io::Operation, crate::io::Complete)> {
+    fn poll(&self) -> Vec<(crate::Operation, crate::Complete)> {
         let mut complete = vec![];
 
         loop {
@@ -73,22 +73,22 @@ impl Context {
             .into_iter()
             .map(|comp| unsafe {
                 (
-                    crate::io::Operation {
+                    crate::Operation {
                         id: OperationId(comp.op.id),
                         ty: mem::transmute(comp.op.r#type),
                         handle: unsafe {
                             match comp.op.handle.cast::<io::HandleType>().read() {
-                                io::HandleType::File => crate::io::Handle::File(
-                                    crate::io::file::File::from_raw(comp.op.handle as *mut _),
+                                io::HandleType::File => crate::Handle::File(
+                                    crate::file::File::from_raw(comp.op.handle as *mut _),
                                 ),
-                                io::HandleType::Socket => crate::io::Handle::Socket(
-                                    crate::io::net::Socket::from_raw(comp.op.handle as *mut _),
+                                io::HandleType::Socket => crate::Handle::Socket(
+                                    crate::net::Socket::from_raw(comp.op.handle as *mut _),
                                 ),
                             }
                         },
                         user_data: comp.op.user_data as *mut _,
                     },
-                    crate::io::Complete(comp.result),
+                    crate::Complete(comp.result),
                 )
             })
             .collect()

@@ -9,4 +9,3 @@ repository = "https://github.com/blockglow/techkit"
 readme = "../../README.md"
 
 [dependencies]
-base = { path = "../base" }

@@ -16,29 +16,6 @@ pub const Vec4 = extern struct {
     w: f32,
 };
 
-// vec.zig
-// Vector types and operations for C ABI math library
-
-const std = @import("std");
-
-pub const Vec2 = extern struct {
-    x: f32,
-    y: f32,
-};
-
-pub const Vec3 = extern struct {
-    x: f32,
-    y: f32,
-    z: f32,
-};
-
-pub const Vec4 = extern struct {
-    x: f32,
-    y: f32,
-    z: f32,
-    w: f32,
-};
-
 // Constructor functions
 pub extern fn v2(x: f32, y: f32) Vec2;
 pub extern fn v3(x: f32, y: f32, z: f32) Vec3;
@@ -137,9 +114,3 @@ pub extern fn v3_from_v2(v: Vec2, z: f32) Vec3;
 pub extern fn v4_from_v3(v: Vec3, w: f32) Vec4;
 pub extern fn v2_from_v3(v: Vec3) Vec2;
 pub extern fn v3_from_v4(v: Vec4) Vec3;
-
-// Random vectors
-pub extern fn v2_rand(min: f32, max: f32) Vec2;
-pub extern fn v3_rand(min: f32, max: f32) Vec3;
-pub extern fn v3_rand_unit() Vec3;
-pub extern fn v3_rand_sphere() Vec3;

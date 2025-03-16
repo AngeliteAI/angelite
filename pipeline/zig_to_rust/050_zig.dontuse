@@ -1,0 +1,3 @@
+# Install Zig
+RUN 
+ENV PATH="/opt/zig:${PATH}"
