@@ -7,7 +7,7 @@ use std::slice;
 pub struct Array<T, const L: usize> {
     pub(crate) data: [MaybeUninit<T>; L],
     len: usize,
-    phantom_pinned: PhantomPinned
+    phantom_pinned: PhantomPinned,
 }
 impl<T: std::fmt::Debug, const N: usize> std::fmt::Debug for Array<T, N> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

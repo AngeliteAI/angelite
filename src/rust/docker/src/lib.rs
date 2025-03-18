@@ -50,7 +50,8 @@ pub struct ContainerConfig {
     pub network: Option<String>,
     pub labels: HashMap<String, String>,
     pub restart_policy: Option<String>,
-    pub working_dir: Option<String>, // Add this field
+    pub working_dir: Option<String>,
+    pub platform: Option<String>, // New field for platform specification
 }
 /// Docker's container configuration structure used when parsing API responses
 #[derive(Debug, Clone, Deserialize)]
@@ -778,6 +779,11 @@ impl Docker {
         args_owned.push("--name".to_string());
         args_owned.push(container_name.as_ref().to_string());
 
+        if let Some(platform) = &config.platform {
+            args_owned.push("--platform".to_string());
+            args_owned.push(platform.clone());
+        }
+
         // Add environment variables
         for (key, value) in &config.env_vars {
             args_owned.push("-e".to_string());
@@ -1035,6 +1041,10 @@ impl ContainerConfigBuilder {
         Self {
             config: ContainerConfig::default(),
         }
+    }
+    pub fn platform(mut self, platform: impl Into<String>) -> Self {
+        self.config.platform = Some(platform.into());
+        self
     }
     pub fn privileged(mut self, enabled: bool) -> Self {
         if enabled {

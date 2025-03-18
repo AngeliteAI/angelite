@@ -1,10 +1,13 @@
-#![feature(unboxed_closures)]
-use gemini::GeminiClient;
+#![feature(unboxed_closures, coroutines, stmt_expr_attributes, coroutine_trait)]
+use gemini::{GeminiClient, GeminiError};
+use serde::Deserialize;
 use std::{
     cell::{OnceCell, RefCell},
     collections::HashMap,
     env, fs,
+    ops::{ControlFlow, Coroutine},
     path::{Path, PathBuf},
+    pin::pin,
     rc::Rc,
     sync::{Arc, OnceLock},
     thread,
@@ -48,16 +51,20 @@ impl ContainerExt for Container {
     }
 }
 
+#[derive(Deserialize, Debug)]
 pub enum Invalid {
     User,
     Agent,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type")]
 pub enum Error {
     Missing { path: PathBuf },
     Invalid { src: Invalid, msg: String },
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Language {
     Rust,
     Zig,
@@ -84,15 +91,22 @@ pub struct Gemini {
 
 impl Model for Gemini {
     fn new(system: String) -> Self {
-        let client = GeminiClient::new("angelite", "us-central1", "gemini-2.0-flash")
-            .with_temperature(0.2)
+        let client = GeminiClient::new("gemini-2.0-flash")
             .with_api_key(&*env::var("GEMINI_API_KEY").unwrap());
 
         Self { client, system }
     }
 
-    fn respond(&self, prompt: String) -> String {
-        self.client.generate_content(&prompt).unwrap()
+    fn respond<'a, C, R>(&'a self, prompt: String, coroutine: &'a mut C) -> Result<Option<R>, GeminiError>
+    where
+        C: Coroutine<&'a mut String, Yield = ControlFlow<(), ()>, Return = R> + ?Sized,
+    {
+        // Return true when completely done
+        self.client
+            .generate_content_streaming(&prompt, &mut pin!(#[coroutine] |text| {
+                dbg!(text);
+            })).unwrap();
+        Ok(None)
     }
 }
 
@@ -101,16 +115,204 @@ pub trait Model {
     fn new(system: String) -> Self
     where
         Self: Sized;
-    fn respond(&self, prompt: String) -> String;
+    fn respond<'a, C, R>(&'a self, prompt: String, coroutine: &'a mut C) -> Result<Option<R>, GeminiError>
+    where
+        C: Coroutine<&'a mut String, Yield = ControlFlow<(), ()>, Return = R> + ?Sized;
 }
 
+pub struct Prompter<M: Model> {
+    model: Rc<M>,
+}
+impl<M: Model> Prompter<M> {
+    fn from_model(model: Rc<M>) -> Self {
+        Self { model }
+    }
+
+    fn generate_bindings(
+        &self,
+        c_abi: &[(PathBuf, String)],
+        bind_dir: &PathBuf,
+        target_guidelines: &str,
+        input_lang: &Language,
+        output_lang: &Language,
+    ) -> String {
+        const YES: &str = "YES";
+        const NO: &str = "NO";
+
+        let mut ret_top = String::new();
+        let mut critique = String::new();
+        let mut critique_requested = false;
+
+        // Create the main coroutine for generating bindings
+    
+        // Run the first part of generation
+        'a: loop {
+        let mut ret_main = String::new();
+    let main_coroutine = #[coroutine]
+        |text: &mut String| {
+            const CHECK: usize = 500; // Your threshold for checking
+
+                // Receive text chunk from the model
+            loop {
+                dbg!(&text);
+                ret_main += &*text;
+
+                // Check if we need to request a critique
+                if !critique_requested && dbg!(ret_main.len()) >= CHECK {
+                    critique_requested = true;
+
+                    dbg!("RET");
+                    // We'll need to break here to make the critique request
+                    return ret_main;
+                }
+
+                yield ControlFlow::Continue(());
+            }
+        };
+
+        // Create a pinned coroutine
+        let mut pinned_main = pin!(main_coroutine);
+
+        let Ok(mut ret_opt) = self.model.respond(
+        format!(
+            "{}\n\n# Binding guidelines {target_guidelines}\n\n# Generation Parameters\nInput Language: {input_lang:?}\nOutput Language: {output_lang:?}\nBinding Directory: {bind_dir:?}\n{c_abi:?}",
+            include_str!("generate_bindings.prompt")
+        ),
+        &mut pinned_main) else {
+            panic!("?");
+        };
+
+        if ret_opt.is_none() {
+            continue;
+        }
+
+        // Check if we need to get a critique
+        if let Some(ref mut ret) = ret_opt  {
+            if ret.is_empty() {
+                break 'a;
+            }
+            ret_top += &*ret;
+            // Create a coroutine for the critique
+            let critique_coroutine = #[coroutine]
+            |text: &mut String| {
+                let mut is_complete = false;
+
+                loop {
+                    let text = yield ControlFlow::Continue(());
+                    critique += &*text;
+
+                    // Check if we have enough of the critique to determine YES/NO
+                    const YES: &str = "YES";
+                    const NO: &str = "NO";
+
+                    if critique.starts_with(YES) || critique.starts_with(NO) {
+                        // We have enough to make a determination
+                        is_complete = true;
+
+                        // We could continue collecting the rest of the critique
+                        // or we could stop here since we've made our determination
+                        yield ControlFlow::Break(());
+                        return critique.clone();
+                    }
+                }
+            };
+
+            let mut pinned_critique = pin!(critique_coroutine);
+
+            // Get the critique
+            if false { 
+            let critique = self.model.respond(
+            format!(
+                "Does the code you have generated thus far match the style guide? If the code provided matches the style guide, if and only if this condition is met, you should output YES and only YES. Otherwise, say NO and then follow up with detailed feedback on why. It is important to get syntax right here, as this is going to be read by a machine that will then feed your feedback into an AI LLM for further analysis. Remember that you are talking to an AI\n\n{}\n\n```{}```",
+                target_guidelines,
+                ret
+            ),
+            &mut pinned_critique
+        ).ok().flatten().unwrap();
+
+            // Determine if we should continue based on the critique
+            let should_continue = match (critique.starts_with(YES), critique.starts_with(NO)) {
+                (true, false) => {
+                    dbg!("YES");
+                    true
+                }
+                (false, true) => {
+                    dbg!("NO");
+                    false
+                }
+                _ => panic!("Invalid critique response"),
+            };
+
+            // If the critique is positive, continue generating
+            if should_continue {
+                // Create a coroutine to collect the rest of the generation
+                let input = ret.clone();
+                let continue_coroutine = #[coroutine]
+                |text: &mut String| {
+                    while !text.is_empty() {
+                        yield ControlFlow::Continue(());
+                        *ret += &*text;
+                    }
+                    return ret;
+                };
+
+                let mut pinned_continue = pin!(continue_coroutine);
+
+                // Continue generating
+                 ret_top += &*self.model.respond(
+                format!(
+                    "Please continue generating bindings from where you left off. Here is what you've generated so far:\n\n```\n{}\n```",
+                   input 
+                ),
+                &mut pinned_continue
+            ).ok().flatten().unwrap();
+
+            }
+            }
+        }
+        }
+        ret_top 
+    }
+}
 ///Interprets AI responses
-pub struct Interpreter {
-    model: Rc<dyn Model>,
+pub struct Interpreter<M: Model> {
+    model: Rc<M>,
 }
+impl<M: Model> Interpreter<M> {
+    fn from_model(model: Rc<M>) -> Self {
+        Self { model }
+    }
 
-pub struct Binder {
-    model: Rc<dyn Model>,
+    fn error_interpret(&self, err: String) -> Option<Vec<Error>> {
+        let mut ret = String::new();
+        let main_coroutine = #[coroutine]
+        |text: &mut String| {
+            ret += &*text;
+            if text.is_empty() {
+                yield ControlFlow::Continue(());
+                return "".to_owned();
+            } else {
+                return ret;
+            }
+        };
+
+        // Create a pinned coroutine
+        let mut pinned_main = pin!(main_coroutine);
+
+        // Run the first part of generation
+        let ret = self
+            .model
+            .respond(
+                format!("{}\n{err}", include_str!("error_interpret.prompt")),
+                &mut pinned_main,
+            )
+            .ok().flatten().unwrap();
+
+        dbg!(serde_json::from_str(dbg!(
+            ret.trim_matches('`').trim_start_matches("json").trim()
+        )))
+        .ok()
+    }
 }
 
 ///Represents a stage of work
@@ -123,10 +325,34 @@ pub trait Stage {
 
 pub trait Provider {
     fn setup(&self) -> Vec<Arc<dyn Stage>>;
+    fn file_ext(&self) -> &'static str;
+    fn find_files(&self, container: &Container, path: &Path) -> Result<Vec<PathBuf>, String> {
+        let path_str = path.display().to_string();
+        let glob = format!("*.{}", self.file_ext());
+        let find_args = vec!["find", &path_str, "-name", &glob, "-type", "f"];
+        println!("Executing find command: {:?}", find_args);
+        let result = dbg!(container.exec(&find_args).unwrap());
+
+        if !result.success {
+            return Err(result.stderr);
+        }
+
+        // Parse the output to get all swift file paths
+        let swift_file_paths: Vec<String> = result
+            .stdout
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect();
+
+        // Add all found swift files to args
+        Ok(swift_file_paths.iter().map(|s| s.into()).collect())
+    }
 }
 
 pub trait Compiler: Provider {
-    fn compile(&self, container: &Container);
+    fn compile(&self, container: &Container, path: &Path) -> Result<String, String>;
+    fn guidelines(&self) -> &'static str;
 }
 
 pub struct Zig;
@@ -142,12 +368,18 @@ impl Provider for Zig {
     fn setup(&self) -> Vec<Arc<dyn Stage>> {
         vec![Arc::new(ZigInstall)]
     }
+    fn file_ext(&self) -> &'static str {
+        "zig"
+    }
 }
 
 pub struct Swift;
 pub struct SwiftInstall;
 
 impl Stage for SwiftInstall {
+    fn priority(&self) -> u64 {
+        10
+    }
     fn installation<'a>(&self, container: &'a Container) -> Script<'a> {
         container.inject(include_str!("install_swift.sh").to_owned())
     }
@@ -157,11 +389,42 @@ impl Provider for Swift {
     fn setup(&self) -> Vec<Arc<dyn Stage>> {
         vec![Arc::new(SwiftInstall)]
     }
+    fn file_ext(&self) -> &'static str {
+        "swift"
+    }
 }
 
 impl Compiler for Swift {
-    fn compile(&self, container: &Container) {
-        dbg!(container.exec(&["swift", "version"]));
+    fn compile(&self, container: &Container, path: &Path) -> Result<String, String> {
+        let mut args = vec!["swiftc".to_owned()];
+        let files = self
+            .find_files(container, path)
+            .unwrap()
+            .into_iter()
+            .map(|s| s.to_str().map(ToOwned::to_owned).unwrap())
+            .collect::<Vec<_>>();
+        args.extend(files);
+        args.push("-parse-as-library".to_owned());
+        args.push("-o Hello".to_owned());
+        let ret = dbg!(container.exec(&args).unwrap());
+        match ret {
+            CommandResult {
+                success: true,
+                stdout,
+                stderr,
+                exit_code,
+            } => Ok(stdout),
+            CommandResult {
+                success: false,
+                stdout,
+                stderr,
+                exit_code,
+            } => Err(stderr),
+        }
+    }
+
+    fn guidelines(&self) -> &'static str {
+        include_str!("generate_bindings_swift.prompt")
     }
 }
 
@@ -191,22 +454,29 @@ impl Script<'_> {
 }
 
 impl Build {
+    fn source_files(&self, path: impl AsRef<Path>) -> Result<Vec<PathBuf>, String> {
+        self.source.find_files(&self.container, path.as_ref())
+    }
+
     fn create(cfg: Config) -> Build {
         let container = {
-            let container_config = container_config()
-                .working_dir(env::current_dir().unwrap().to_str().unwrap())
-                .cmd(vec!["sleep", "300"]);
-            let mut image = Image::new("ubuntu", "latest");
-            image.pull().unwrap();
-            let time = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap();
-            let id = (time.as_secs() as u128 ^ time.as_nanos() ^ time.as_millis()) as u16;
-            let mut container = image
-                .create_container(format!("build_{id}"), &container_config.build())
-                .unwrap();
+            let name = format!("Build_BindAI_{:?}_{:?}", cfg.source.lang, cfg.target.lang);
+            let mut container = if Docker::container_exists(&name) {
+                Docker::container(&name)
+            } else {
+                let container_config = container_config()
+                    .working_dir(env::current_dir().unwrap().to_str().unwrap())
+                    .cmd(vec!["sleep", "300"]);
+                let mut image = Image::new("ubuntu", "latest");
+                image.pull().unwrap();
+                image
+                    .create_container(&name, &container_config.build())
+                    .unwrap()
+            };
             container.refresh().unwrap();
-            dbg!(container.start().unwrap());
+            if !container.running() {
+                dbg!(container.start().unwrap());
+            }
             container
         };
 
@@ -227,8 +497,25 @@ impl Build {
 
         stages.sort_by_key(|x| x.priority());
 
-        for stage in stages {
-            dbg!(stage.installation(&container).run());
+        if false {
+            for stage in stages {
+                dbg!("Installing stage...");
+                let CommandResult {
+                    success,
+                    mut stdout,
+                    stderr,
+                    exit_code,
+                } = stage.installation(&container).run();
+                {
+                    let out = if success {
+                        stdout
+                    } else {
+                        stdout.push_str(&stderr);
+                        stdout
+                    };
+                    println!("Exited with code {exit_code}: {out}");
+                }
+            }
         }
 
         Self {
@@ -240,8 +527,9 @@ impl Build {
 
     fn include(&self, host_path: impl AsRef<Path>) {
         let path_str = host_path.as_ref().to_str().unwrap();
+        let parent_path_str = host_path.as_ref().parent().unwrap().to_str().unwrap();
         self.container
-            .exec(&["mkdir", "-p", path_str])
+            .exec(&["mkdir", "-p", parent_path_str])
             .expect("failed to create host directory in container");
 
         self.container
@@ -249,12 +537,117 @@ impl Build {
             .expect("failed to mount and copy host data");
     }
 
-    fn compile(&self) {
-        self.target.compile(&self.container);
+    fn compile(&self, container_path: impl AsRef<Path>) -> Result<String, String> {
+        self.target
+            .compile(&self.container, container_path.as_ref())
     }
 }
 
 pub fn bind(cfg: Config) {
+    let Config {
+        target: Library {
+            lang: target_lang, ..
+        },
+        source: Library {
+            lang: source_lang, ..
+        },
+        ..
+    } = cfg;
+
+    let src_dir = cfg.source.dir.clone();
+    let bind_dir = cfg.target.dir.clone();
     let build = Build::create(cfg);
-    build.compile();
+    let model = Rc::new(Gemini::new("".to_owned()));
+    let interpreter = Interpreter::from_model(model.clone());
+    let prompter = Prompter::from_model(model.clone());
+    let error_act = |err| match interpreter.error_interpret(err) {
+        Some(errs) => {
+            for err in errs {
+                match err {
+                    Error::Missing { path } => {
+                        build.include(path.to_str().unwrap());
+                    }
+                    _ => todo!(),
+                }
+            }
+        }
+        None => println!("no error found?"),
+    };
+    loop {
+        let src_file_paths = match build.source_files(&src_dir) {
+            Ok(x) => x,
+            Err(e) => {
+                (error_act)(e);
+                continue;
+            }
+        };
+        let mut src_files = vec![];
+
+        for path in src_file_paths {
+            src_files.push((path.to_owned(), fs::read_to_string(&path).unwrap()));
+        }
+
+        let bindings_raw = prompter.generate_bindings(
+            &src_files,
+            &bind_dir.clone(),
+            build.target.guidelines(),
+            &source_lang,
+            &target_lang,
+        );
+
+        let expected_language = format!("```{target_lang:?}").to_lowercase();
+        let bindings = bindings_raw
+            .split_terminator(&expected_language)
+            .skip(1)
+            .map(|x| x.trim_matches('`').trim())
+            .map(|x| (PathBuf::from(x.split_whitespace().nth(1).unwrap()), x));
+
+        for (path, contents) in bindings {
+            dbg!(&path);
+            fs::write(&path, contents);
+            build.include(path);
+        }
+
+        match build.compile(&bind_dir) {
+            Ok(out) => todo!(),
+            Err(err) => {
+                error_act(err);
+                continue;
+            }
+        }
+    }
+}
+
+use regex::Regex;
+
+pub fn unescape_unicode(text: &str) -> String {
+    // Create a regex pattern for Unicode escape sequences (\uXXXX)
+    let unicode_pattern = Regex::new(r"\\u([0-9a-fA-F]{4})").unwrap();
+
+    // Replace all matches with their corresponding characters
+    let mut result = text.to_string();
+    while let Some(caps) = unicode_pattern.captures(&result) {
+        if let (Some(full_match), Some(hex_digits)) = (caps.get(0), caps.get(1)) {
+            // Parse the hex digits into a Unicode code point
+            if let Ok(code_point) = u32::from_str_radix(hex_digits.as_str(), 16) {
+                // Convert the code point to a character
+                if let Some(ch) = std::char::from_u32(code_point) {
+                    // Replace the escape sequence with the actual character
+                    result = result.replacen(full_match.as_str(), &ch.to_string(), 1);
+                    continue;
+                }
+            }
+            // If parsing failed, leave it as is
+        }
+        break;
+    }
+
+    // Also handle other common escape sequences
+    result = result
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace("\\\"", "\"")
+        .replace("\\\\", "\\");
+
+    result
 }
