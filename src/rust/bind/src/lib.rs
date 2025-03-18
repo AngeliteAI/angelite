@@ -1,8 +1,9 @@
 #![feature(unboxed_closures, coroutines, stmt_expr_attributes, coroutine_trait)]
+use docker::{CommandResult, Container, Docker, Image, container_config};
 use gemini::{GeminiClient, GeminiError};
 use serde::Deserialize;
 use std::{
-    cell::{OnceCell, RefCell},
+    cell::{OnceCell, RefCell, UnsafeCell},
     collections::HashMap,
     env, fs,
     ops::{ControlFlow, Coroutine},
@@ -13,8 +14,6 @@ use std::{
     thread,
     time::{Duration, SystemTime},
 };
-
-use docker::{CommandResult, Container, Docker, Image, container_config};
 
 mod container;
 
@@ -97,16 +96,37 @@ impl Model for Gemini {
         Self { client, system }
     }
 
-    fn respond<'a, C, R>(&'a self, prompt: String, coroutine: &'a mut C) -> Result<Option<R>, GeminiError>
+    fn respond<C, R>(&self, prompt: String, coroutine: &mut C) -> Result<Option<R>, GeminiError>
     where
-        C: Coroutine<&'a mut String, Yield = ControlFlow<(), ()>, Return = R> + ?Sized,
+        C: Coroutine<Rc<RefCell<String>>, Yield = ControlFlow<(), ()>, Return = R> + ?Sized,
     {
-        // Return true when completely done
-        self.client
-            .generate_content_streaming(&prompt, &mut pin!(#[coroutine] |text| {
-                dbg!(text);
-            })).unwrap();
-        Ok(None)
+        // Add retry logic for network failures
+        let max_retries = 3;
+        let mut retries = 0;
+
+        loop {
+            match self.client.generate_content_streaming(&prompt, coroutine) {
+                Ok(result) => return Ok(result),
+                Err(e) => {
+                    // Check if this is a network error (curl exit code 56)
+                    let is_network_error = match &e {
+                        GeminiError::HttpError(msg) => msg.contains("exit code: 56"),
+                        _ => false,
+                    };
+
+                    if is_network_error && retries < max_retries {
+                        // Wait a bit before retrying
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        retries += 1;
+                        println!("Network error, retrying ({}/{})", retries, max_retries);
+                        continue;
+                    }
+
+                    // For non-network errors or if max retries exceeded
+                    return Err(e);
+                }
+            }
+        }
     }
 }
 
@@ -115,9 +135,9 @@ pub trait Model {
     fn new(system: String) -> Self
     where
         Self: Sized;
-    fn respond<'a, C, R>(&'a self, prompt: String, coroutine: &'a mut C) -> Result<Option<R>, GeminiError>
+    fn respond<C, R>(&self, prompt: String, coroutine: &mut C) -> Result<Option<R>, GeminiError>
     where
-        C: Coroutine<&'a mut String, Yield = ControlFlow<(), ()>, Return = R> + ?Sized;
+        C: Coroutine<Rc<RefCell<String>>, Yield = ControlFlow<(), ()>, Return = R> + ?Sized;
 }
 
 pub struct Prompter<M: Model> {
@@ -136,142 +156,116 @@ impl<M: Model> Prompter<M> {
         input_lang: &Language,
         output_lang: &Language,
     ) -> String {
+        const BINDING_GUIDELINES: &str = include_str!("generate_bindings.prompt");
         const YES: &str = "YES";
         const NO: &str = "NO";
 
         let mut ret_top = String::new();
-        let mut critique = String::new();
+        let mut critique = None;
+        let mut critique_buf = String::new();
+        let mut ret_main = Rc::new(RefCell::new(String::new()));
+        let mut ret_alt = ret_main.clone();
         let mut critique_requested = false;
 
         // Create the main coroutine for generating bindings
-    
-        // Run the first part of generation
-        'a: loop {
-        let mut ret_main = String::new();
-    let main_coroutine = #[coroutine]
-        |text: &mut String| {
-            const CHECK: usize = 500; // Your threshold for checking
-
-                // Receive text chunk from the model
-            loop {
-                dbg!(&text);
-                ret_main += &*text;
-
-                // Check if we need to request a critique
-                if !critique_requested && dbg!(ret_main.len()) >= CHECK {
-                    critique_requested = true;
-
-                    dbg!("RET");
-                    // We'll need to break here to make the critique request
-                    return ret_main;
-                }
-
-                yield ControlFlow::Continue(());
-            }
-        };
-
-        // Create a pinned coroutine
-        let mut pinned_main = pin!(main_coroutine);
-
-        let Ok(mut ret_opt) = self.model.respond(
-        format!(
-            "{}\n\n# Binding guidelines {target_guidelines}\n\n# Generation Parameters\nInput Language: {input_lang:?}\nOutput Language: {output_lang:?}\nBinding Directory: {bind_dir:?}\n{c_abi:?}",
-            include_str!("generate_bindings.prompt")
-        ),
-        &mut pinned_main) else {
-            panic!("?");
-        };
-
-        if ret_opt.is_none() {
-            continue;
-        }
-
-        // Check if we need to get a critique
-        if let Some(ref mut ret) = ret_opt  {
-            if ret.is_empty() {
-                break 'a;
-            }
-            ret_top += &*ret;
-            // Create a coroutine for the critique
-            let critique_coroutine = #[coroutine]
-            |text: &mut String| {
-                let mut is_complete = false;
-
+        let main_coroutine = Rc::new(UnsafeCell::new(
+            #[coroutine]
+            static |text: Rc<RefCell<String>>| {
+                const CHECK: usize = 500; // Your threshold for checking
                 loop {
-                    let text = yield ControlFlow::Continue(());
-                    critique += &*text;
+                    {
+                        let text = text.borrow_mut();
+                        dbg!(&text);
+                        if text.is_empty() {
+                            return ret_main;
+                        }
+                        // Only add new content, not the entire buffer each time
+                        ret_main.borrow_mut().push_str(&*text);
 
-                    // Check if we have enough of the critique to determine YES/NO
-                    const YES: &str = "YES";
-                    const NO: &str = "NO";
-
-                    if critique.starts_with(YES) || critique.starts_with(NO) {
-                        // We have enough to make a determination
-                        is_complete = true;
-
-                        // We could continue collecting the rest of the critique
-                        // or we could stop here since we've made our determination
-                        yield ControlFlow::Break(());
-                        return critique.clone();
+                        // Check if we need to request a critique
+                        if !critique_requested && dbg!(ret_main.borrow().len()) >= CHECK {
+                            critique_requested = true;
+                            println!("RET");
+                            yield ControlFlow::Break(());
+                        }
                     }
+
+                    yield ControlFlow::Continue(());
+                }
+            },
+        ));
+        // Run the first part of generation
+        let mut prompt = String::new();
+
+        prompt.push_str(BINDING_GUIDELINES);
+        prompt.push_str("\n\n");
+        prompt.push_str("# Binding target guidelines\n\n");
+        prompt.push_str(target_guidelines);
+        prompt.push_str("# Generation parameters");
+        prompt.push_str(&format!("Input Language: {input_lang:?}\nOutput Language: {output_lang:?}\nBinding Directory: {bind_dir:?}\n\n"));
+        prompt.push_str(&format!("# C-abi input\n\n{c_abi:?}"));
+
+        println!("{prompt}");
+        let ret_opt = self
+            .model
+            .respond(prompt, &mut pin!(unsafe { main_coroutine.get().read() }));
+        'a: loop {
+            // Create a pinned coroutine
+
+            let ret_opt = if let Some(critique) = &critique {
+                panic!("yo");
+            } else {
+                let coroutine = pin!(unsafe { main_coroutine.get().read() });
+                match coroutine.resume(ret_alt.clone()) {
+                    std::ops::CoroutineState::Yielded(yie) => None,
+                    std::ops::CoroutineState::Complete(comp) => Some(comp),
                 }
             };
 
-            let mut pinned_critique = pin!(critique_coroutine);
+            if ret_opt.is_none() {
+                let mut ret = ret_alt.borrow().clone();
+                dbg!(&ret);
 
-            // Get the critique
-            if false { 
-            let critique = self.model.respond(
-            format!(
-                "Does the code you have generated thus far match the style guide? If the code provided matches the style guide, if and only if this condition is met, you should output YES and only YES. Otherwise, say NO and then follow up with detailed feedback on why. It is important to get syntax right here, as this is going to be read by a machine that will then feed your feedback into an AI LLM for further analysis. Remember that you are talking to an AI\n\n{}\n\n```{}```",
-                target_guidelines,
-                ret
-            ),
-            &mut pinned_critique
-        ).ok().flatten().unwrap();
-
-            // Determine if we should continue based on the critique
-            let should_continue = match (critique.starts_with(YES), critique.starts_with(NO)) {
-                (true, false) => {
-                    dbg!("YES");
-                    true
+                if ret.is_empty() {
+                    break 'a;
                 }
-                (false, true) => {
-                    dbg!("NO");
-                    false
-                }
-                _ => panic!("Invalid critique response"),
-            };
+                ret_top += &*ret;
+                // Create a coroutine for the critique
+                let critique_coroutine = #[coroutine]
+                static |text: Rc<RefCell<String>>| {
+                    loop {
+                        {
+                            let text = text.borrow_mut();
+                            if text.is_empty() {
+                                return critique_buf.clone();
+                            }
 
-            // If the critique is positive, continue generating
-            if should_continue {
-                // Create a coroutine to collect the rest of the generation
-                let input = ret.clone();
-                let continue_coroutine = #[coroutine]
-                |text: &mut String| {
-                    while !text.is_empty() {
+                            critique_buf += &*text;
+                        }
                         yield ControlFlow::Continue(());
-                        *ret += &*text;
                     }
-                    return ret;
                 };
 
-                let mut pinned_continue = pin!(continue_coroutine);
+                let mut pinned_critique = pin!(critique_coroutine);
 
-                // Continue generating
-                 ret_top += &*self.model.respond(
-                format!(
-                    "Please continue generating bindings from where you left off. Here is what you've generated so far:\n\n```\n{}\n```",
-                   input 
-                ),
-                &mut pinned_continue
-            ).ok().flatten().unwrap();
+                // Get the critique
+                let Ok(Some(critique_curr)) = self.model.respond(
+            format!(
+                "Does the code you have generated thus far match the style guide? If the code provided matches the style guide, if and only if this condition is met, you should output YES and only YES. Otherwise, say NO and then follow up with detailed feedback on why. It is important to get syntax right here, as this is going to be read by a machine that will then feed your feedback into an AI LLM for further analysis. Remember that you are talking to an AI\n\n{BINDING_GUIDELINES}\n\n{target_guidelines}\n\n```{ret}```",
+            ),
+            &mut pinned_critique
+        ) else {
+                    panic!("whoops");
+                };
 
-            }
+                if critique_curr.starts_with(YES) {
+                    critique = None;
+                } else {
+                    critique = Some(critique_curr);
+                }
             }
         }
-        }
-        ret_top 
+        ret_top
     }
 }
 ///Interprets AI responses
@@ -286,9 +280,9 @@ impl<M: Model> Interpreter<M> {
     fn error_interpret(&self, err: String) -> Option<Vec<Error>> {
         let mut ret = String::new();
         let main_coroutine = #[coroutine]
-        |text: &mut String| {
-            ret += &*text;
-            if text.is_empty() {
+        |text: Rc<RefCell<String>>| {
+            ret += &*text.borrow_mut();
+            if text.borrow().is_empty() {
                 yield ControlFlow::Continue(());
                 return "".to_owned();
             } else {
@@ -306,7 +300,9 @@ impl<M: Model> Interpreter<M> {
                 format!("{}\n{err}", include_str!("error_interpret.prompt")),
                 &mut pinned_main,
             )
-            .ok().flatten().unwrap();
+            .ok()
+            .flatten()
+            .unwrap();
 
         dbg!(serde_json::from_str(dbg!(
             ret.trim_matches('`').trim_start_matches("json").trim()
