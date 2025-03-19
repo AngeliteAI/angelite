@@ -99,6 +99,7 @@ pub trait ResponseCoroutine =
 impl Model for Gemini {
     fn new(system: String) -> Self {
         let client = GeminiClient::new("gemini-2.0-flash")
+            .with_temperature(0.8)
             .with_api_key(&*env::var("GEMINI_API_KEY").unwrap());
 
         Self { client, system }
@@ -246,7 +247,9 @@ impl<M: Model> Prompter<M> {
             }
 
             if !buffer.is_empty() {
-                prompt.push_str(&format!("# IMPORTANT: Generate only NEW code. DO NOT repeat any code below:\n\n{buffer}\n"));
+                prompt.push_str(&format!(
+                    "# IMPORTANT: This is the code the critique is about: \n\n{buffer}\n"
+                ));
             }
 
             println!("{prompt}");
@@ -256,8 +259,8 @@ impl<M: Model> Prompter<M> {
             println!("going into loop");
             while yes {
                 println!("top");
-                while ready && buffer_main.len() - buffer_main_cursor < tries * 512 {
-                    println!("ready");
+                while ready {
+                    //}&& buffer_main.len() - buffer_main_cursor < 4096 {
                     match main_coroutine.as_mut().resume(()) {
                         CoroutineState::Complete(complete) => {
                             println!("yo123123");
@@ -265,33 +268,68 @@ impl<M: Model> Prompter<M> {
                             ready = false;
                         }
                         CoroutineState::Yielded(yielded) => {
-                            println!("yielded {}", yielded.as_ref().unwrap());
-                            buffer_main += &yielded.unwrap();
+                            let yielded = yielded.unwrap();
+                            println!("{yielded}");
+                            buffer_main += &yielded;
                         }
                     }
                 }
                 println!("out");
 
-                buffer_main_cursor = buffer_main.len();
-                buffer += &buffer_main;
-
-                println!("buffer main ```{buffer_main}```");
+                buffer = buffer_main.clone();
                 println!("\n\n\n\n CRITIQUE \n\n\n\n");
 
                 let prompt = format!(
-                    "Does the code you have generated thus far match the style guide? If the code provided matches the style guide, if and only if this condition is met, you should output YES and only YES. Otherwise, say NO and then follow up with detailed feedback on why. It is important to get syntax right here, as this is going to be read by a machine that will then feed your feedback into an AI LLM for further analysis. Remember that you are talking to an AI\n\n{BINDING_GUIDELINES}\n\n{target_guidelines}\n\n```{buffer_main}```",
+                    "You are a specialized code binding evaluator. Your task is to assess if generated code bindings match the provided style guide with extreme precision.
+When evaluating the code:
+
+Categorize each guideline as either \"critical\" or \"non-critical\" based on importance
+Consider a binding successful only if 100% of critical guidelines and at least 95% of non-critical guidelines are met
+Focus on style conformance, not functionality
+Be aware the code may be incomplete as it's being generated in real-time
+
+{BINDING_GUIDELINES}
+{target_guidelines}
+
+Here is the current code:
+
+{buffer_main}"
                 );
 
                 let mut critique_coroutine = pin!(self.model.respond(prompt));
 
-                buffer_critique = String::new();
+                buffer_critique = buffer_critique.replace(YES, "").replace(NO, "");
                 while let CoroutineState::Yielded(yielded) = critique_coroutine.as_mut().resume(())
                 {
                     buffer_critique += &yielded.unwrap();
                 }
 
-                dbg!(&buffer_critique);
-                yes = buffer_critique.starts_with(YES);
+                let prompt = format!(
+                    "You are a specialized code binding evaluator. Your task is to assess if generated code bindings match the provided style guide with extreme precision.
+When evaluating the code:
+
+Output a number, and only a number, one number with no other symbols, between 0 and 100 that represents how closely the code follows the binding guidelines (a percentage, but without the %)
+
+{BINDING_GUIDELINES}
+{target_guidelines}
+
+Here is the current code:
+
+{buffer_main}"
+                );
+
+                let mut critique_coroutine = pin!(self.model.respond(prompt));
+
+                let mut buffer_eval = String::new();
+
+                while let CoroutineState::Yielded(yielded) = critique_coroutine.as_mut().resume(())
+                {
+                    buffer_eval += &yielded.unwrap();
+                }
+
+                dbg!(&buffer_eval, &buffer_critique);
+
+                yes = buffer_eval.trim().parse::<usize>().unwrap() > 90;
 
                 if yes && !ready {
                     break 'outer buffer;

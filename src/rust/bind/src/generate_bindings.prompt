@@ -20,7 +20,7 @@ You will receive:
 
 ## Output Format
 
-Your response must follow this strict format, where the output path should be included as a comment at the top of each code block:
+Your response must follow this strict format (do not output anything else, including comments or responses in words), where the output path should be included as a comment at the top of each code block:
 
 ```[language]
 // /path/to/output/file1.ext
@@ -33,6 +33,8 @@ Your response must follow this strict format, where the output path should be in
 // Generated binding code for file2
 ...code implementation...
 ```
+
+Under no circumstances should you output words, only code blocks in markdown form.
 
 ## Final Check List
 

@@ -1,14 +1,16 @@
-#![feature(coroutines, coroutine_trait, gen_future, stmt_expr_attributes)]
+#![feature(
+    coroutines,
+    coroutine_trait,
+    gen_future,
+    stmt_expr_attributes,
+    trait_alias
+)]
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::borrow::BorrowMut;
-use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashMap;
-use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::ops::{ControlFlow, Coroutine};
-use std::path::Path;
 use std::pin::Pin;
 use std::process::{Command, Stdio};
 
@@ -86,10 +88,13 @@ impl std::fmt::Display for GeminiError {
 
 impl std::error::Error for GeminiError {}
 
+// Define a type for our streaming coroutine
+pub trait StreamingCoroutine =
+    std::ops::Coroutine<(), Yield = Result<String, GeminiError>, Return = Result<(), GeminiError>>;
+
 pub struct GeminiClient {
     model_id: String,
     api_key: Option<String>,
-    buffer: UnsafeCell<String>,
     generation_config: HashMap<String, Value>,
 }
 
@@ -98,7 +103,6 @@ impl GeminiClient {
         GeminiClient {
             model_id: model_id.to_string(),
             api_key: None,
-            buffer: String::new().into(),
             generation_config: HashMap::new(),
         }
     }
@@ -176,7 +180,7 @@ impl GeminiClient {
         let json_body = serde_json::to_string(&request_body)
             .map_err(|e| GeminiError::JsonParseError(e.to_string()))?;
 
-        // Pass JSON data directly to curl instead of using a temp file
+        // Pass JSON data directly to curl
         let mut curl_cmd = Command::new("curl");
 
         curl_cmd
@@ -224,298 +228,307 @@ impl GeminiClient {
         }
     }
 
-    // Streaming version that accepts a user-provided coroutine
-    pub fn generate_content_streaming<'a, C, R>(
-        &'a self,
-        text: &str,
-        coroutine: &mut C,
-    ) -> Result<Option<R>, GeminiError>
-    where
-        C: Coroutine<&'a String, Yield = ControlFlow<(), ()>, Return = R> + ?Sized,
-    {
-        let buffer = unsafe { self.buffer.get().as_mut().unwrap() };
-        // Get API key - either from the client or fail
-        let api_key = match &self.api_key {
-            Some(key) => key,
-            None => {
-                return Err(GeminiError::HttpError(
-                    "API key is required for Gemini API".to_string(),
-                ));
-            }
-        };
+    // New streaming version that returns a coroutine the caller can drive
+    pub fn generate_content_streaming<'a>(
+        &self,
+        text: &'a str,
+    ) -> Box<dyn StreamingCoroutine + 'a> {
+        // Clone the necessary data so the coroutine can own it
+        let model_id = self.model_id.clone();
+        let api_key = self.api_key.clone();
+        let generation_config = self.generation_config.clone();
 
-        // Use the correct URL format for streaming
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
-            self.model_id, api_key
-        );
+        // Create and return a coroutine
+        Box::new(
+            #[coroutine]
+            move || {
+                // Validate API key first
+                let api_key = match api_key {
+                    Some(key) => key,
+                    None => {
+                        yield Result::Err(GeminiError::HttpError(
+                            "API key is required for Gemini API".to_string(),
+                        ));
+                        return Result::Err(GeminiError::HttpError(
+                            "API key is required for Gemini API".to_string(),
+                        ));
+                    }
+                };
 
-        let mut request_body = json!({
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
+                // Use the correct URL format for streaming
+                let url = format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?key={}",
+                    model_id, api_key
+                );
+
+                // Prepare the request body
+                let mut request_body = json!({
+                    "contents": [
                         {
-                            "text": text
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "text": text
+                                }
+                            ]
                         }
                     ]
+                });
+
+                if !generation_config.is_empty() {
+                    let config = generation_config
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<HashMap<_, _>>();
+                    request_body["generationConfig"] = json!(config);
                 }
-            ]
-        });
 
-        if !self.generation_config.is_empty() {
-            let config = self
-                .generation_config
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect::<HashMap<_, _>>();
-            request_body["generationConfig"] = json!(config);
-        }
+                let json_body = match serde_json::to_string(&request_body) {
+                    Ok(body) => body,
+                    Err(e) => {
+                        yield Result::Err(GeminiError::JsonParseError(e.to_string()));
+                        return Result::Err(GeminiError::JsonParseError(e.to_string()));
+                    }
+                };
 
-        let json_body = serde_json::to_string(&request_body)
-            .map_err(|e| GeminiError::JsonParseError(e.to_string()))?;
+                // Set up curl command for streaming
+                let mut curl_cmd = Command::new("curl");
 
-        // Instead of using a temp file, pass the JSON directly to curl
-        let mut curl_cmd = Command::new("curl");
+                curl_cmd
+                    .arg("-X")
+                    .arg("POST")
+                    .arg("-H")
+                    .arg("Content-Type: application/json; charset=utf-8")
+                    .arg("-H")
+                    .arg("Accept: text/event-stream") // Tell the API we want server-sent events
+                    .arg("-N") // Important: disable buffering for streaming
+                    .arg("-d")
+                    .arg(json_body)
+                    .arg(url);
 
-        curl_cmd
-            .arg("-X")
-            .arg("POST")
-            .arg("-H")
-            .arg("Content-Type: application/json; charset=utf-8")
-            .arg("-H")
-            .arg("Accept: text/event-stream") // Tell the API we want server-sent events
-            .arg("-N") // Important: disable buffering for streaming
-            .arg("-d")
-            .arg(json_body)
-            .arg(url);
+                let mut child = match curl_cmd
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                {
+                    Ok(child) => child,
+                    Err(e) => {
+                        yield Result::Err(GeminiError::CurlError(e.to_string()));
+                        return Result::Err(GeminiError::CurlError(e.to_string()));
+                    }
+                };
 
-        let mut child = curl_cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| GeminiError::CurlError(e.to_string()))?;
+                let stdout = match child.stdout.take() {
+                    Some(stdout) => stdout,
+                    None => {
+                        yield Result::Err(GeminiError::StreamError(
+                            "Failed to capture stdout".to_string(),
+                        ));
+                        return Result::Err(GeminiError::StreamError(
+                            "Failed to capture stdout".to_string(),
+                        ));
+                    }
+                };
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| GeminiError::StreamError("Failed to capture stdout".to_string()))?;
+                // Process the stream line by line
+                let reader = BufReader::new(stdout);
+                let mut in_text_field = false;
+                let mut current_text = String::new();
+                let mut textbuf = String::new();
 
-        // Pin the coroutine so we can resume it
-        let mut pinned = unsafe { Pin::new_unchecked(coroutine) };
-
-        // Process the stream line by line
-        let reader = BufReader::new(stdout);
-        let mut in_text_field = false;
-        let mut current_text = String::new();
-        let mut textbuf = String::new();
-
-        for line_result in reader.lines() {
-            let line = line_result.map_err(|e| GeminiError::StreamError(e.to_string()))?;
-
-            // Skip empty lines
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            // Skip lone commas between objects
-            if line.trim() == "," {
-                continue;
-            }
-
-            // If we're already inside a text field from previous lines
-            if in_text_field {
-                // Find the end quote that isn't escaped
-                let mut i = 0;
-                let chars: Vec<char> = line.chars().collect();
-                let mut found_end = false;
-
-                while i < chars.len() {
-                    if chars[i] == '"' {
-                        // Check if this quote is escaped (preceded by odd number of backslashes)
-                        let mut backslash_count = 0;
-                        let mut j = i;
-                        while j > 0 && chars[j - 1] == '\\' {
-                            backslash_count += 1;
-                            j -= 1;
+                for line_result in reader.lines() {
+                    let line = match line_result {
+                        Ok(line) => line,
+                        Err(e) => {
+                            yield Result::Err(GeminiError::StreamError(e.to_string()));
+                            return Result::Err(GeminiError::StreamError(e.to_string()));
                         }
+                    };
 
-                        if backslash_count % 2 == 0 {
-                            // This is a real end quote (not escaped)
-                            current_text.push_str(&line[..i]);
+                    // Skip empty lines
+                    if line.trim().is_empty() {
+                        continue;
+                    }
 
-                            // Send the text to the coroutine
-                            unsafe { self.buffer.get().write(current_text.to_owned()) };
-                            match pinned.as_mut().resume(buffer) {
-                                std::ops::CoroutineState::Yielded(ControlFlow::Continue(())) => {}
-                                std::ops::CoroutineState::Yielded(ControlFlow::Break(())) => {
-                                    // Early termination requested
-                                    return Ok(None);
+                    // Skip lone commas between objects
+                    if line.trim() == "," {
+                        continue;
+                    }
+
+                    // If we're already inside a text field from previous lines
+                    if in_text_field {
+                        // Find the end quote that isn't escaped
+                        let mut i = 0;
+                        let chars: Vec<char> = line.chars().collect();
+                        let mut found_end = false;
+
+                        while i < chars.len() {
+                            if chars[i] == '"' {
+                                // Check if this quote is escaped (preceded by odd number of backslashes)
+                                let mut backslash_count = 0;
+                                let mut j = i;
+                                while j > 0 && chars[j - 1] == '\\' {
+                                    backslash_count += 1;
+                                    j -= 1;
                                 }
-                                std::ops::CoroutineState::Complete(r) => {
-                                    // Coroutine completed
-                                    return Ok(Some(r));
+
+                                if backslash_count % 2 == 0 {
+                                    // This is a real end quote (not escaped)
+                                    current_text.push_str(&line[..i]);
+
+                                    // Yield the text
+                                    yield Result::Ok(current_text.clone());
+
+                                    // Reset state
+                                    in_text_field = false;
+                                    current_text.clear();
+                                    found_end = true;
+
+                                    // Process the rest of the line starting after this quote
+                                    textbuf = line[i + 1..].to_string();
+                                    break;
                                 }
                             }
+                            i += 1;
+                        }
 
-                            // Reset state
-                            in_text_field = false;
-                            current_text.clear();
-                            found_end = true;
+                        if !found_end {
+                            // No end quote found, continue accumulating
+                            current_text.push_str(&line);
+                            current_text.push('\n');
+                            continue;
+                        }
+                    }
 
-                            // Process the rest of the line starting after this quote
-                            textbuf = line[i + 1..].to_string();
+                    // Look for new text fields
+                    textbuf.push_str(&line);
+                    let mut search_pos = 0;
+
+                    while search_pos < textbuf.len() {
+                        let start_marker = r#""text": ""#;
+                        if let Some(start_idx) = textbuf[search_pos..].find(start_marker) {
+                            let absolute_start = search_pos + start_idx;
+                            let content_start = absolute_start + start_marker.len();
+
+                            if content_start >= textbuf.len() {
+                                // The start marker is at the end of the buffer, wait for more data
+                                break;
+                            }
+
+                            // Find the closing quote that isn't escaped
+                            let mut i = 0;
+                            let chars: Vec<char> = textbuf[content_start..].chars().collect();
+                            let mut found_end = false;
+
+                            while i < chars.len() {
+                                if chars[i] == '"' {
+                                    // Check if this quote is escaped
+                                    let mut backslash_count = 0;
+                                    let mut j = i;
+                                    while j > 0 && chars[j - 1] == '\\' {
+                                        backslash_count += 1;
+                                        j -= 1;
+                                    }
+
+                                    if backslash_count % 2 == 0 {
+                                        // This is a real end quote
+                                        let mut i = content_start;
+                                        let mut escape = false;
+                                        while i < textbuf.len() {
+                                            let c = textbuf.as_bytes()[i];
+
+                                            if c == b'\\' && !escape {
+                                                escape = true;
+                                            } else if c == b'"' && !escape {
+                                                // Found unescaped quote
+                                                break;
+                                            } else {
+                                                escape = false;
+                                            }
+
+                                            // Move to next character safely
+                                            i += 1;
+                                            while i < textbuf.len() && !textbuf.is_char_boundary(i)
+                                            {
+                                                i += 1;
+                                            }
+                                        }
+
+                                        if i < textbuf.len() {
+                                            let text = &textbuf[content_start..i];
+
+                                            // Unescape the text
+                                            let unescaped = unescape_string(&text).unwrap();
+
+                                            // Yield the text
+                                            yield Result::Ok(unescaped);
+
+                                            // Update search position - make sure i is a valid boundary
+                                            search_pos = i + 1;
+                                            while search_pos < textbuf.len()
+                                                && !textbuf.is_char_boundary(search_pos)
+                                            {
+                                                search_pos += 1;
+                                            }
+
+                                            found_end = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                i += 1;
+                            }
+
+                            if !found_end {
+                                // Text continues beyond this line
+                                in_text_field = true;
+                                current_text = textbuf[content_start..].to_string();
+                                textbuf.clear();
+                                break;
+                            }
+                        } else {
+                            // No text field start found
                             break;
                         }
                     }
-                    i += 1;
-                }
 
-                if !found_end {
-                    // No end quote found, continue accumulating
-                    current_text.push_str(&line);
-                    current_text.push('\n');
-                    continue;
-                }
-            }
-
-            // Look for new text fields
-            textbuf.push_str(&line);
-            let mut search_pos = 0;
-
-            while search_pos < textbuf.len() {
-                let start_marker = r#""text": ""#;
-                if let Some(start_idx) = textbuf[search_pos..].find(start_marker) {
-                    let absolute_start = search_pos + start_idx;
-                    let content_start = absolute_start + start_marker.len();
-
-                    if content_start >= textbuf.len() {
-                        // The start marker is at the end of the buffer, wait for more data
-                        break;
-                    }
-
-                    // Find the closing quote that isn't escaped
-                    let mut i = 0;
-                    let chars: Vec<char> = textbuf[content_start..].chars().collect();
-                    let mut found_end = false;
-
-                    while i < chars.len() {
-                        if chars[i] == '"' {
-                            // Check if this quote is escaped
-                            let mut backslash_count = 0;
-                            let mut j = i;
-                            while j > 0 && chars[j - 1] == '\\' {
-                                backslash_count += 1;
-                                j -= 1;
-                            }
-
-                            if backslash_count % 2 == 0 {
-                                // This is a real end quote
-                                let absolute_end = content_start + i;
-                                let text = &textbuf[content_start..absolute_end];
-
-                                // Unescape the text
-                                let unescaped = text
-                                    .replace(r#"\""#, r#"""#)
-                                    .replace(r#"\\"#, r#"\"#)
-                                    .replace(r#"\n"#, "\n")
-                                    .replace(r#"\r"#, "\r")
-                                    .replace(r#"\t"#, "\t");
-
-                                unsafe { self.buffer.get().write(unescaped) };
-                                // Send the text to the coroutine
-                                match pinned.as_mut().resume(buffer) {
-                                    std::ops::CoroutineState::Yielded(ControlFlow::Continue(
-                                        (),
-                                    )) => {
-                                        // Continue processing
-                                    }
-                                    std::ops::CoroutineState::Yielded(ControlFlow::Break(())) => {
-                                        // Early termination requested
-                                        return Ok(None);
-                                    }
-                                    std::ops::CoroutineState::Complete(r) => {
-                                        // Coroutine completed
-                                        return Ok(Some(r));
-                                    }
-                                }
-
-                                // Update search position
-                                search_pos = absolute_end + 1;
-                                found_end = true;
-                                break;
-                            }
-                        }
-                        i += 1;
-                    }
-
-                    if !found_end {
-                        // Text continues beyond this line
-                        in_text_field = true;
-                        current_text = textbuf[content_start..].to_string();
+                    // Clear buffer if we're not in a text field and processed the line
+                    if !in_text_field {
                         textbuf.clear();
-                        break;
                     }
-                } else {
-                    // No text field start found
-                    break;
                 }
-            }
 
-            // Clear buffer if we're not in a text field and processed the line
-            if !in_text_field {
-                textbuf.clear();
-            }
-        }
+                // Wait for the child process to complete
+                let status = match child.wait() {
+                    Ok(status) => status,
+                    Err(e) => {
+                        yield Result::Err(GeminiError::CurlError(format!(
+                            "Error waiting for curl process: {}",
+                            e
+                        )));
+                        return Result::Err(GeminiError::CurlError(format!(
+                            "Error waiting for curl process: {}",
+                            e
+                        )));
+                    }
+                };
 
-        // Wait for the child process to complete
-        let status = child.wait().map_err(|e| {
-            GeminiError::CurlError(format!("Error waiting for curl process: {}", e))
-        })?;
-
-        // Check if curl exited successfully
-        if !status.success() {
-            let exit_code = status.code().unwrap_or(-1);
-            return Err(GeminiError::HttpError(format!(
-                "Curl command failed with exit code: {}",
-                exit_code
-            )));
-        }
-
-        Ok(None)
-    }
-
-    // Backward compatibility method that uses a simple callback
-    pub fn generate_content_streaming_with_callback<F>(
-        &self,
-        text: &str,
-        mut callback: F,
-    ) -> Result<(), GeminiError>
-    where
-        F: FnMut(&str) -> bool, // Return true to continue, false to stop
-    {
-        // Use std::pin::pin! to create a pinned coroutine on the stack
-        use std::pin::pin;
-
-        // Create a coroutine adapter for the callback function
-        let callback_coroutine = #[coroutine]
-        |text: &String| {
-            let mut continue_processing = true;
-            while continue_processing {
-                yield ControlFlow::Continue(());
-                continue_processing = callback(&text);
-                if !continue_processing {
-                    yield ControlFlow::Break(());
+                // Check if curl exited successfully
+                if !status.success() {
+                    let exit_code = status.code().unwrap_or(-1);
+                    yield Result::Err(GeminiError::HttpError(format!(
+                        "Curl command failed with exit code: {}",
+                        exit_code
+                    )));
+                    return Result::Err(GeminiError::HttpError(format!(
+                        "Curl command failed with exit code: {}",
+                        exit_code
+                    )));
                 }
-            }
-        };
 
-        // Pin the coroutine to the stack
-        let mut pinned = pin!(callback_coroutine);
-
-        // Call the coroutine-based API
-        self.generate_content_streaming(text, &mut pinned)
-            .map(|_| ())
+                Result::Ok(())
+            },
+        )
     }
 }
 
@@ -531,3 +544,74 @@ fn extract_text_from_response(json: &Value) -> Option<&str> {
         .get("text")?
         .as_str()
 }
+
+fn unescape_string(input: &str) -> Result<String, String> {
+    let mut result = String::new();
+    let mut chars = input.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('u') => {
+                    // Handle Unicode escape: \uXXXX
+                    let mut code_point = 0u32;
+                    let mut digit_count = 0;
+                    
+                    // Check for the opening brace in \u{XXXX} format
+                    let has_braces = chars.peek() == Some(&'{');
+                    if has_braces {
+                        chars.next(); // Consume the '{'
+                    }
+                    
+                    // Read 4 hex digits (or up to 6 if using braces)
+                    let max_digits = if has_braces { 6 } else { 4 };
+                    
+                    while digit_count < max_digits {
+                        match chars.peek() {
+                            Some(&c) if c.is_digit(16) => {
+                                chars.next(); // Consume the digit
+                                code_point = code_point * 16 + c.to_digit(16).unwrap();
+                                digit_count += 1;
+                            }
+                            Some(&'}') if has_braces => {
+                                chars.next(); // Consume the closing '}'
+                                break;
+                            }
+                            _ if has_braces => {
+                                return Err(format!("Invalid Unicode escape sequence: missing closing brace"));
+                            }
+                            _ => break,
+                        }
+                    }
+                    
+                    if digit_count == 0 {
+                        return Err(format!("Invalid Unicode escape sequence: no digits"));
+                    }
+                    
+                    if has_braces && chars.peek() != Some(&'}') && digit_count > 0 {
+                        return Err(format!("Invalid Unicode escape sequence: missing closing brace"));
+                    }
+                    
+                    match char::from_u32(code_point) {
+                        Some(unicode_char) => result.push(unicode_char),
+                        None => return Err(format!("Invalid Unicode code point: U+{:X}", code_point)),
+                    }
+                }
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('\\') => result.push('\\'),
+                Some('0') => result.push('\0'),
+                Some('\'') => result.push('\''),
+                Some('\"') => result.push('\"'),
+                Some(c) => result.push(c), // Pass through unrecognized escapes
+                None => return Err("Incomplete escape sequence".to_string()),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    
+    Ok(result)
+}
+
