@@ -214,6 +214,8 @@ private func updateViewMatrix() {
     }
 
     frameCount += 1
+
+    print(frameCount);
     
     // Process chunk generation queue - only process 1 chunk each 10 frames
     if frameCount % 10 == 0 && !isProcessingChunk && nextChunkGeneration < chunkVoxelDirty.count {
@@ -224,18 +226,21 @@ private func updateViewMatrix() {
     }
     
     // Generate meshes occasionally
-    if frameCount % 15 == 0 && !isProcessingChunk && !chunkMeshDirty.isEmpty {
-      chunksLock.lock()
+    if frameCount % 16 == 0 && !isProcessingChunk && !chunkMeshDirty.isEmpty {
+      var chunk = chunksLock.withLock {
       let position = _chunkMeshDirty.last!
       let chunk = _chunkVoxel[position]
       _chunkMeshDirty.removeLast()
-      chunksLock.unlock()
+      return chunk;
+      };
       
       if let chunk = chunk {
         isProcessingChunk = true
         generateMesh(chunk: chunk)
       }
     }
+
+    print("onto")
 
     // Update camera information for rendering
     updateViewMatrix()
@@ -267,100 +272,96 @@ private func updateViewMatrix() {
 
   // MARK: - Chunk Generation
 
-  func generateChunk(position: SIMD3<Int>) {
-    Task {
-      do {
-        print("Starting voxel generation for position: \(position)")
-        let (callId, voxelData) = await voxelGenerator.generateVoxels(
-          commandBuffer: nil,  // No longer pass the command buffer
-          position: position
-        )
+  // Fix for data races in Renderer.swift
 
-        print("Voxel generation complete for position: \(position), callId: \(callId)")
-        
-        guard let voxelData = voxelData else {
-          print("Failed to generate voxel data for position: \(position)")
-          self.isProcessingChunk = false
-          return
-        }
-          
-        // Safe thread handling with MainActor
-        await MainActor.run {
-          chunksLock.withLock {
-          // Store voxel data
-          _chunkVoxel[position] = VoxelChunk(position: position, voxelData: voxelData)
+// 1. Modify generateChunk function to avoid data races
+func generateChunk(position: SIMD3<Int>) {
+  // Use Task.detached to avoid inheriting actor isolation
+  Task.detached {
+    print("Starting voxel generation for position: \(position)")
+    let (callId, voxelData) = await self.voxelGenerator.generateVoxels(
+      commandBuffer: nil,
+      position: position
+    )
 
-          // Queue mesh generation
-          _chunkMeshDirty.append(position)
-          }
-          
-          // Clean up resources
-          self.voxelGenerator.cleanup(callId: callId)
-          self.isProcessingChunk = false
-          print("Chunk voxel data stored for position: \(position)")
-        }
-      } catch {
-        print("Error in generateChunk: \(error)")
+    print("Voxel generation complete for position: \(position), callId: \(callId)")
+    
+    guard let voxelData = voxelData else {
+      print("Failed to generate voxel data for position: \(position)")
+      await MainActor.run {
         self.isProcessingChunk = false
       }
+      return
     }
-  }
-  
-  func generateMesh(chunk: VoxelChunk) {
-    // Create a Task to handle the async mesh generation
-    Task {
-      do {
-        print("Starting mesh generation for position: \(chunk.position)")
-        let (callId, faces) = await meshGenerator.generateMesh(
-          commandBuffer: nil,  // No longer pass the command buffer
-          voxelData: chunk.voxelData,
-          position: chunk.position
-        )
-
-        print("Mesh generation complete for position: \(chunk.position), callId: \(callId)")
-        
-        // Process the results on the main thread
-        await MainActor.run {
-          let position = chunk.position
-          
-          chunksLock.lock()
-          // Clean up old mesh if it exists
-          if let oldRenderData = _chunkRenderData[position] {
-            for index in oldRenderData.commandIndices {
-              self.voxelRenderer.facePool.releaseBucket(commandIndex: index)
-            }
-          }
-          chunksLock.unlock()
-
-          guard let faces = faces, !faces.isEmpty else {
-            print("No faces generated for chunk at \(position)")
-            self.isProcessingChunk = false
-            return
-          }
-
-          print("Generated \(faces.count) faces for chunk at \(position)")
-          
-          // Add faces to the renderer
-          let commandIndices = self.voxelRenderer.addChunk(position: position, faceData: faces)
-
-          // Save render data for this chunk
-          chunksLock.lock()
-          _chunkRenderData[position] = ChunkRenderData(
-            position: position, 
-            commandIndices: commandIndices.map { UInt32($0) }
-          )
-          chunksLock.unlock()
-          
-          // Clean up resources
-          self.meshGenerator.cleanup(callId: callId)
-          self.isProcessingChunk = false
-        }
-      } catch {
-        print("Error in generateMesh: \(error)")
-        self.isProcessingChunk = false
+      
+    // Run UI updates on MainActor
+    await MainActor.run {
+      self.chunksLock.withLock {
+        // Store voxel data
+        self._chunkVoxel[position] = VoxelChunk(position: position, voxelData: voxelData)
+        // Queue mesh generation
+        self._chunkMeshDirty.append(position)
       }
+      
+      // Clean up resources
+      self.voxelGenerator.cleanup(callId: callId)
+      self.isProcessingChunk = false
+      print("Chunk voxel data stored for position: \(position)")
     }
   }
+}
+
+// 2. Modify generateMesh function to avoid data races
+func generateMesh(chunk: VoxelChunk) {
+  // Use Task.detached to avoid inheriting actor isolation
+  Task.detached {
+    print("Starting mesh generation for position: \(chunk.position)")
+    let (callId, faces) = await self.meshGenerator.generateMesh(
+      commandBuffer: nil,
+      voxelData: chunk.voxelData,
+      position: chunk.position
+    )
+
+    print("Mesh generation complete for position: \(chunk.position), callId: \(callId)")
+    
+    let position = chunk.position
+    
+    // Process results on MainActor to avoid data races
+    await MainActor.run {
+      self.chunksLock.withLock {
+        // Clean up old mesh if it exists
+        if let oldRenderData = self._chunkRenderData[position] {
+          for index in oldRenderData.commandIndices {
+            self.voxelRenderer.facePool.releaseBucket(commandIndex: index)
+          }
+        }
+      }
+
+      guard let faces = faces, !faces.isEmpty else {
+        print("No faces generated for chunk at \(position)")
+        self.isProcessingChunk = false
+        return
+      }
+
+      print("Generated \(faces.count) faces for chunk at \(position)")
+      
+      // Add faces to the renderer
+      let commandIndices = self.voxelRenderer.addChunk(position: position, faceData: faces)
+
+      // Save render data for this chunk
+      self.chunksLock.withLock {
+        self._chunkRenderData[position] = ChunkRenderData(
+          position: position, 
+          commandIndices: commandIndices.map { UInt32($0) }
+        )
+      }
+      
+      // Clean up resources
+      self.meshGenerator.cleanup(callId: callId)
+      self.isProcessingChunk = false
+    }
+  }
+}
   
   // MARK: - Camera Control
 

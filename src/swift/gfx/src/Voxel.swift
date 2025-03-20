@@ -348,12 +348,6 @@ class VoxelRenderer {
                 print("Drawing \(totalDrawCount) commands")
             }
             
-            // Perform true back-face culling with masking
-            performBackFaceCulling()
-            
-            // Perform front-to-back ordering for optimal z-buffer usage
-            performFrontToBackOrdering()
-            
             // Draw using the face pool
             facePool.draw(commandEncoder: renderEncoder)
         } else {
