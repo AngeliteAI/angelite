@@ -23,6 +23,8 @@ struct FaceChunk {
 }
 
 // Draw indirect command (DAIC from the paper)
+// Replace the FaceDrawCommand struct with this more robust version:
+
 struct FaceDrawCommand {
   // Standard Metal indirect command values
   var indexCount: UInt32
@@ -34,12 +36,12 @@ struct FaceDrawCommand {
   // Additional metadata for sorting/masking (as in the paper)
   var position: SIMD3<Float>  // Position for sorting
   var group: UInt8  // Group for masking (e.g., face direction)
-  var index: UnsafeMutablePointer<UInt32>?  // Pointer to track index in buffer
-
+  var indexPointer: UInt64 = 0  // Store pointer as integer value instead
+  
   init(
     indexCount: UInt32, instanceCount: UInt32, indexStart: UInt32, baseVertex: UInt32,
     baseInstance: UInt32,
-    position: SIMD3<Float>, group: UInt8, index: UnsafeMutablePointer<UInt32>?
+    position: SIMD3<Float>, group: UInt8, index: UInt32
   ) {
     self.indexCount = indexCount
     self.instanceCount = instanceCount
@@ -48,7 +50,7 @@ struct FaceDrawCommand {
     self.baseInstance = baseInstance
     self.position = position
     self.group = group
-    self.index = index
+    self.indexPointer = 0  // Don't store pointer directly
   }
 }
 
@@ -61,26 +63,31 @@ class FacePool {
   private var indexBuffer: MTLBuffer  // Shared index buffer
 
   // Pool management
-   var faceBucketSize: Int  // K in the paper
+  var faceBucketSize: Int  // K in the paper
   private var maxBuckets: Int  // N in the paper
   private var freeBuckets: [Int] = []  // Queue of free buckets
   private var drawCommands: [FaceDrawCommand] = []  // Buffer of draw commands
+  private var commandIndices: [UInt32] = []  // Simple array of command indices instead of pointers
 
   // Effective draw count (for masking)
   private var effectiveDrawCount: Int = 0
+  private let lock = NSLock() // Add thread safety
 
   init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
+    print("Initializing FacePool: bucket size \(faceBucketSize), max buckets \(maxBuckets)")
     self.device = device
     self.faceBucketSize = faceBucketSize
     self.maxBuckets = maxBuckets
 
     // Create face buffer pool
     let faceBufferSize = faceBucketSize * maxBuckets * MemoryLayout<Face>.stride
+    print("Creating face buffer with size: \(faceBufferSize) bytes")
     self.faceBuffer = device.makeBuffer(length: faceBufferSize, options: .storageModeShared)!
 
     // Create indirect command buffer
     let indirectBufferSize =
       maxBuckets * MemoryLayout<MTLDrawIndexedPrimitivesIndirectArguments>.stride
+    print("Creating indirect buffer with size: \(indirectBufferSize) bytes")
     self.indirectBuffer = device.makeBuffer(
       length: indirectBufferSize, options: .storageModeShared)!
 
@@ -97,14 +104,22 @@ class FacePool {
       indices.append(baseVertex + 2)
       indices.append(baseVertex + 3)
     }
+    
+    let indexBufferSize = indices.count * MemoryLayout<UInt16>.stride
+    print("Creating index buffer with \(indices.count) indices, size: \(indexBufferSize) bytes")
     self.indexBuffer = device.makeBuffer(
-      bytes: indices, length: indices.count * MemoryLayout<UInt16>.stride,
-      options: .storageModeShared)!
+      bytes: indices, length: indexBufferSize, options: .storageModeShared)!
 
     // Initialize free buckets
+    print("Initializing \(maxBuckets) free buckets")
     for i in 0..<maxBuckets {
       freeBuckets.append(i)
     }
+    
+    // Initialize command indices array
+    commandIndices = Array(repeating: 0, count: maxBuckets)
+    
+    print("FacePool initialization complete")
   }
 
   func _faceBucketSize() -> Int {
@@ -113,16 +128,21 @@ class FacePool {
 
   // Request a bucket for faces
   func requestBucket(position: SIMD3<Float>, faceGroup: UInt8) -> Int? {
-    guard !freeBuckets.isEmpty else { return nil }
+    lock.lock()
+    defer { lock.unlock() }
+    
+    guard !freeBuckets.isEmpty else {
+      print("WARNING: No free buckets available!")
+      return nil
+    }
 
     let bucketIndex = freeBuckets.removeLast()
     let baseVertex = bucketIndex * faceBucketSize
 
-    // Create index for tracking this command's position
-    let index = UnsafeMutablePointer<UInt32>.allocate(capacity: 1)
-    index.pointee = UInt32(drawCommands.count)
-
-    // Create draw command
+    // No unsafe pointers - just use the index directly
+    let commandIndex = UInt32(drawCommands.count)
+    
+    // Create draw command without unsafe pointers
     let command = FaceDrawCommand(
       indexCount: UInt32(faceBucketSize * 6),  // 6 indices per face (2 triangles)
       instanceCount: 1,
@@ -131,16 +151,29 @@ class FacePool {
       baseInstance: 0,
       position: position,
       group: faceGroup,
-      index: index
+      index: commandIndex
     )
 
     drawCommands.append(command)
+    
+    // Update the command index array
+    if bucketIndex < commandIndices.count {
+      commandIndices[bucketIndex] = commandIndex
+    }
+    
+    if drawCommands.count % 10 == 0 {
+      print("Allocated bucket \(bucketIndex), total commands: \(drawCommands.count), free buckets: \(freeBuckets.count)")
+    }
+    
     return bucketIndex
   }
 
   // Add a face to a bucket
   func addFace(bucketIndex: Int, faceIndex: Int, face: Face) {
-    guard bucketIndex < maxBuckets && faceIndex < faceBucketSize else { return }
+    guard bucketIndex < maxBuckets && faceIndex < faceBucketSize else {
+      print("WARNING: Invalid bucket (\(bucketIndex)) or face index (\(faceIndex))")
+      return
+    }
 
     let offset = (bucketIndex * faceBucketSize + faceIndex) * MemoryLayout<Face>.stride
     let facesPtr = faceBuffer.contents().advanced(by: offset).bindMemory(to: Face.self, capacity: 1)
@@ -149,31 +182,63 @@ class FacePool {
 
   // Release a bucket
   func releaseBucket(commandIndex: UInt32) {
-    guard commandIndex < drawCommands.count else { return }
+    lock.lock()
+    defer { lock.unlock() }
+    
+    guard commandIndex < drawCommands.count else {
+      print("WARNING: Invalid command index \(commandIndex), max is \(drawCommands.count - 1)")
+      return
+    }
 
     let bucketIndex = Int(drawCommands[Int(commandIndex)].baseVertex) / (faceBucketSize * 4)
-    freeBuckets.append(bucketIndex)
-
+    
+    // Add bucket back to free list only if it's a valid index
+    if bucketIndex < maxBuckets {
+      freeBuckets.append(bucketIndex)
+    } else {
+      print("WARNING: Invalid bucket index \(bucketIndex) to free")
+    }
+    
     // Swap with last command and update indices
     let lastIndex = drawCommands.count - 1
-    if commandIndex != lastIndex {
+    if Int(commandIndex) != lastIndex && lastIndex >= 0 {
+      // Move the last command to this position
       drawCommands[Int(commandIndex)] = drawCommands[lastIndex]
-      if let indexPtr = drawCommands[Int(commandIndex)].index {
-        indexPtr.pointee = commandIndex
+      
+      // Update the commandIndices entry for this bucket
+      if bucketIndex < commandIndices.count {
+        commandIndices[bucketIndex] = UInt32.max  // Mark as invalid
+      }
+      
+      // Find which bucket corresponds to the moved command
+      let movedBucketIndex = Int(drawCommands[Int(commandIndex)].baseVertex) / (faceBucketSize * 4)
+      if movedBucketIndex < commandIndices.count {
+        commandIndices[movedBucketIndex] = commandIndex
       }
     }
 
-    // Free the index pointer
-    drawCommands[lastIndex].index?.deallocate()
-
-    drawCommands.removeLast()
+    if !drawCommands.isEmpty {
+      drawCommands.removeLast()
+    }
+    
     if effectiveDrawCount > drawCommands.count {
       effectiveDrawCount = drawCommands.count
+    }
+    
+    if drawCommands.count % 10 == 0 {
+      print("Released bucket \(bucketIndex), remaining commands: \(drawCommands.count), free buckets: \(freeBuckets.count)")
     }
   }
 
   // Mask draw commands based on a predicate function
   func mask(_ predicate: (FaceDrawCommand) -> Bool) {
+    lock.lock()
+    defer { lock.unlock() }
+    
+    guard !drawCommands.isEmpty else {
+      return
+    }
+    
     var frontIndex = 0
     var backIndex = drawCommands.count - 1
 
@@ -190,16 +255,21 @@ class FacePool {
 
       // Swap if needed and update indices
       if frontIndex < backIndex {
+        // Get the bucket indices for both commands
+        let frontBucketIndex = Int(drawCommands[frontIndex].baseVertex) / (faceBucketSize * 4)
+        let backBucketIndex = Int(drawCommands[backIndex].baseVertex) / (faceBucketSize * 4)
+        
+        // Update commandIndices
+        if frontBucketIndex < commandIndices.count {
+          commandIndices[frontBucketIndex] = UInt32(backIndex)
+        }
+        if backBucketIndex < commandIndices.count {
+          commandIndices[backBucketIndex] = UInt32(frontIndex)
+        }
+        
+        // Swap the commands
         drawCommands.swapAt(frontIndex, backIndex)
-
-        // Update the indices in the pointers
-        if let frontPtr = drawCommands[frontIndex].index {
-          frontPtr.pointee = UInt32(frontIndex)
-        }
-        if let backPtr = drawCommands[backIndex].index {
-          backPtr.pointee = UInt32(backIndex)
-        }
-
+        
         frontIndex += 1
         backIndex -= 1
       }
@@ -210,19 +280,42 @@ class FacePool {
 
   // Order the masked portion of draw commands
   func order(_ comparator: (FaceDrawCommand, FaceDrawCommand) -> Bool) {
+    lock.lock()
+    defer { lock.unlock() }
+    
+    guard effectiveDrawCount > 0 else {
+      return
+    }
+    
+    // Extract bucket indices and their command indices before sorting
+    var bucketToCommandIndex = [Int: Int]()
+    for i in 0..<effectiveDrawCount {
+      let bucketIndex = Int(drawCommands[i].baseVertex) / (faceBucketSize * 4)
+      bucketToCommandIndex[bucketIndex] = i
+    }
+    
     // Sort only the effective (masked) portion
     let sortedPortion = drawCommands[0..<effectiveDrawCount].sorted(by: comparator)
     for i in 0..<effectiveDrawCount {
       drawCommands[i] = sortedPortion[i]
-      // Update indices
-      if let indexPtr = drawCommands[i].index {
-        indexPtr.pointee = UInt32(i)
+      
+      // Update the command indices
+      let bucketIndex = Int(drawCommands[i].baseVertex) / (faceBucketSize * 4)
+      if bucketIndex < commandIndices.count {
+        commandIndices[bucketIndex] = UInt32(i)
       }
     }
   }
 
   // Update the indirect buffer with the current draw commands
   func updateIndirectBuffer() {
+    lock.lock()
+    defer { lock.unlock() }
+    
+    guard !drawCommands.isEmpty else {
+      return
+    }
+    
     let commandsPtr = indirectBuffer.contents().bindMemory(
       to: MTLDrawIndexedPrimitivesIndirectArguments.self,
       capacity: drawCommands.count
@@ -242,28 +335,56 @@ class FacePool {
 
   // Draw using the pool
   func draw(commandEncoder: MTLRenderCommandEncoder, maskAndSort: Bool = true) {
+    lock.lock()
+    let drawCount = drawCommands.count
+    lock.unlock()
+    
+    // No draw commands to render
+    if drawCount == 0 {
+      print("No draw commands to render")
+      return
+    }
+    
     // Update indirect buffer before drawing
     updateIndirectBuffer()
 
     // Set vertex and index buffers
     commandEncoder.setVertexBuffer(faceBuffer, offset: 0, index: 0)
     commandEncoder.setFragmentBuffer(faceBuffer, offset: 0, index: 0)
-
-    // Draw the faces with multi-draw-indirect
-    commandEncoder.drawIndexedPrimitives(
-      type: .triangle,
-      indexType: .uint16,
-      indexBuffer: indexBuffer,
-      indexBufferOffset: 0,
-      indirectBuffer: indirectBuffer,
-      indirectBufferOffset: 0
-    )
+    
+    // Use safer, more direct drawing approach for debugging
+    // Draw each bucket's faces directly
+    for i in 0..<drawCount {
+      let cmd = drawCommands[i]
+      
+      // Draw this bucket's faces directly
+      commandEncoder.drawIndexedPrimitives(
+        type: .triangle,
+        indexCount: Int(cmd.indexCount),
+        indexType: .uint16,
+        indexBuffer: indexBuffer,
+        indexBufferOffset: Int(cmd.indexStart) * MemoryLayout<UInt16>.size,
+        instanceCount: Int(cmd.instanceCount),
+        baseVertex: Int(cmd.baseVertex),
+        baseInstance: Int(cmd.baseInstance)
+      )
+    }
+    
+    print("Drew \(drawCount) command buckets")
   }
 
   // Get resources
   func getFaceBuffer() -> MTLBuffer { return faceBuffer }
   func getIndexBuffer() -> MTLBuffer { return indexBuffer }
   func getIndirectBuffer() -> MTLBuffer { return indirectBuffer }
-  func getDrawCount() -> Int { return effectiveDrawCount }
-  func getTotalDrawCount() -> Int { return drawCommands.count }
+  func getDrawCount() -> Int { 
+    lock.lock()
+    defer { lock.unlock() }
+    return effectiveDrawCount 
+  }
+  func getTotalDrawCount() -> Int { 
+    lock.lock()
+    defer { lock.unlock() }
+    return drawCommands.count 
+  }
 }

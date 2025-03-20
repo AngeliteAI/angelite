@@ -2,13 +2,6 @@ import Metal
 import MetalKit
 import simd
 
-// Based on the vertex pooling technique from the paper
-// This is an adaptation for face-based rendering rather than vertex-based
-
-// Each face is represented compactly
-
-// Struct to track buffer processing information
-
 // Store this with each chunk for rendering
 struct ChunkRenderData {
   var position: SIMD3<Int>
@@ -22,13 +15,54 @@ class Renderer: NSObject, MTKViewDelegate {
   let voxelRenderer: VoxelRenderer
   let commandQueue: MTLCommandQueue
 
-  // Chunk data
-  var chunkVoxel: [SIMD3<Int>: VoxelChunk] = [:]
-  var chunkVoxelDirty: [SIMD3<Int>] = []
-  var chunkVoxelGenIdMapping = [Int: SIMD3<Int>]()
-  var chunkRenderData: [SIMD3<Int>: ChunkRenderData] = [:]
-  var chunkMeshDirty: [SIMD3<Int>] = []
-  var chunkMeshGenIdMapping = [Int: SIMD3<Int>]()
+  // Chunk data with thread safety
+  private let chunksLock = NSLock()
+  private var _chunkVoxel: [SIMD3<Int>: VoxelChunk] = [:]
+  private var _chunkVoxelDirty: [SIMD3<Int>] = []
+  private var _chunkVoxelGenIdMapping = [Int: SIMD3<Int>]()
+  private var _chunkRenderData: [SIMD3<Int>: ChunkRenderData] = [:]
+  private var _chunkMeshDirty: [SIMD3<Int>] = []
+  private var _chunkMeshGenIdMapping = [Int: SIMD3<Int>]()
+  
+  // Thread-safe accessors
+  var chunkVoxel: [SIMD3<Int>: VoxelChunk] {
+    get {
+      chunksLock.lock()
+      defer { chunksLock.unlock() }
+      return _chunkVoxel
+    }
+    set {
+      chunksLock.lock()
+      _chunkVoxel = newValue
+      chunksLock.unlock()
+    }
+  }
+  
+  var chunkVoxelDirty: [SIMD3<Int>] {
+    get {
+      chunksLock.lock()
+      defer { chunksLock.unlock() }
+      return _chunkVoxelDirty
+    }
+    set {
+      chunksLock.lock()
+      _chunkVoxelDirty = newValue
+      chunksLock.unlock()
+    }
+  }
+  
+  var chunkMeshDirty: [SIMD3<Int>] {
+    get {
+      chunksLock.lock()
+      defer { chunksLock.unlock() }
+      return _chunkMeshDirty
+    }
+    set {
+      chunksLock.lock()
+      _chunkMeshDirty = newValue
+      chunksLock.unlock()
+    }
+  }
 
   // Camera
   var cameraPosition = SIMD3<Float>(0, 16, 0)
@@ -37,8 +71,15 @@ class Renderer: NSObject, MTKViewDelegate {
 
   // For viewport size
   var viewportSize = CGSize(width: 1, height: 1)
+  
+  // Debugging
+  var frameCount = 0
+  var nextChunkGeneration = 0
+  private var isProcessingChunk = false
+// In the Renderer init method, modify the camera position:
 
-  init(device: MTLDevice) {
+init(device: MTLDevice) {
+    print("Initializing Renderer...")
     self.device = device
     self.commandQueue = device.makeCommandQueue()!
 
@@ -48,36 +89,106 @@ class Renderer: NSObject, MTKViewDelegate {
     self.voxelRenderer = VoxelRenderer(device: device)
 
     super.init()
+    
+    print("Renderer initialized, starting with fewer chunks for debugging")
 
-    // Queue up chunks to generate around origin
-    for x in -5...5 {
-      for y in 0...10 {
-        for z in -5...5 {
+    // Queue up chunks in a more visible area
+    chunksLock.lock()
+    for x in -2...2 {
+      for y in 0...3 {
+        for z in -2...2 {
           let position = SIMD3<Int>(x, y, z)
-          chunkVoxelDirty.append(position)
+          _chunkVoxelDirty.append(position)
         }
       }
     }
+    chunksLock.unlock()
 
+    // Place camera farther back and higher to see more terrain
+    cameraPosition = SIMD3<Float>(5, 20, 15)
     updateViewMatrix()
     updateProjectionMatrix(aspectRatio: 1.0)
-  }
+    print("Initial camera position: \(cameraPosition)")
+    
+    // Print visibility info
+    printVisibilityInfo()
+}
 
+// Add this helper method to the Renderer class
+func printVisibilityInfo() {
+    print("==== VISIBILITY DEBUG INFO ====")
+    print("Camera position: \(cameraPosition)")
+    
+    let visibleGroups = determineVisibleGroups(cameraPos: cameraPosition)
+    print("Visible face groups: \(visibleGroups.sorted())")
+    
+    chunksLock.lock()
+    let chunkCount = _chunkVoxel.count
+    let renderDataCount = _chunkRenderData.count
+    chunksLock.unlock()
+    
+    print("Chunks loaded: \(chunkCount)")
+    print("Chunks with render data: \(renderDataCount)")
+    
+    let drawCommands = voxelRenderer.facePool.getTotalDrawCount()
+    print("Total draw commands: \(drawCommands)")
+    print("==============================")
+}
+
+// Helper function to determine which face groups should be visible
+func determineVisibleGroups(cameraPos: SIMD3<Float>) -> Set<UInt8> {
+    var visibleGroups = Set<UInt8>()
+    
+    // For a simple implementation, we show faces when looking from that direction
+    // Group 0: -X, Group 1: +X, Group 2: -Y, Group 3: +Y, Group 4: -Z, Group 5: +Z
+    if cameraPos.x < 0 { visibleGroups.insert(0) } else { visibleGroups.insert(1) }
+    if cameraPos.y < 0 { visibleGroups.insert(2) } else { visibleGroups.insert(3) }
+    if cameraPos.z < 0 { visibleGroups.insert(4) } else { visibleGroups.insert(5) }
+    
+    return visibleGroups
+}
+
+
+
+// Modify the updateViewMatrix method to look toward terrain
+private func updateViewMatrix() {
+    // Look at a point in the terrain, not just the origin
+    let center = SIMD3<Float>(0, 5, 0)
+    let up = SIMD3<Float>(0, 1, 0)
+
+    // Create view matrix
+    viewMatrix = matrix_look_at(cameraPosition, center, up)
+}
+  
   // MARK: - MTKViewDelegate
 
   func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
     viewportSize = size
-    let aspectRatio = Float(size.width / size.height)
+    
+    // Make sure we have a valid size
+    let width = max(size.width, 1)
+    let height = max(size.height, 1)
+    let aspectRatio = Float(width / height)
+    
     updateProjectionMatrix(aspectRatio: aspectRatio)
+    print("View size changed: \(size), aspect ratio: \(aspectRatio)")
   }
 
+ 
   func draw(in view: MTKView) {
-    guard let drawable = view.currentDrawable,
-      let renderPassDescriptor = view.currentRenderPassDescriptor
-    else { return }
+    guard let drawable = view.currentDrawable else {
+      print("No drawable available")
+      return
+    }
+    
+    guard let renderPassDescriptor = view.currentRenderPassDescriptor else {
+      print("No render pass descriptor available")
+      return
+    }
 
     // Set depth attachment for proper depth testing
     if view.depthStencilPixelFormat == .invalid {
+      print("Setting up depth stencil pixel format")
       view.depthStencilPixelFormat = .depth32Float
       let depthTexDesc = MTLTextureDescriptor.texture2DDescriptor(
         pixelFormat: .depth32Float,
@@ -87,36 +198,54 @@ class Renderer: NSObject, MTKViewDelegate {
       )
       depthTexDesc.usage = [.renderTarget]
       depthTexDesc.storageMode = .private
-      let depthTexture = device.makeTexture(descriptor: depthTexDesc)!
-      renderPassDescriptor.depthAttachment.texture = depthTexture
-      renderPassDescriptor.depthAttachment.loadAction = .clear
-      renderPassDescriptor.depthAttachment.storeAction = .dontCare
-      renderPassDescriptor.depthAttachment.clearDepth = 1.0
+      let depthTexture = device.makeTexture(descriptor: depthTexDesc)
+      if depthTexture != nil {
+        renderPassDescriptor.depthAttachment.texture = depthTexture
+        renderPassDescriptor.depthAttachment.loadAction = .clear
+        renderPassDescriptor.depthAttachment.storeAction = .dontCare
+        renderPassDescriptor.depthAttachment.clearDepth = 1.0
+      }
     }
 
     // Create command buffer
-    guard let commandBuffer = commandQueue.makeCommandBuffer() else { return }
-
-    // Process chunk generation queue
-    let maxChunksPerFrame = 10
-
-    // Generate voxel data
-    for _ in 0..<min(maxChunksPerFrame, chunkVoxelDirty.count) {
-      let position = chunkVoxelDirty.removeLast()
-      generateChunk(commandBuffer: commandBuffer, position: position)
+    guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+      print("Failed to create command buffer")
+      return
     }
 
-    // Generate meshes
-    for _ in 0..<min(maxChunksPerFrame, chunkMeshDirty.count) {
-      let position = chunkMeshDirty.removeLast()
-      if let chunk = chunkVoxel[position] {
-        generateMesh(commandBuffer: commandBuffer, chunk: chunk)
+    frameCount += 1
+    
+    // Process chunk generation queue - only process 1 chunk each 10 frames
+    if frameCount % 10 == 0 && !isProcessingChunk && nextChunkGeneration < chunkVoxelDirty.count {
+      let position = chunkVoxelDirty[nextChunkGeneration]
+      isProcessingChunk = true
+      generateChunk(position: position)
+      nextChunkGeneration += 1
+    }
+    
+    // Generate meshes occasionally
+    if frameCount % 15 == 0 && !isProcessingChunk && !chunkMeshDirty.isEmpty {
+      chunksLock.lock()
+      let position = _chunkMeshDirty.last!
+      let chunk = _chunkVoxel[position]
+      _chunkMeshDirty.removeLast()
+      chunksLock.unlock()
+      
+      if let chunk = chunk {
+        isProcessingChunk = true
+        generateMesh(chunk: chunk)
       }
     }
 
     // Update camera information for rendering
     updateViewMatrix()
     voxelRenderer.updateCamera(position: cameraPosition)
+
+    // Print debug info occasionally
+    if frameCount % 60 == 0 {
+      print("Frame \(frameCount): Camera at \(cameraPosition)")
+      printVisibilityInfo()
+    }
 
     // Create camera data for shaders
     var cameraData = CameraData(
@@ -134,75 +263,105 @@ class Renderer: NSObject, MTKViewDelegate {
     // Present and commit
     commandBuffer.present(drawable)
     commandBuffer.commit()
-  }
+  } 
 
   // MARK: - Chunk Generation
 
-  func generateChunk(commandBuffer: MTLCommandBuffer, position: SIMD3<Int>) {
+  func generateChunk(position: SIMD3<Int>) {
     Task {
-      let (callId, voxelData) = await voxelGenerator.generateVoxels(
-        commandBuffer: commandBuffer,
-        position: position
-      )
+      do {
+        print("Starting voxel generation for position: \(position)")
+        let (callId, voxelData) = await voxelGenerator.generateVoxels(
+          commandBuffer: nil,  // No longer pass the command buffer
+          position: position
+        )
 
-      // Store the mapping
-      self.chunkVoxelGenIdMapping[callId] = position
-
-      // Process the results on the main thread
-      await MainActor.run {
-        guard let voxelData = voxelData,
-          let position = self.chunkVoxelGenIdMapping.removeValue(forKey: callId)
-        else {
-          print("Failed to generate voxel data for call ID \(callId)")
+        print("Voxel generation complete for position: \(position), callId: \(callId)")
+        
+        guard let voxelData = voxelData else {
+          print("Failed to generate voxel data for position: \(position)")
+          self.isProcessingChunk = false
           return
         }
+          
+        // Safe thread handling with MainActor
+        await MainActor.run {
+          chunksLock.withLock {
+          // Store voxel data
+          _chunkVoxel[position] = VoxelChunk(position: position, voxelData: voxelData)
 
-        // Store voxel data
-        self.chunkVoxel[position] = VoxelChunk(position: position, voxelData: voxelData)
-
-        // Queue mesh generation
-        self.chunkMeshDirty.append(position)
+          // Queue mesh generation
+          _chunkMeshDirty.append(position)
+          }
+          
+          // Clean up resources
+          self.voxelGenerator.cleanup(callId: callId)
+          self.isProcessingChunk = false
+          print("Chunk voxel data stored for position: \(position)")
+        }
+      } catch {
+        print("Error in generateChunk: \(error)")
+        self.isProcessingChunk = false
       }
     }
   }
-  func generateMesh(commandBuffer: MTLCommandBuffer, chunk: VoxelChunk) {
+  
+  func generateMesh(chunk: VoxelChunk) {
     // Create a Task to handle the async mesh generation
     Task {
-      let (callId, faces) = await meshGenerator.generateMesh(
-        commandBuffer: commandBuffer,
-        voxelData: chunk.voxelData,
-        position: chunk.position
-      )
+      do {
+        print("Starting mesh generation for position: \(chunk.position)")
+        let (callId, faces) = await meshGenerator.generateMesh(
+          commandBuffer: nil,  // No longer pass the command buffer
+          voxelData: chunk.voxelData,
+          position: chunk.position
+        )
 
-      // Store the mapping
-      self.chunkMeshGenIdMapping[callId] = chunk.position
-
-      // Process the results on the main thread
-      await MainActor.run {
-        guard let position = self.chunkMeshGenIdMapping.removeValue(forKey: callId) else { return }
-
-        // Clean up old mesh if it exists
-        if let oldRenderData = self.chunkRenderData[position] {
-          for index in oldRenderData.commandIndices {
-            self.voxelRenderer.facePool.releaseBucket(commandIndex: index)
+        print("Mesh generation complete for position: \(chunk.position), callId: \(callId)")
+        
+        // Process the results on the main thread
+        await MainActor.run {
+          let position = chunk.position
+          
+          chunksLock.lock()
+          // Clean up old mesh if it exists
+          if let oldRenderData = _chunkRenderData[position] {
+            for index in oldRenderData.commandIndices {
+              self.voxelRenderer.facePool.releaseBucket(commandIndex: index)
+            }
           }
+          chunksLock.unlock()
+
+          guard let faces = faces, !faces.isEmpty else {
+            print("No faces generated for chunk at \(position)")
+            self.isProcessingChunk = false
+            return
+          }
+
+          print("Generated \(faces.count) faces for chunk at \(position)")
+          
+          // Add faces to the renderer
+          let commandIndices = self.voxelRenderer.addChunk(position: position, faceData: faces)
+
+          // Save render data for this chunk
+          chunksLock.lock()
+          _chunkRenderData[position] = ChunkRenderData(
+            position: position, 
+            commandIndices: commandIndices.map { UInt32($0) }
+          )
+          chunksLock.unlock()
+          
+          // Clean up resources
+          self.meshGenerator.cleanup(callId: callId)
+          self.isProcessingChunk = false
         }
-
-        guard let faces = faces, !faces.isEmpty else {
-          // If there are no faces, we can skip adding to the renderer
-          return
-        }
-
-        // Add faces to the renderer
-        let commandIndices = self.voxelRenderer.addChunk(position: position, faceData: faces)
-
-        // Save render data for this chunk
-        let renderData = ChunkRenderData(
-          position: position, commandIndices: commandIndices.map { UInt32($0) })
-        self.chunkRenderData[position] = renderData
+      } catch {
+        print("Error in generateMesh: \(error)")
+        self.isProcessingChunk = false
       }
     }
   }
+  
   // MARK: - Camera Control
 
   func moveCamera(deltaX: Float, deltaY: Float, deltaZ: Float) {
@@ -212,14 +371,6 @@ class Renderer: NSObject, MTKViewDelegate {
     cameraPosition.z += deltaZ
   }
 
-  private func updateViewMatrix() {
-    // Look at the center of the world
-    let center = SIMD3<Float>(0, 0, 0)
-    let up = SIMD3<Float>(0, 1, 0)
-
-    // Create view matrix
-    viewMatrix = matrix_look_at(cameraPosition, center, up)
-  }
 
   private func updateProjectionMatrix(aspectRatio: Float) {
     // Create perspective projection matrix
