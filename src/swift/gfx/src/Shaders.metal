@@ -12,6 +12,10 @@ struct Mesh {
     atomic_uint faceCount;
     atomic_uint indexCount;
 };
+
+uint posToIndex(uint3 pos, uint3 size) {
+    return pos.x + pos.y * size.x + pos.z * size.x * size.y;
+}
 // Direction vectors for the 6 faces (used for neighbor checks)
 constant int3 faceDirections[6] = {
     int3(0, -1, 0), // Bottom
@@ -31,11 +35,6 @@ struct Face {
 };
 
 // Vertex shader input
-struct VertexInput {
-    uint vertexID [[vertex_id]];
-    uint instanceID [[instance_id]];
-};
-
 // Vertex shader output
 struct VertexOutput {
     float4 position [[position]];
@@ -101,16 +100,18 @@ bool isSolid(device const char* chunk, uint3 pos, uint3 size) {
     uint index = posToIndex(pos, size);
     return chunk[index] != 0;
 }
+// Fixed vertex function - moved attributes to the function parameter
 vertex VertexOutput vertexFaceShader(
-    VertexInput in [[stage_in]],
+    uint vertexID [[vertex_id]],
+    uint instanceID [[instance_id]],
     device const Face* faces [[buffer(0)]],
     constant CameraData& camera [[buffer(1)]]
 ) {
     VertexOutput out;
     
     // Each face has 4 vertices
-    uint vertexInFace = in.vertexID % 4;
-    uint faceIndex = in.vertexID / 4;
+    uint vertexInFace = vertexID % 4;
+    uint faceIndex = vertexID / 4;
     
     // Get face data from the buffer
     Face face = faces[faceIndex];
@@ -154,6 +155,7 @@ fragment float4 fragmentFaceShader(
     
     return float4(color, 1.0);
 }
+
 
 // Mesh generation kernel
 kernel void generateMesh(
@@ -201,25 +203,7 @@ kernel void generateMesh(
 }
 
 
-uint posToIndex(uint3 pos, uint3 size) {
-    return pos.x + pos.y * size.x + pos.z * size.x * size.y;
-}
 
-kernel void baseTerrain(
-    device const Generator* generator       [[buffer(0)]],
-    device  char* chunk                [[buffer(1)]],
-    uint3 position                          [[ thread_position_in_grid ]])
-{
-    const uint3 size = generator->size;
-    if (position.z == 3) {
-        // Get the 1D index for this position
-        uint index = posToIndex(position, size);
-        
-        // Mark this position as solid (1) in the chunk data
-        // Assuming chunk data stores 1 for solid voxels and 0 for air
-        chunk[index] = 1;
-    }
-}
 
 
 // Positions for the 8 corners of a cube
@@ -238,48 +222,32 @@ constant int faceCornerIndices[6][4] = {
     {1, 2, 6, 5}  // Right face
 };
 
+// Offsets for each vertex in a face
+// Each face has 4 vertices arranged in a quad
 
-kernel void generateMesh(
-    device const Mesher* mesher [[buffer(0)]],
-    device const char* chunk [[buffer(1)]],
-    device Mesh* mesh [[buffer(2)]],
-    device Face* faces [[buffer(3)]],
-    uint3 position [[ thread_position_in_grid ]])
-{
-    const uint3 size = mesher->size;
-    
-    // Skip positions outside the chunk bounds
+// Colors for debugging (a different color for each face direction)
+
+
+// Utility functions for terrain generation
+kernel void baseTerrain(
+    device const Generator* generator [[buffer(0)]],
+    device char* chunk [[buffer(1)]],
+    uint3 position [[thread_position_in_grid]]
+) {
+    const uint3 size = generator->size;
     if (position.x >= size.x || position.y >= size.y || position.z >= size.z) {
         return;
     }
     
-    // Check if this voxel is solid
-    uint voxelIndex = posToIndex(position, size);
-    bool currentVoxelSolid = chunk[voxelIndex] != 0;
-    
-    // Skip empty voxels - no need to generate faces for them
-    if (!currentVoxelSolid) {
-        return;
-    }
-    
-    // For each face of the cube
-    for (int face = 0; face < 6; face++) {
-        // Check the neighboring voxel in the face direction
-        int3 neighborPos = int3(position) + faceDirections[face];
+    // Simple terrain generation - solid below certain height
+    if (position.y < 8) {
+        // Get the 1D index for this position
+        uint index = position.x + position.y * size.x + position.z * size.x * size.y;
         
-        // If the neighbor is outside the chunk or is empty (air), we need to create a face
-        if (neighborPos.x < 0 || neighborPos.x >= size.x ||
-            neighborPos.y < 0 || neighborPos.y >= size.y ||
-            neighborPos.z < 0 || neighborPos.z >= size.z ||
-            !isSolid(chunk, uint3(neighborPos), size)) {
-            
-            // Get the current face count, then increment it by 4 (for a quad)
-            uint faceOffset = atomic_fetch_add_explicit(&mesh->faceCount, 1, memory_order_relaxed);
-
-            faces[faceOffset] = Face {
-                position,
-                normal: static_cast<uchar>(face)
-            };
-        }
+        // Mark this position as solid
+        chunk[index] = 1;
     }
 }
+
+// Face calculation for mesh generation
+// Mesh generation kernel
