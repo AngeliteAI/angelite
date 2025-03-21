@@ -8,14 +8,14 @@ struct Mesher {
     uint3 size;
 };
 
+uint posToIndex(uint3 pos, uint3 size) {
+    return pos.x + pos.y * size.x + pos.z * size.x * size.y;
+}
+
 struct Mesh {
     atomic_uint faceCount;
     atomic_uint indexCount;
 };
-
-uint posToIndex(uint3 pos, uint3 size) {
-    return pos.x + pos.y * size.x + pos.z * size.x * size.y;
-}
 // Direction vectors for the 6 faces (used for neighbor checks)
 constant int3 faceDirections[6] = {
     int3(0, -1, 0), // Bottom
@@ -33,8 +33,6 @@ struct Face {
     uint3 position;  // Base position of the face
     uchar normal;    // Normal direction (0-5)
 };
-
-// Vertex shader input
 // Vertex shader output
 struct VertexOutput {
     float4 position [[position]];
@@ -49,34 +47,40 @@ struct CameraData {
     float4x4 viewProjection;
 };
 
+// The 8 corners of a cube
+constant float3 cubeVertices[8] = {
+    float3(0, 0, 0),  // 0: bottom southwest (---)
+    float3(1, 0, 0),  // 1: bottom southeast (+--) 
+    float3(1, 1, 0),  // 2: bottom northeast (++-)
+    float3(0, 1, 0),  // 3: bottom northwest (-+-)
+    float3(0, 0, 1),  // 4: top southwest (--+)
+    float3(1, 0, 1),  // 5: top southeast (+-+)
+    float3(1, 1, 1),  // 6: top northeast (+++)
+    float3(0, 1, 1)   // 7: top northwest (-++)
+};
+
+// Indices into cube vertices for each face
+// Adjusted to work with triangulation pattern: 0,1,2,0,2,3
+constant uint faceIndices[6][4] = {
+    {0, 4, 7, 3},  // -X face (west/left): 0→4→7→3
+    {1, 2, 6, 5},  // +X face (east/right): 1→2→6→5
+    {0, 1, 5, 4},  // -Y face (south/front): 0→1→5→4
+    {3, 7, 6, 2},  // +Y face (north/back): 3→7→6→2
+    {0, 3, 2, 1},  // -Z face (bottom): 0→3→2→1
+    {4, 5, 6, 7}   // +Z face (top): 4→5→6→7
+};
+
 // Direction vectors for the 6 face normals
 constant float3 faceNormals[6] = {
-    float3(-1, 0, 0),  // -X
-    float3(1, 0, 0),   // +X
-    float3(0, -1, 0),  // -Y
-    float3(0, 1, 0),   // +Y
-    float3(0, 0, -1),  // -Z
-    float3(0, 0, 1)    // +Z
+    float3(-1, 0, 0),  // -X (0)
+    float3(1, 0, 0),   // +X (1)
+    float3(0, -1, 0),  // -Y (2)
+    float3(0, 1, 0),   // +Y (3)
+    float3(0, 0, -1),  // -Z (4)
+    float3(0, 0, 1)    // +Z (5)
 };
 
-// Offsets for each vertex in a face
-// Each face has 4 vertices arranged in a quad
-constant float3 vertexOffsets[6][4] = {
-    // -X face (0)
-    {float3(0, 0, 0), float3(0, 0, 1), float3(0, 1, 1), float3(0, 1, 0)},
-    // +X face (1)
-    {float3(1, 0, 0), float3(1, 1, 0), float3(1, 1, 1), float3(1, 0, 1)},
-    // -Y face (2)
-    {float3(0, 0, 0), float3(1, 0, 0), float3(1, 0, 1), float3(0, 0, 1)},
-    // +Y face (3)
-    {float3(0, 1, 0), float3(0, 1, 1), float3(1, 1, 1), float3(1, 1, 0)},
-    // -Z face (4)
-    {float3(0, 0, 0), float3(0, 1, 0), float3(1, 1, 0), float3(1, 0, 0)},
-    // +Z face (5)
-    {float3(0, 0, 1), float3(1, 0, 1), float3(1, 1, 1), float3(0, 1, 1)}
-};
-
-// Colors for debugging (a different color for each face direction)
+// Colors for each face direction
 constant float3 faceColors[6] = {
     float3(1.0, 0.0, 0.0),  // -X: Red
     float3(0.0, 1.0, 0.0),  // +X: Green
@@ -100,40 +104,45 @@ bool isSolid(device const char* chunk, uint3 pos, uint3 size) {
     uint index = posToIndex(pos, size);
     return chunk[index] != 0;
 }
-// Fixed vertex function - moved attributes to the function parameter
+
+// Map from triangle index to face vertex index (for triangulation)
+constant uint triToQuadVertexIndex[6] = {0, 1, 2, 0, 2, 3};
+
 vertex VertexOutput vertexFaceShader(
     uint vertexID [[vertex_id]],
-    uint instanceID [[instance_id]],
     device const Face* faces [[buffer(0)]],
-    constant CameraData& camera [[buffer(1)]]
+    constant CameraData& camera [[buffer(1)]],
+    uint baseVertex [[base_vertex]]
 ) {
     VertexOutput out;
     
-    // Each face has 4 vertices
-    uint vertexInFace = vertexID % 4;
-    uint faceIndex = vertexID / 4;
+    // Get face index from base vertex (each face has 4 vertices)
+    uint faceIndex = baseVertex / 4;
     
-    // Get face data from the buffer
+    // Get vertex index within the face (0-3)
+    uint vertexInFace = vertexID;
+    
+    // Get the face data
     Face face = faces[faceIndex];
+    uint normalDirection = face.normal % 6;
     
-    // Get normal direction
-    uint normalIndex = face.normal % 6;
-    float3 normal = faceNormals[normalIndex];
+    // Get the correct vertex for this face direction
+    uint cubeVertexIndex = faceIndices[normalDirection][vertexInFace];
     
-    // Calculate world position by adding the vertex offset to the face position
+    // Get the base position and vertex offset
     float3 basePosition = float3(face.position);
-    float3 vertexOffset = vertexOffsets[normalIndex][vertexInFace];
-    float3 worldPosition = basePosition + vertexOffset * CUBE_SCALE;
+    float3 vertexOffset = cubeVertices[cubeVertexIndex];
+    
+    // Calculate world position
+    float3 worldPosition = basePosition + vertexOffset;
     
     // Transform to clip space
     out.position = camera.viewProjection * float4(worldPosition, 1.0);
     
     // Pass attributes to fragment shader
     out.worldPos = worldPosition;
-    out.normal = normal;
-    
-    // Set color based on face normal (for debugging) with simple ambient occlusion
-    out.color = faceColors[normalIndex] * aoFactors[vertexInFace];
+    out.normal = faceNormals[normalDirection];
+    out.color = faceColors[normalDirection];
     
     return out;
 }
@@ -143,19 +152,18 @@ fragment float4 fragmentFaceShader(
     constant CameraData& camera [[buffer(1)]]
 ) {
     // Simple diffuse lighting
-    float3 lightDir = normalize(float3(0.5, 1.0, 0.3));
+    float3 lightDir = normalize(float3(0.5, 0.8, 0.3));
     float diffuse = max(0.0, dot(in.normal, lightDir));
     
     // Add ambient lighting
-    float ambient = 0.2;
-    float lighting = ambient + diffuse * 0.8;
+    float ambient = 0.3;
+    float lighting = ambient + diffuse * 0.7;
     
-    // Final color
+    // Final color with better minecraft-style lighting
     float3 color = in.color * lighting;
     
     return float4(color, 1.0);
 }
-
 
 // Mesh generation kernel
 kernel void generateMesh(
@@ -203,7 +211,21 @@ kernel void generateMesh(
 }
 
 
-
+kernel void baseTerrain(
+    device const Generator* generator       [[buffer(0)]],
+    device  char* chunk                [[buffer(1)]],
+    uint3 position                          [[ thread_position_in_grid ]])
+{
+    const uint3 size = generator->size;
+    if (position.z == 3) {
+        // Get the 1D index for this position
+        uint index = posToIndex(position, size);
+        
+        // Mark this position as solid (1) in the chunk data
+        // Assuming chunk data stores 1 for solid voxels and 0 for air
+        chunk[index] = 1;
+    }
+}
 
 
 // Positions for the 8 corners of a cube
@@ -222,32 +244,3 @@ constant int faceCornerIndices[6][4] = {
     {1, 2, 6, 5}  // Right face
 };
 
-// Offsets for each vertex in a face
-// Each face has 4 vertices arranged in a quad
-
-// Colors for debugging (a different color for each face direction)
-
-
-// Utility functions for terrain generation
-kernel void baseTerrain(
-    device const Generator* generator [[buffer(0)]],
-    device char* chunk [[buffer(1)]],
-    uint3 position [[thread_position_in_grid]]
-) {
-    const uint3 size = generator->size;
-    if (position.x >= size.x || position.y >= size.y || position.z >= size.z) {
-        return;
-    }
-    
-    // Simple terrain generation - solid below certain height
-    if (position.y < 8) {
-        // Get the 1D index for this position
-        uint index = position.x + position.y * size.x + position.z * size.x * size.y;
-        
-        // Mark this position as solid
-        chunk[index] = 1;
-    }
-}
-
-// Face calculation for mesh generation
-// Mesh generation kernel

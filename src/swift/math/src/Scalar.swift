@@ -3,21 +3,17 @@
 
 import Foundation
 
-public let PI: Float = 3.14159265358979323846
-public let DEG_TO_RAD: Float = PI / 180.0
-public let RAD_TO_DEG: Float = 180.0 / PI
-
 @_silgen_name("rad")
-public func rad(degree: Float) -> Float
+public func rad(deg: Float) -> Float
 
 @_silgen_name("deg")
-public func deg(radian: Float) -> Float
+public func deg(rad: Float) -> Float
 
 @_silgen_name("lerp")
 public func lerp(a: Float, b: Float, t: Float) -> Float
 
 @_silgen_name("clamp")
-public func clamp(val: Float, minima: Float, maxima: Float) -> Float
+public func clamp(val: Float, min: Float, max: Float) -> Float
 
 @_silgen_name("step")
 public func step(edge: Float, x: Float) -> Float

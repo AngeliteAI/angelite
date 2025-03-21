@@ -507,15 +507,18 @@ impl Script<'_> {
 
 impl Build {
     fn source_files(&self, path: impl AsRef<Path>) -> Result<Vec<PathBuf>, String> {
-        self.source.find_files(&self.container, path.as_ref())
+        dbg!(self.source.find_files(&self.container, path.as_ref()))
     }
 
     fn create(cfg: Config) -> Build {
+        let existed;
         let container = {
             let name = format!("Build_BindAI_{:?}_{:?}", cfg.source.lang, cfg.target.lang);
             let mut container = if Docker::container_exists(&name) {
+                existed = true;
                 Docker::container(&name)
             } else {
+                existed = false;
                 let container_config = container_config()
                     .working_dir(env::current_dir().unwrap().to_str().unwrap())
                     .cmd(vec!["sleep", "300"]);
@@ -549,7 +552,7 @@ impl Build {
 
         stages.sort_by_key(|x| x.priority());
 
-        if false {
+        if !existed {
             for stage in stages {
                 dbg!("Installing stage...");
                 let CommandResult {
@@ -627,7 +630,7 @@ pub fn bind(cfg: Config) {
     };
     loop {
         let src_file_paths = match build.source_files(&src_dir) {
-            Ok(x) => x,
+            Ok(x) => dbg!(x),
             Err(e) => {
                 (error_act)(e);
                 continue;

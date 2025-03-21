@@ -7,26 +7,20 @@ let package = Package(
         .macOS(.v10_15)
     ],
     products: [
-        .library(
-            name: "Base",
-            targets: ["Base"]
+        .executable(
+            name: "Gfx",
+            targets: ["Gfx"]
         ),
     ],
     dependencies: [],
     targets: [
+        // Graphics library
         .target(
-            name: "Base",
-            dependencies: ["Angelite"],
-            path: "src/swift/base",
-            exclude: []
-        ),
-        .target(
-            name: "Angelite",
+            name: "Gfx",
             dependencies: [],
-            path: "src/c",
-            publicHeadersPath: "include",
-            cSettings: [
-                .headerSearchPath(".")
+            path: "src/swift/gfx/src",
+            resources: [
+                .process("Shaders.metal")
             ]
         ),
     ]

@@ -66,8 +66,9 @@ class Renderer: NSObject, MTKViewDelegate {
 
   // Camera
   var cameraPosition = SIMD3<Float>(0, 16, 0)
-  var viewMatrix = matrix_identity_float4x4
-  var projectionMatrix = matrix_identity_float4x4
+  var rotation = qId();
+  var viewMatrix = m4Id();
+  var projectionMatrix = m4Id();
 
   // For viewport size
   var viewportSize = CGSize(width: 1, height: 1)
@@ -105,7 +106,7 @@ init(device: MTLDevice) {
     chunksLock.unlock()
 
     // Place camera farther back and higher to see more terrain
-    cameraPosition = SIMD3<Float>(5, 20, 15)
+    cameraPosition = SIMD3<Float>(10, 10, 10)
     updateViewMatrix()
     updateProjectionMatrix(aspectRatio: 1.0)
     print("Initial camera position: \(cameraPosition)")
@@ -153,7 +154,7 @@ func determineVisibleGroups(cameraPos: SIMD3<Float>) -> Set<UInt8> {
 // Modify the updateViewMatrix method to look toward terrain
 private func updateViewMatrix() {
     // Look at a point in the terrain, not just the origin
-    let center = SIMD3<Float>(0, 5, 0)
+    let center = SIMD3<Float>(0, 0, 3)
     let up = SIMD3<Float>(0, 1, 0)
 
     // Create view matrix
@@ -379,7 +380,7 @@ func generateMesh(chunk: VoxelChunk) {
     let near: Float = 0.1
     let far: Float = 1000.0
 
-    projectionMatrix = matrix_perspective_right_hand(fov, aspectRatio, near, far)
+    projectionMatrix = m4Persp(fov, aspectRatio, near, far) 
   }
 }
 
@@ -388,49 +389,4 @@ func generateMesh(chunk: VoxelChunk) {
 struct CameraData {
   var position: SIMD3<Float>
   var viewProjection: float4x4
-}
-
-// MARK: - Matrix Utility Functions
-
-// Create a perspective projection matrix
-func matrix_perspective_right_hand(
-  _ fovyRadians: Float,
-  _ aspect: Float,
-  _ nearZ: Float,
-  _ farZ: Float
-) -> float4x4 {
-  let ys = 1 / tanf(fovyRadians * 0.5)
-  let xs = ys / aspect
-  let zs = farZ / (nearZ - farZ)
-
-  return float4x4(
-    SIMD4<Float>(xs, 0, 0, 0),
-    SIMD4<Float>(0, ys, 0, 0),
-    SIMD4<Float>(0, 0, zs, -1),
-    SIMD4<Float>(0, 0, zs * nearZ, 0)
-  )
-}
-
-// Create a look-at matrix
-func matrix_look_at(
-  _ eye: SIMD3<Float>,
-  _ center: SIMD3<Float>,
-  _ up: SIMD3<Float>
-) -> float4x4 {
-  let z = normalize(eye - center)
-  let x = normalize(cross(up, z))
-  let y = normalize(cross(z, x))
-
-  let t = SIMD3<Float>(
-    -dot(x, eye),
-    -dot(y, eye),
-    -dot(z, eye)
-  )
-
-  return float4x4(
-    SIMD4<Float>(x.x, y.x, z.x, 0),
-    SIMD4<Float>(x.y, y.y, z.y, 0),
-    SIMD4<Float>(x.z, y.z, z.z, 0),
-    SIMD4<Float>(t.x, t.y, t.z, 1)
-  )
 }
