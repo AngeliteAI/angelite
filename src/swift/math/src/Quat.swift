@@ -106,6 +106,15 @@ public func qRotY(angle: Float) -> Quat
 @_silgen_name("qRotZ")
 public func qRotZ(angle: Float) -> Quat
 
+@_silgen_name("qRoll")
+public func qRoll(quat: Quat) -> Float
+
+@_silgen_name("qPitch")
+public func qPitch(quat: Quat) -> Float
+
+@_silgen_name("qYaw")
+public func qYaw(quat: Quat) -> Float
+
 @_silgen_name("qLookAt")
 public func qLookAt(dir: Vec3, up: Vec3) -> Quat
 
@@ -117,4 +126,3 @@ public func qGetVec(q: Quat) -> Vec3
 
 @_silgen_name("qGetW")
 public func qGetW(q: Quat) -> Float
-```

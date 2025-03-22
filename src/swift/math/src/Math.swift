@@ -10,4 +10,3 @@ public let INV_PI: Float = 0.31830988618379067154
 public let DEG_TO_RAD: Float = 0.01745329251994329577
 public let RAD_TO_DEG: Float = 57.2957795130823208768
 public let EPSILON: Float = 0.000001
-```

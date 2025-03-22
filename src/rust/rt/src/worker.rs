@@ -136,9 +136,7 @@ pub async fn select_worker() -> &'static Worker {
 async fn all_workers() -> impl Iterator<Item = &'static Worker> + Clone {
     //SAFETY ?????????????
     let workers = WORKERS.all_values().collect::<Vec<_>>();
-    workers
-        .into_iter()
-
+    workers.into_iter()
 }
 
 async fn steal_work() -> Option<Work> {

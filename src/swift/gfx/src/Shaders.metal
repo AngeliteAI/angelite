@@ -43,7 +43,6 @@ struct VertexOutput {
 
 // Camera data
 struct CameraData {
-    float3 position;
     float4x4 viewProjection;
 };
 
@@ -108,6 +107,21 @@ bool isSolid(device const char* chunk, uint3 pos, uint3 size) {
 // Map from triangle index to face vertex index (for triangulation)
 constant uint triToQuadVertexIndex[6] = {0, 1, 2, 0, 2, 3};
 
+constant float3 vertexOffsets[6][4] = {
+    // -X face (0)
+    {float3(0, 0, 0), float3(0, 0, 1), float3(0, 1, 1), float3(0, 1, 0)},
+    // +X face (1)
+    {float3(1, 0, 0), float3(1, 1, 0), float3(1, 1, 1), float3(1, 0, 1)},
+    // -Y face (2)
+    {float3(0, 0, 0), float3(1, 0, 0), float3(1, 0, 1), float3(0, 0, 1)},
+    // +Y face (3)
+    {float3(0, 1, 0), float3(0, 1, 1), float3(1, 1, 1), float3(1, 1, 0)},
+    // -Z face (4)
+    {float3(0, 0, 0), float3(0, 1, 0), float3(1, 1, 0), float3(1, 0, 0)},
+    // +Z face (5)
+    {float3(0, 0, 1), float3(1, 0, 1), float3(1, 1, 1), float3(0, 1, 1)}
+};
+
 vertex VertexOutput vertexFaceShader(
     uint vertexID [[vertex_id]],
     device const Face* faces [[buffer(0)]],
@@ -116,33 +130,31 @@ vertex VertexOutput vertexFaceShader(
 ) {
     VertexOutput out;
     
-    // Get face index from base vertex (each face has 4 vertices)
-    uint faceIndex = baseVertex / 4;
+    // Each face has 4 vertices
+    uint vertexInFace = vertexID % 4;
+    uint faceIndex = vertexID / 4;
     
-    // Get vertex index within the face (0-3)
-    uint vertexInFace = vertexID;
-    
-    // Get the face data
+    // Get face data from the buffer
     Face face = faces[faceIndex];
-    uint normalDirection = face.normal % 6;
     
-    // Get the correct vertex for this face direction
-    uint cubeVertexIndex = faceIndices[normalDirection][vertexInFace];
+    // Get normal direction
+    uint normalIndex = face.normal % 6;
+    float3 normal = faceNormals[normalIndex];
     
-    // Get the base position and vertex offset
+    // Calculate world position by adding the vertex offset to the face position
     float3 basePosition = float3(face.position);
-    float3 vertexOffset = cubeVertices[cubeVertexIndex];
-    
-    // Calculate world position
-    float3 worldPosition = basePosition + vertexOffset;
+    float3 vertexOffset = vertexOffsets[normalIndex][vertexInFace];
+    float3 worldPosition = basePosition + vertexOffset * CUBE_SCALE;
     
     // Transform to clip space
     out.position = camera.viewProjection * float4(worldPosition, 1.0);
     
     // Pass attributes to fragment shader
     out.worldPos = worldPosition;
-    out.normal = faceNormals[normalDirection];
-    out.color = faceColors[normalDirection];
+    out.normal = normal;
+    
+    // Set color based on face normal (for debugging) with simple ambient occlusion
+    out.color = faceColors[normalIndex] * aoFactors[vertexInFace];
     
     return out;
 }
@@ -195,10 +207,11 @@ kernel void generateMesh(
         int3 neighborPos = int3(position) + faceDirections[faceDir];
         
         // If the neighbor is outside the chunk or is empty, we need to create a face
-        if (neighborPos.x < 0 || neighborPos.x >= size.x ||
-            neighborPos.y < 0 || neighborPos.y >= size.y ||
-            neighborPos.z < 0 || neighborPos.z >= size.z ||
-            !isSolid(chunk, uint3(neighborPos), size)) {
+        bool inBounds = 
+            neighborPos.x >= 0 && neighborPos.x < size.x &&
+            neighborPos.y >= 0 && neighborPos.y < size.y &&
+            neighborPos.z >= 0 && neighborPos.z < size.z;
+        if (inBounds && isSolid(chunk, uint3(neighborPos), size)) {
             
             // Get the current face count, then increment it
             uint faceIndex = atomic_fetch_add_explicit(faceCount, 1, memory_order_relaxed);

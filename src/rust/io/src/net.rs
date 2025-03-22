@@ -5,17 +5,15 @@ use std::{
     ptr,
 };
 
-use crate::bindings::io;
-use crate::bindings::socket as ffi;
-
-use crate::ffi::CheckOperation;
+use io_sys::socket as ffi;
+use io_sys::types as ty;
 
 use super::OperationId;
 
 macro_rules! socket_struct {
     ($name:ident) => {
         pub struct $name {
-            handle: *mut ffi::Socket,
+            handle: *mut Socket,
             indicator: Pin<Box<u64>>,
         }
 
@@ -43,7 +41,7 @@ macro_rules! socket_create {
                     let mut op = Box::pin(0u64);
                     let optr = &mut *op.as_mut() as *mut u64;
                     let socket = unsafe {
-                        ffi::create(ipv6, $ty, optr as *mut _).expect("failed to allocate socket")
+                        ffi::create(ipv6, $ty, optr as *mut _)
                     };
                     let handle = super::Handle::$out(unsafe { $out::from_raw(socket) });
                     let handle_ref = &handle;
@@ -60,13 +58,13 @@ macro_rules! socket_create {
     };
 }
 
-socket_create!(Socket, io::SockType::Dgram);
-socket_create!(Listener, io::SockType::Stream);
-socket_create!(Connection, io::SockType::Stream);
+socket_create!(Socket, ty::SockType::Dgram);
+socket_create!(Listener, ty::SockType::Stream);
+socket_create!(Connection, ty::SockType::Stream);
 
-raw!(Socket, *mut ffi::Socket);
-raw!(Listener, *mut ffi::Socket);
-raw!(Connection, *mut ffi::Socket);
+raw!(Socket, *mut ty::Socket);
+raw!(Listener, *mut ty::Socket);
+raw!(Connection, *mut ty::Socket);
 
 impl Socket {
     pub fn latest_operation_id(&self) -> OperationId {

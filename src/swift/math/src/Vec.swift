@@ -242,4 +242,3 @@ public func v2FromV3(v: Vec3) -> Vec2
 
 @_silgen_name("v3FromV4")
 public func v3FromV4(v: Vec4) -> Vec3
-```

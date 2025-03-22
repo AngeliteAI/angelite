@@ -1,47 +1,12 @@
+// Vector math library implementation based on scalar functions
+// No std dependency, using hardware acceleration where possible
+
 const scalar = @import("scalar.zig");
-const std = @import("std");
+const vec = @import("../include/vec.zig");
 
-pub const Vec2 = extern struct {
-    x: f32,
-    y: f32,
-
-    pub inline fn asArray(self: *const Vec2) *const [2]f32 {
-        return @ptrCast(&self.x);
-    }
-
-    pub inline fn fromArray(arr: *const [2]f32) Vec2 {
-        return @bitCast(arr.*);
-    }
-};
-
-pub const Vec3 = extern struct {
-    x: f32,
-    y: f32,
-    z: f32,
-
-    pub inline fn asArray(self: *const Vec3) *const [3]f32 {
-        return @ptrCast(&self.x);
-    }
-
-    pub inline fn fromArray(arr: *const [3]f32) Vec3 {
-        return @bitCast(arr.*);
-    }
-};
-
-pub const Vec4 = extern struct {
-    x: f32,
-    y: f32,
-    z: f32,
-    w: f32,
-
-    pub inline fn asArray(self: *const Vec4) *const [4]f32 {
-        return @ptrCast(&self.x);
-    }
-
-    pub inline fn fromArray(arr: *const [4]f32) Vec4 {
-        return @bitCast(arr.*);
-    }
-};
+pub const Vec2 = vec.Vec2;
+pub const Vec3 = vec.Vec3;
+pub const Vec4 = vec.Vec4;
 
 // Generic vector operations for any dimension
 fn VecOp(comptime dim: usize) type {
@@ -211,271 +176,271 @@ fn VecOp(comptime dim: usize) type {
 }
 
 // Constructor functions
-pub fn v2(x: f32, y: f32) Vec2 {
-    return .{ .x = x, .y = y };
+pub export fn v2(x: f32, y: f32) Vec2 {
+    return Vec2{ .x = x, .y = y };
 }
 
-pub fn v3(x: f32, y: f32, z: f32) Vec3 {
-    return .{ .x = x, .y = y, .z = z };
+pub export fn v3(x: f32, y: f32, z: f32) Vec3 {
+    return Vec3{ .x = x, .y = y, .z = z };
 }
 
-pub fn v4(x: f32, y: f32, z: f32, w: f32) Vec4 {
-    return .{ .x = x, .y = y, .z = z, .w = w };
+pub export fn v4(x: f32, y: f32, z: f32, w: f32) Vec4 {
+    return Vec4{ .x = x, .y = y, .z = z, .w = w };
 }
 
 // Common constants
-pub fn v2Zero() Vec2 {
+pub export fn v2Zero() Vec2 {
     return VecOp(2).zero();
 }
 
-pub fn v3Zero() Vec3 {
+pub export fn v3Zero() Vec3 {
     return VecOp(3).zero();
 }
 
-pub fn v4Zero() Vec4 {
+pub export fn v4Zero() Vec4 {
     return VecOp(4).zero();
 }
 
-pub fn v2One() Vec2 {
+pub export fn v2One() Vec2 {
     return VecOp(2).one();
 }
 
-pub fn v3One() Vec3 {
+pub export fn v3One() Vec3 {
     return VecOp(3).one();
 }
 
-pub fn v4One() Vec4 {
+pub export fn v4One() Vec4 {
     return VecOp(4).one();
 }
 
 // Unit vectors
-pub fn v2X() Vec2 {
+pub export fn v2X() Vec2 {
     return VecOp(2).unit(0);
 }
 
-pub fn v2Y() Vec2 {
+pub export fn v2Y() Vec2 {
     return VecOp(2).unit(1);
 }
 
-pub fn v3X() Vec3 {
+pub export fn v3X() Vec3 {
     return VecOp(3).unit(0);
 }
 
-pub fn v3Y() Vec3 {
+pub export fn v3Y() Vec3 {
     return VecOp(3).unit(1);
 }
 
-pub fn v3Z() Vec3 {
+pub export fn v3Z() Vec3 {
     return VecOp(3).unit(2);
 }
 
-pub fn v4X() Vec4 {
+pub export fn v4X() Vec4 {
     return VecOp(4).unit(0);
 }
 
-pub fn v4Y() Vec4 {
+pub export fn v4Y() Vec4 {
     return VecOp(4).unit(1);
 }
 
-pub fn v4Z() Vec4 {
+pub export fn v4Z() Vec4 {
     return VecOp(4).unit(2);
 }
 
-pub fn v4W() Vec4 {
+pub export fn v4W() Vec4 {
     return VecOp(4).unit(3);
 }
 
 // Basic operations
-pub fn v2Add(a: Vec2, b: Vec2) Vec2 {
+pub export fn v2Add(a: Vec2, b: Vec2) Vec2 {
     return VecOp(2).add(a, b);
 }
 
-pub fn v3Add(a: Vec3, b: Vec3) Vec3 {
+pub export fn v3Add(a: Vec3, b: Vec3) Vec3 {
     return VecOp(3).add(a, b);
 }
 
-pub fn v4Add(a: Vec4, b: Vec4) Vec4 {
+pub export fn v4Add(a: Vec4, b: Vec4) Vec4 {
     return VecOp(4).add(a, b);
 }
 
-pub fn v2Sub(a: Vec2, b: Vec2) Vec2 {
+pub export fn v2Sub(a: Vec2, b: Vec2) Vec2 {
     return VecOp(2).sub(a, b);
 }
 
-pub fn v3Sub(a: Vec3, b: Vec3) Vec3 {
+pub export fn v3Sub(a: Vec3, b: Vec3) Vec3 {
     return VecOp(3).sub(a, b);
 }
 
-pub fn v4Sub(a: Vec4, b: Vec4) Vec4 {
+pub export fn v4Sub(a: Vec4, b: Vec4) Vec4 {
     return VecOp(4).sub(a, b);
 }
 
-pub fn v2Mul(a: Vec2, b: Vec2) Vec2 {
+pub export fn v2Mul(a: Vec2, b: Vec2) Vec2 {
     return VecOp(2).mul(a, b);
 }
 
-pub fn v3Mul(a: Vec3, b: Vec3) Vec3 {
+pub export fn v3Mul(a: Vec3, b: Vec3) Vec3 {
     return VecOp(3).mul(a, b);
 }
 
-pub fn v4Mul(a: Vec4, b: Vec4) Vec4 {
+pub export fn v4Mul(a: Vec4, b: Vec4) Vec4 {
     return VecOp(4).mul(a, b);
 }
 
-pub fn v2Div(a: Vec2, b: Vec2) Vec2 {
+pub export fn v2Div(a: Vec2, b: Vec2) Vec2 {
     return VecOp(2).div(a, b);
 }
 
-pub fn v3Div(a: Vec3, b: Vec3) Vec3 {
+pub export fn v3Div(a: Vec3, b: Vec3) Vec3 {
     return VecOp(3).div(a, b);
 }
 
-pub fn v4Div(a: Vec4, b: Vec4) Vec4 {
+pub export fn v4Div(a: Vec4, b: Vec4) Vec4 {
     return VecOp(4).div(a, b);
 }
 
-pub fn v2Scale(v: Vec2, s: f32) Vec2 {
+pub export fn v2Scale(v: Vec2, s: f32) Vec2 {
     return VecOp(2).scale(v, s);
 }
 
-pub fn v3Scale(v: Vec3, s: f32) Vec3 {
+pub export fn v3Scale(v: Vec3, s: f32) Vec3 {
     return VecOp(3).scale(v, s);
 }
 
-pub fn v4Scale(v: Vec4, s: f32) Vec4 {
+pub export fn v4Scale(v: Vec4, s: f32) Vec4 {
     return VecOp(4).scale(v, s);
 }
 
-pub fn v2Neg(v: Vec2) Vec2 {
+pub export fn v2Neg(v: Vec2) Vec2 {
     return VecOp(2).neg(v);
 }
 
-pub fn v3Neg(v: Vec3) Vec3 {
+pub export fn v3Neg(v: Vec3) Vec3 {
     return VecOp(3).neg(v);
 }
 
-pub fn v4Neg(v: Vec4) Vec4 {
+pub export fn v4Neg(v: Vec4) Vec4 {
     return VecOp(4).neg(v);
 }
 
 // Vector operations
-pub fn v2Dot(a: Vec2, b: Vec2) f32 {
+pub export fn v2Dot(a: Vec2, b: Vec2) f32 {
     return VecOp(2).dot(a, b);
 }
 
-pub fn v3Dot(a: Vec3, b: Vec3) f32 {
+pub export fn v3Dot(a: Vec3, b: Vec3) f32 {
     return VecOp(3).dot(a, b);
 }
 
-pub fn v4Dot(a: Vec4, b: Vec4) f32 {
+pub export fn v4Dot(a: Vec4, b: Vec4) f32 {
     return VecOp(4).dot(a, b);
 }
 
-pub fn v3Cross(a: Vec3, b: Vec3) Vec3 {
-    return .{
+pub export fn v3Cross(a: Vec3, b: Vec3) Vec3 {
+    return Vec3{
         .x = a.y * b.z - a.z * b.y,
         .y = a.z * b.x - a.x * b.z,
         .z = a.x * b.y - a.y * b.x,
     };
 }
 
-pub fn v2Len(v: Vec2) f32 {
+pub export fn v2Len(v: Vec2) f32 {
     return VecOp(2).len(v);
 }
 
-pub fn v3Len(v: Vec3) f32 {
+pub export fn v3Len(v: Vec3) f32 {
     return VecOp(3).len(v);
 }
 
-pub fn v4Len(v: Vec4) f32 {
+pub export fn v4Len(v: Vec4) f32 {
     return VecOp(4).len(v);
 }
 
-pub fn v2Len2(v: Vec2) f32 {
+pub export fn v2Len2(v: Vec2) f32 {
     return VecOp(2).len2(v);
 }
 
-pub fn v3Len2(v: Vec3) f32 {
+pub export fn v3Len2(v: Vec3) f32 {
     return VecOp(3).len2(v);
 }
 
-pub fn v4Len2(v: Vec4) f32 {
+pub export fn v4Len2(v: Vec4) f32 {
     return VecOp(4).len2(v);
 }
 
-pub fn v2Dist(a: Vec2, b: Vec2) f32 {
+pub export fn v2Dist(a: Vec2, b: Vec2) f32 {
     return VecOp(2).dist(a, b);
 }
 
-pub fn v3Dist(a: Vec3, b: Vec3) f32 {
+pub export fn v3Dist(a: Vec3, b: Vec3) f32 {
     return VecOp(3).dist(a, b);
 }
 
-pub fn v4Dist(a: Vec4, b: Vec4) f32 {
+pub export fn v4Dist(a: Vec4, b: Vec4) f32 {
     return VecOp(4).dist(a, b);
 }
 
-pub fn v2Dist2(a: Vec2, b: Vec2) f32 {
+pub export fn v2Dist2(a: Vec2, b: Vec2) f32 {
     return VecOp(2).dist2(a, b);
 }
 
-pub fn v3Dist2(a: Vec3, b: Vec3) f32 {
+pub export fn v3Dist2(a: Vec3, b: Vec3) f32 {
     return VecOp(3).dist2(a, b);
 }
 
-pub fn v4Dist2(a: Vec4, b: Vec4) f32 {
+pub export fn v4Dist2(a: Vec4, b: Vec4) f32 {
     return VecOp(4).dist2(a, b);
 }
 
-pub fn v2Norm(v: Vec2) Vec2 {
+pub export fn v2Norm(v: Vec2) Vec2 {
     return VecOp(2).norm(v);
 }
 
-pub fn v3Norm(v: Vec3) Vec3 {
+pub export fn v3Norm(v: Vec3) Vec3 {
     return VecOp(3).norm(v);
 }
 
-pub fn v4Norm(v: Vec4) Vec4 {
+pub export fn v4Norm(v: Vec4) Vec4 {
     return VecOp(4).norm(v);
 }
 
 // Interpolation and comparison
-pub fn v2Lerp(a: Vec2, b: Vec2, t: f32) Vec2 {
+pub export fn v2Lerp(a: Vec2, b: Vec2, t: f32) Vec2 {
     return VecOp(2).lerp(a, b, t);
 }
 
-pub fn v3Lerp(a: Vec3, b: Vec3, t: f32) Vec3 {
+pub export fn v3Lerp(a: Vec3, b: Vec3, t: f32) Vec3 {
     return VecOp(3).lerp(a, b, t);
 }
 
-pub fn v4Lerp(a: Vec4, b: Vec4, t: f32) Vec4 {
+pub export fn v4Lerp(a: Vec4, b: Vec4, t: f32) Vec4 {
     return VecOp(4).lerp(a, b, t);
 }
 
-pub fn v2Eq(a: Vec2, b: Vec2, eps: f32) bool {
+pub export fn v2Eq(a: Vec2, b: Vec2, eps: f32) bool {
     return VecOp(2).eq(a, b, eps);
 }
 
-pub fn v3Eq(a: Vec3, b: Vec3, eps: f32) bool {
+pub export fn v3Eq(a: Vec3, b: Vec3, eps: f32) bool {
     return VecOp(3).eq(a, b, eps);
 }
 
-pub fn v4Eq(a: Vec4, b: Vec4, eps: f32) bool {
+pub export fn v4Eq(a: Vec4, b: Vec4, eps: f32) bool {
     return VecOp(4).eq(a, b, eps);
 }
 
 // Reflection and refraction
-pub fn v2Reflect(v: Vec2, n: Vec2) Vec2 {
+pub export fn v2Reflect(v: Vec2, n: Vec2) Vec2 {
     const dot2 = v2Dot(v, n) * 2.0;
     return v2Sub(v, v2Scale(n, dot2));
 }
 
-pub fn v3Reflect(v: Vec3, n: Vec3) Vec3 {
+pub export fn v3Reflect(v: Vec3, n: Vec3) Vec3 {
     const dot2 = v3Dot(v, n) * 2.0;
     return v3Sub(v, v3Scale(n, dot2));
 }
 
-pub fn v3Refract(v: Vec3, n: Vec3, eta: f32) Vec3 {
+pub export fn v3Refract(v: Vec3, n: Vec3, eta: f32) Vec3 {
     const dot = v3Dot(v, n);
     const k = 1.0 - eta * eta * (1.0 - dot * dot);
 
@@ -487,18 +452,18 @@ pub fn v3Refract(v: Vec3, n: Vec3, eta: f32) Vec3 {
 }
 
 // Type conversions
-pub fn v3FromV2(v: Vec2, z: f32) Vec3 {
-    return .{ .x = v.x, .y = v.y, .z = z };
+pub export fn v3FromV2(v: Vec2, z: f32) Vec3 {
+    return Vec3{ .x = v.x, .y = v.y, .z = z };
 }
 
-pub fn v4FromV3(v: Vec3, w: f32) Vec4 {
-    return .{ .x = v.x, .y = v.y, .z = v.z, .w = w };
+pub export fn v4FromV3(v: Vec3, w: f32) Vec4 {
+    return Vec4{ .x = v.x, .y = v.y, .z = v.z, .w = w };
 }
 
-pub fn v2FromV3(v: Vec3) Vec2 {
-    return .{ .x = v.x, .y = v.y };
+pub export fn v2FromV3(v: Vec3) Vec2 {
+    return Vec2{ .x = v.x, .y = v.y };
 }
 
-pub fn v3FromV4(v: Vec4) Vec3 {
-    return .{ .x = v.x, .y = v.y, .z = v.z };
+pub export fn v3FromV4(v: Vec4) Vec3 {
+    return Vec3{ .x = v.x, .y = v.y, .z = v.z };
 }

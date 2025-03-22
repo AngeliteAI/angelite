@@ -9,16 +9,7 @@ use docker::{CommandResult, Container, Docker, Image, container_config};
 use gemini::{GeminiClient, GeminiError};
 use serde::Deserialize;
 use std::{
-    cell::{OnceCell, RefCell, UnsafeCell},
-    collections::HashMap,
-    env, fs,
-    ops::{ControlFlow, Coroutine, CoroutineState},
-    path::{Path, PathBuf},
-    pin::{Pin, pin},
-    rc::Rc,
-    sync::{Arc, OnceLock},
-    thread,
-    time::{Duration, SystemTime},
+    cell::{OnceCell, RefCell, UnsafeCell}, collections::HashMap, env, fs, ops::{ControlFlow, Coroutine, CoroutineState}, os::unix::process::ExitStatusExt, path::{Path, PathBuf}, pin::{pin, Pin}, process::Command, rc::Rc, sync::{Arc, OnceLock}, thread::{self, current}, time::{Duration, SystemTime}
 };
 
 mod container;
@@ -76,35 +67,47 @@ pub enum Language {
     Swift,
 }
 
-pub struct Library {
-    pub dir: PathBuf,
-    pub lang: Language,
+pub struct Output {
+    pub lib_path: PathBuf,
+    pub crate_name: String,
 }
 
+#[derive(Clone)]
 pub struct Config {
-    pub source: Library,
-    pub deps: Vec<Library>,
-    pub target: Library,
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub external_prompt: Option<String>,
 }
 
 static CTX: OnceLock<Context> = OnceLock::new();
 
 pub struct Gemini {
-    client: GeminiClient,
+    client: RefCell<GeminiClient>,
+    temperature: f32,
     system: String,
+}
+impl Gemini {
+    fn client(temperature: f32) -> GeminiClient {
+        GeminiClient::new("gemini-2.0-flash-thinking-exp")
+            .with_temperature(temperature)
+            .with_api_key(&*env::var("GEMINI_API_KEY").unwrap())
+    }
 }
 
 pub trait ResponseCoroutine =
     std::ops::Coroutine<(), Yield = Result<String, GeminiError>, Return = Result<(), GeminiError>>;
 impl Model for Gemini {
-    fn new(system: String) -> Self {
-        let client = GeminiClient::new("gemini-2.0-flash")
-            .with_temperature(0.8)
-            .with_api_key(&*env::var("GEMINI_API_KEY").unwrap());
-
-        Self { client, system }
+    fn new(system: String, temperature: f32) -> Self {
+        Self {
+            client: Self::client(temperature).into(),
+            temperature,
+            system,
+        }
     }
 
+    fn temp(&self) -> f32 {
+        self.temperature
+    }
     fn respond(&self, prompt: String) -> Pin<Box<dyn ResponseCoroutine + '_>> {
         // Clone what we need for the coroutine
         let prompt_clone = prompt;
@@ -120,7 +123,9 @@ impl Model for Gemini {
 
                 loop {
                     // Get a streaming coroutine for this attempt
-                    let mut stream_coroutine = client.generate_content_streaming(&prompt_clone);
+                    let mut stream_coroutine = client
+                        .borrow_mut()
+                        .generate_content_streaming(&prompt_clone);
                     let mut pinned = unsafe { Pin::new_unchecked(&mut *stream_coroutine) };
 
                     // Track any errors during streaming
@@ -191,13 +196,18 @@ impl Model for Gemini {
             },
         )
     }
+    fn change(&self, temp: f32) {
+        *self.client.borrow_mut() = Self::client(temp as f32);
+    }
 }
 ///Provides AI responses
 pub trait Model {
-    fn new(system: String) -> Self
+    fn new(system: String, temperature: f32) -> Self
     where
         Self: Sized;
     fn respond(&self, prompt: String) -> Pin<Box<dyn ResponseCoroutine + '_>>;
+    fn change(&self, temp: f32);
+    fn temp(&self) -> f32;
 }
 
 pub struct Prompter<M: Model> {
@@ -211,7 +221,7 @@ impl<M: Model> Prompter<M> {
     fn generate_bindings(
         &self,
         c_abi: &[(PathBuf, String)],
-        bind_dir: &PathBuf,
+        injection: &str,
         target_guidelines: &str,
         input_lang: &Language,
         output_lang: &Language,
@@ -232,13 +242,25 @@ impl<M: Model> Prompter<M> {
             // Run the first part of generation
             let mut prompt = String::new();
 
+            let mut temp = self.model.temp();
+
             let mut prompt = String::new();
             prompt.push_str(BINDING_GUIDELINES);
             prompt.push_str("\n\n# Binding target guidelines\n\n");
             prompt.push_str(target_guidelines);
             prompt.push_str("\n\n# Generation parameters\n");
-            prompt.push_str(&format!("Input Language: {input_lang:?}\nOutput Language: {output_lang:?}\nBinding Directory: {bind_dir:?}\n\n"));
+            prompt.push_str(&format!("Current temperature: {temp}\n"));
+            prompt.push_str(&format!("Input Language: {input_lang:?}\nOutput Language: {output_lang:?}\n\n"));
             prompt.push_str(&format!("# C-abi input\n\n{c_abi:?}\n\n"));
+            
+            if !injection.is_empty() {
+                prompt.push_str(&format!(
+                    "# Compiler output:\n```\n{injection}\n```\n\n"
+                ));
+            }
+            else {
+                prompt.push_str("# No compiler output provided\n");
+            }
 
             if !buffer_critique.is_empty() {
                 prompt.push_str(&format!(
@@ -269,7 +291,7 @@ impl<M: Model> Prompter<M> {
                         }
                         CoroutineState::Yielded(yielded) => {
                             let yielded = yielded.unwrap();
-                            println!("{yielded}");
+                            println!("cargo::warning={yielded}");
                             buffer_main += &yielded;
                         }
                     }
@@ -277,9 +299,52 @@ impl<M: Model> Prompter<M> {
                 println!("out");
 
                 buffer = buffer_main.clone();
-                println!("\n\n\n\n CRITIQUE \n\n\n\n");
 
                 let prompt = format!(
+                    "You are a specialized code binding evaluator. Your task is to assess if generated code bindings match the provided style guide with extreme precision.
+When evaluating the code:
+
+IMPORTANT: Output a number, and only a number, one number with no other symbols, including code (THERE SHOULD BE NO CODE OR WORDS OR ANYTHING).
+Just output a number between 0 and 100 that represents how closely the code follows the binding guidelines (a percentage, but without the %)
+
+Everything below this line is the bind guidelines you were asked to use:
+````
+{BINDING_GUIDELINES}
+{target_guidelines}
+````
+
+Here is compiler output:
+{injection}
+
+Everything below this line is the code you were asked to evaluate:
+
+{buffer_main}"
+                );
+
+                let mut eval_coroutine = pin!(self.model.respond(prompt));
+
+                let mut buffer_eval = String::new();
+
+                while let CoroutineState::Yielded(yielded) = eval_coroutine.as_mut().resume(()) {
+                    buffer_eval += &yielded.unwrap();
+                }
+
+                dbg!(&buffer_eval, &buffer_critique);
+
+                println!("cargo::warning=\n\n\n\n EVAL \n\n\n\n");
+                let critical = 85;
+                println!(
+                    "cargo::warning=\n\nVALUE: {}\nCRITICAL THRESHOLD: {critical}\n",
+                    buffer_eval
+                );
+                let val = buffer_eval.trim().parse::<usize>().unwrap();
+
+                yes = val >= critical;
+
+                if !yes {
+                    println!("\n\n\n\n CRITIQUE \n\n\n\n");
+
+                    let prompt = format!(
                     "You are a specialized code binding evaluator. Your task is to assess if generated code bindings match the provided style guide with extreme precision.
 When evaluating the code:
 
@@ -287,57 +352,72 @@ Categorize each guideline as either \"critical\" or \"non-critical\" based on im
 Consider a binding successful only if 100% of critical guidelines and at least 95% of non-critical guidelines are met
 Focus on style conformance, not functionality
 Be aware the code may be incomplete as it's being generated in real-time
+IMPORTANT: Do not output code! You are being asked to create a categorized list of critiques. Only output your list of critiques, and nothing else. Do not output anything else.
 
+Everything below this line is the bind guidelines you were asked to use:
 {BINDING_GUIDELINES}
 {target_guidelines}
+
+Here is compiler output:
+{injection}
+
+Everything below this line is the code you were asked to evaluate:
+
+{buffer_main}"
+                );
+
+                    let mut critique_coroutine = pin!(self.model.respond(prompt));
+
+                    while let CoroutineState::Yielded(yielded) =
+                        critique_coroutine.as_mut().resume(())
+                    {
+                        let yielded = yielded.unwrap();
+                        println!("cargo::warning={yielded}");
+                        buffer_critique += &yielded;
+                    }
+
+                    let prompt = format!(
+                    "You are a specialized bind generator. You failed to provide code that met the critical threshold of {critical}, instead, your code scored {val}. You have currently been set to temperature {temp} and are being asked to provide a new temperature to try. Only output a temperature between 0.0 - 1.0 where 0.0 is very strict and 1.0 is very creative. Do not output anything else.
+
+Here are the binding guidelines you were asked to use:
+{BINDING_GUIDELINES}
+{target_guidelines}
+
+Here is compiler output:
+{injection}
+
+Here is the critique about your code:
+{buffer_critique}
 
 Here is the current code:
 
 {buffer_main}"
                 );
 
-                let mut critique_coroutine = pin!(self.model.respond(prompt));
+                    let mut temp_coroutine = pin!(self.model.respond(prompt));
 
-                buffer_critique = buffer_critique.replace(YES, "").replace(NO, "");
-                while let CoroutineState::Yielded(yielded) = critique_coroutine.as_mut().resume(())
-                {
-                    buffer_critique += &yielded.unwrap();
+                    let mut buffer_temp = String::new();
+
+                    while let CoroutineState::Yielded(yielded) = temp_coroutine.as_mut().resume(())
+                    {
+                        buffer_temp += &yielded.unwrap();
+                    }
+
+                    temp = buffer_temp.trim().parse::<f32>().unwrap();
+                    self.model.change(temp);
+                    println!("cargo::warning=Changed temperature to {}", temp);
+
+                    continue;
                 }
 
-                let prompt = format!(
-                    "You are a specialized code binding evaluator. Your task is to assess if generated code bindings match the provided style guide with extreme precision.
-When evaluating the code:
-
-Output a number, and only a number, one number with no other symbols, between 0 and 100 that represents how closely the code follows the binding guidelines (a percentage, but without the %)
-
-{BINDING_GUIDELINES}
-{target_guidelines}
-
-Here is the current code:
-
-{buffer_main}"
-                );
-
-                let mut critique_coroutine = pin!(self.model.respond(prompt));
-
-                let mut buffer_eval = String::new();
-
-                while let CoroutineState::Yielded(yielded) = critique_coroutine.as_mut().resume(())
-                {
-                    buffer_eval += &yielded.unwrap();
-                }
-
-                dbg!(&buffer_eval, &buffer_critique);
-
-                yes = buffer_eval.trim().parse::<usize>().unwrap() > 90;
-
-                if yes && !ready {
+                if !ready {
                     break 'outer buffer;
                 }
             }
         }
     }
 }
+
 ///Interprets AI responses
 pub struct Interpreter<M: Model> {
     model: Rc<M>,
@@ -376,6 +456,8 @@ pub trait Stage {
 }
 
 pub trait Provider {
+    fn language() -> Language where Self: Sized;
+    fn derive() -> Self where Self: Sized;
     fn setup(&self) -> Vec<Arc<dyn Stage>>;
     fn file_ext(&self) -> &'static str;
     fn find_files(&self, container: &Container, path: &Path) -> Result<Vec<PathBuf>, String> {
@@ -403,8 +485,12 @@ pub trait Provider {
 }
 
 pub trait Compiler: Provider {
-    fn compile(&self, container: &Container, path: &Path) -> Result<String, String>;
+    fn compile(&self, pkg: &str, path: &Path) -> Result<String, String>;
     fn guidelines(&self) -> &'static str;
+}
+
+pub trait Applicator: Compiler {
+    fn apply(&self, output: &Output, bindings: String);
 }
 
 pub struct Zig;
@@ -423,8 +509,130 @@ impl Provider for Zig {
     fn file_ext(&self) -> &'static str {
         "zig"
     }
+    
+    fn language() -> Language where Self: Sized {
+    Language::Zig
+    }
+    
+    fn derive() -> Self where Self: Sized {
+    Zig
+    }
 }
 
+pub struct Rust;
+
+pub struct RustInstall;
+
+impl Stage for RustInstall {
+    fn installation<'a>(&self, container: &'a Container) -> Script<'a> {
+        container.inject(include_str!("install_rust.sh").to_owned())
+    }
+}
+impl Provider for Rust {
+    fn setup(&self) -> Vec<Arc<dyn Stage>> {
+        vec![Arc::new(RustInstall)]
+    }
+    fn file_ext(&self) -> &'static str {
+        "rs"
+    }
+    
+    fn language() -> Language where Self: Sized {
+    Language::Rust
+    }
+    
+    fn derive() -> Self where Self: Sized {
+    Rust
+    }
+}
+impl Compiler for Rust {
+    fn compile(&self, pkg: &str, path: &Path) -> Result<String, String> {
+        match Command::new("cargo").args(&["build", "--release", "--package", &pkg]).current_dir(path).output() {
+            Ok(out) => if out.status.success() {
+Ok(String::from_utf8_lossy(&out.stdout).to_string())
+            }  else {
+Err(String::from_utf8_lossy(&out.stderr).to_string())
+            },
+            Err(err) => panic!("{err:?}"),
+        }
+    }
+
+    fn guidelines(&self) -> &'static str {
+        include_str!("generate_bindings_rust.prompt")
+    }
+}
+
+impl Applicator for Rust {
+    fn apply(&self, output: &Output, bindings: String) {
+    let sys_name = format!("{}-sys", output.crate_name);
+    let _ = Command::new("rm")
+        .args(["-rf", &sys_name])
+        .current_dir(&output.lib_path)
+        .output();
+    let _ = Command::new("cargo")
+        .args(["new", "--lib", &sys_name])
+        .current_dir(&output.lib_path)
+        .output();
+    println!("cargo::warning={:?}", &bindings);
+    // Split the bindings by ```rust markers
+    let code_blocks: Vec<&str> = bindings.split("```rust").collect();
+    println!("cargo::warning={:?}", &code_blocks);
+    // Create a map to store path -> code mappings
+    let mut path_code_map: HashMap<PathBuf, String> = HashMap::new();
+    
+    // Process each code block - skip the first element as it's likely empty or contains non-code text
+    for block in code_blocks.iter().skip(1) {
+        // Find the end of the code block
+        if let Some(end_index) = block.find("```") {
+            let full_block = &block[..end_index].trim();
+            let mut lines = full_block.lines();
+            
+            // The first line might be a path or a comment containing a path
+            if let Some(first_line) = lines.next() {
+                let path_str = if first_line.trim().starts_with("//") {
+                    // Extract path from comment
+                    first_line.trim().trim_start_matches("//").trim()
+                } else {
+                    // Might be a direct path
+                    first_line.trim()
+                };
+                
+                // Check if this looks like a valid path
+                if path_str.contains("/") || path_str.contains(".") {
+                    // This is likely a path
+                    let rel_path = PathBuf::from(path_str);
+                    
+                    // The rest of the lines are the code
+                    let code = lines.collect::<Vec<&str>>().join("\n");
+                    
+                    // Store in our map
+                    path_code_map.insert(rel_path.clone(), code.clone());
+                    
+                } else {
+                    // No path found, but we still have code
+                    println!("cargo::warning=Code block without path information: {}", first_line);
+                }
+            }
+        }
+    }
+    
+    // Now write each code block to its respective file
+    for (rel_path, code) in path_code_map.iter() {
+        // Construct the full path
+        let full_path = output.lib_path.join(&sys_name).join(rel_path);
+        
+        // Create parent directories if needed
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent).expect("Failed to create directory structure");
+        }
+        
+        // Write the code to the file
+        fs::write(&full_path, code).expect("Failed to write to file");
+        println!("cargo::warning=Written code to {}", rel_path.display());
+    
+    }
+}
+
+}
 pub struct Swift;
 pub struct SwiftInstall;
 
@@ -444,12 +652,20 @@ impl Provider for Swift {
     fn file_ext(&self) -> &'static str {
         "swift"
     }
+    
+    fn language() -> Language where Self: Sized {
+    Language::Swift
+    }
+    
+    fn derive() -> Self where Self: Sized {
+    Swift
+    }
 }
 
 impl Compiler for Swift {
-    fn compile(&self, container: &Container, path: &Path) -> Result<String, String> {
+    fn compile(&self, pkg: &str, path: &Path) -> Result<String, String> {
         let mut args = vec!["swiftc".to_owned()];
-        let files = self
+        /*let files = self
             .find_files(container, path)
             .unwrap()
             .into_iter()
@@ -458,7 +674,9 @@ impl Compiler for Swift {
         args.extend(files);
         args.push("-parse-as-library".to_owned());
         args.push("-o Hello".to_owned());
-        let ret = dbg!(container.exec(&args).unwrap());
+        let ret = dbg!(container.exec(&args).unwrap());*/
+        let files = todo!();
+        let ret = todo!();
         match ret {
             CommandResult {
                 success: true,
@@ -510,10 +728,10 @@ impl Build {
         dbg!(self.source.find_files(&self.container, path.as_ref()))
     }
 
-    fn create(cfg: Config) -> Build {
+    fn create(src_lang: Language, dst_lang: Language) -> Build {
         let existed;
         let container = {
-            let name = format!("Build_BindAI_{:?}_{:?}", cfg.source.lang, cfg.target.lang);
+            let name = format!("Build_BindAI_{:?}_{:?}", src_lang, dst_lang);
             let mut container = if Docker::container_exists(&name) {
                 existed = true;
                 Docker::container(&name)
@@ -535,15 +753,16 @@ impl Build {
             container
         };
 
-        let source = Arc::new(match cfg.source.lang {
+        let source = Arc::new(match src_lang {
             Language::Zig => Zig,
             _ => todo!(),
         }) as Arc<dyn Provider>;
 
-        let target = Arc::new(match cfg.target.lang {
-            Language::Swift => Swift,
+        let target = match dst_lang {
+            Language::Swift => Arc::new(Swift) as Arc<dyn Compiler>,
+            Language::Rust => Arc::new(Rust) as Arc<dyn Compiler>,
             _ => todo!(),
-        }) as Arc<dyn Compiler>;
+        };
 
         let mut stages = vec![];
 
@@ -592,27 +811,17 @@ impl Build {
             .expect("failed to mount and copy host data");
     }
 
-    fn compile(&self, container_path: impl AsRef<Path>) -> Result<String, String> {
-        self.target
-            .compile(&self.container, container_path.as_ref())
-    }
 }
 
-pub fn bind(cfg: Config) {
+pub fn bind<Source: Provider, Target: Compiler>(cfg: &Config) -> String {
     let Config {
-        target: Library {
-            lang: target_lang, ..
-        },
-        source: Library {
-            lang: source_lang, ..
-        },
-        ..
+        source: src_dir,
+        target: bind_dir,
+    ..
     } = cfg;
 
-    let src_dir = cfg.source.dir.clone();
-    let bind_dir = cfg.target.dir.clone();
-    let build = Build::create(cfg);
-    let model = Rc::new(Gemini::new("".to_owned()));
+    let build = Build::create(Source::language(), Target::language());
+    let model = Rc::new(Gemini::new("".to_owned(), 0.5));
     let interpreter = Interpreter::from_model(model.clone());
     let prompter = Prompter::from_model(model.clone());
     let error_act = |err| match interpreter.error_interpret(err) {
@@ -642,32 +851,42 @@ pub fn bind(cfg: Config) {
             src_files.push((path.to_owned(), fs::read_to_string(&path).unwrap()));
         }
 
-        let bindings_raw = prompter.generate_bindings(
+        //temporarily disable compile/looping unction
+        break prompter.generate_bindings(
             &src_files,
-            &bind_dir.clone(),
+          &  cfg.external_prompt.clone().unwrap_or_default(),
             build.target.guidelines(),
-            &source_lang,
-            &target_lang,
+            &Source::language(),
+            &Target::language(),
         );
 
-        let expected_language = format!("```{target_lang:?}").to_lowercase();
-        let bindings = bindings_raw
-            .split_terminator(&expected_language)
-            .skip(1)
-            .map(|x| x.trim_matches('`').trim())
-            .map(|x| (PathBuf::from(x.split_whitespace().nth(1).unwrap()), x));
 
-        for (path, contents) in bindings {
-            dbg!(&path);
-            fs::write(&path, contents);
-            build.include(path);
-        }
+        //match build.compile(&bind_dir) {
+        //    Ok(out) => todo!(),
+        //    Err(err) => {
+        //        error_act(err);
+        //        continue;
+        //    }
+        //}
+    }
+}
 
-        match build.compile(&bind_dir) {
-            Ok(out) => todo!(),
+pub fn bind_and_verify<Source: Provider, Target: Applicator>(cfg: &Config, output: &Output) {
+    let mut buffer = None;
+    loop {
+        let bindings = bind::<Source, Target>(&Config {
+            external_prompt: buffer.clone(),
+            ..cfg.clone()
+        });
+        let target = Target::derive();
+        target.apply(&output, bindings.clone());
+        match target.compile( &output.crate_name, &output.lib_path) {
+            Ok(out) => {
+                break;
+            }
             Err(err) => {
-                error_act(err);
-                continue;
+                println!("\n\n\n{:?}\n\n\n", err);
+                buffer = Some(format!("These bindings\n```{bindings}```\n were deemed acceptable by the guidelines, but generated these compiler errors:\n```{err}```\nPlease fix the bindings as provided and improve upon them based on compiler feedback"));
             }
         }
     }

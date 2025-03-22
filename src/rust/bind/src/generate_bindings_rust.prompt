@@ -1,0 +1,917 @@
+# Rust *-sys FFI Bindings Generator
+
+This comprehensive guide focuses on creating manual Rust FFI bindings for any language that exposes a C ABI interface. The output should be a complete Rust *-sys crate following Rust's idioms and conventions, with all bindings written by hand without any automated tools.
+
+## Key Principles
+
+- Create bindings ONLY for the public interface defined in header files or exported symbols
+- Never use automated binding generators (bindgen, etc.)
+- Manually craft all FFI declarations
+- Follow Rust naming conventions while preserving original function behavior
+- Structure code using Rust's module system with relative paths
+- Properly declare modules using `mod` statements
+
+## Crate Structure
+
+A proper manually-created Rust *-sys crate should have the following structure. **All paths are relative to the root directory containing Cargo.toml**:
+
+```
+example-sys/                    # Root directory
+├── Cargo.toml                  # Package manifest
+├── src/                        # Source directory
+│   ├── lib.rs                  # Main entry point, re-exports
+│   ├── types.rs                # Shared types
+│   ├── constants.rs            # Constants and static values
+│   ├── module1.rs              # Functions grouped by component
+│   ├── module2.rs              # Functions grouped by component
+│   ├── io/                     # Subdirectory for IO functionality
+│   │   ├── mod.rs              # Module entry point that re-exports submodules
+│   │   ├── file.rs             # File-related IO functions
+│   │   └── network.rs          # Network-related IO functions
+│   └── graphics/               # Subdirectory for graphics functionality 
+│       └── mod.rs              # Or can use the directory/mod.rs pattern
+```
+
+**CRITICAL: Module Declaration Requirements**
+
+You MUST declare each module in its parent module with a `mod` statement. Without these declarations, the Rust compiler won't see your modules even if the files are in the correct locations.
+
+For example:
+
+```rust
+// In ./src/lib.rs
+// These declarations tell Rust about the modules
+mod types;        // Refers to src/types.rs
+mod constants;    // Refers to src/constants.rs
+mod io;           // Refers to either src/io.rs or src/io/mod.rs
+mod module1;      // Refers to src/module1.rs
+mod module2;      // Refers to src/module2.rs
+mod graphics;     // Refers to src/graphics/mod.rs
+
+// In ./src/io/mod.rs
+// These declarations tell Rust about the submodules
+mod file;         // Refers to src/io/file.rs
+mod network;      // Refers to src/io/network.rs
+
+// In ./src/graphics/mod.rs
+// Declare any submodules here
+```
+
+After declaring modules with `mod` statements, you can then re-export their contents with `pub use` if desired:
+
+```rust
+// In ./src/lib.rs - re-export all the modules' contents
+pub use types::*;
+pub use constants::*;
+pub use io::*;
+pub use module1::*;
+pub use module2::*;
+pub use graphics::*;
+
+// In ./src/io/mod.rs - re-export submodules' contents
+pub use file::*;
+pub use network::*;
+```
+
+## File Contents and Organization
+
+### 1. Cargo.toml
+
+```toml
+[package]
+name = "example-sys"
+version = "0.1.0"
+edition = "2021"
+links = "example" # The name of the native library being linked
+authors = ["Your Name <your.email@example.com>"]
+description = "Raw FFI bindings to the example C library"
+repository = "https://github.com/yourusername/example-sys"
+license = "MIT OR Apache-2.0"
+categories = ["external-ffi-bindings"]
+keywords = ["ffi", "sys"]
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+pkg-config = "0.3" # Optional: for locating native libraries
+
+[features]
+default = []
+# Enable if the library should be dynamically linked
+dynamic = []
+# Enable for additional library components
+component_x = []
+```
+
+### 2. lib.rs
+
+```rust
+//! Raw FFI bindings to the example C library.
+//!
+//! This crate provides raw bindings to the example C library,
+//! exposing the original C API through a Rust interface.
+
+// Export libc for convenience
+pub use libc;
+
+// CRITICAL: Declare all modules with mod statements
+mod constants;
+mod types;
+mod core;
+mod utils;
+
+// Re-export everything from submodules
+pub use constants::*;
+pub use types::*;
+pub use core::*;
+pub use utils::*;
+
+// Optional build metadata
+/// Get the version of the library this crate was compiled against
+pub fn version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+```
+
+### 3. Module Structure
+
+Each module should focus on one logical component of the bound library:
+
+```rust
+// core.rs
+//! Core functionality of the example library
+
+use libc::{c_int, c_float, c_void, size_t};
+use crate::types::{Point, Context};
+
+#[link(name = "example")]
+extern "C" {
+    pub fn example_initialize(flags: c_int) -> *mut Context;
+    pub fn example_shutdown(ctx: *mut Context);
+    pub fn example_process_data(data: *mut c_void, size: size_t) -> c_int;
+}
+```
+
+### 4. Module with Submodules
+
+Here's how to set up a module with submodules:
+
+```rust
+// io/mod.rs
+//! Input/Output functionality
+
+// CRITICAL: Declare submodules
+mod file;
+mod network;
+
+// Re-export important items
+pub use file::{FileHandle, file_open, file_close, file_read, file_write};
+pub use network::{NetworkHandle, network_connect, network_disconnect};
+
+// Common types and functions for IO subsystem
+use libc::{c_int, c_char};
+
+#[link(name = "example")]
+extern "C" {
+    pub fn io_initialize() -> c_int;
+    pub fn io_shutdown();
+}
+```
+
+## Rust Naming Conventions
+
+When converting from C to Rust, follow these naming conventions:
+
+| Item Type       | C Style              | Rust Style               | Example                        |
+|-----------------|----------------------|--------------------------|---------------------------------|
+| Functions       | `snake_case`         | `snake_case`             | `do_something`                 |
+| Types/Structs   | Varies               | `PascalCase`             | `MyStruct`                     |
+| Enum Types      | Varies               | `PascalCase`             | `ColorType`                    |
+| Enum Variants   | `SCREAMING_CASE`     | `PascalCase`             | `Red`, `Blue`, `DeepPurple`    |
+| Constants       | `SCREAMING_CASE`     | `SCREAMING_CASE`         | `MAX_SIZE`                     |
+| Modules         | N/A                  | `snake_case`             | `geometry_utils`               |
+| Fields          | Varies               | `snake_case`             | `item_count`                   |
+| Global Variables| Varies               | `SCREAMING_CASE`         | `GLOBAL_COUNTER`               |
+
+**CRITICAL: Always use PascalCase for enum variants, even if they are SCREAMING_CASE in C.**
+
+## Type Mappings
+
+| C Type         | Rust Type                      | Notes                              |
+|----------------|--------------------------------|------------------------------------|
+| `void`         | `()`                           |                                    |
+| `bool`         | `bool`                         |                                    |
+| `char`         | `c_char` / `i8`                |                                    |
+| `unsigned char`| `c_uchar` / `u8`               |                                    |
+| `short`        | `c_short` / `i16`              |                                    |
+| `unsigned short`| `c_ushort` / `u16`            |                                    |
+| `int`          | `c_int` / `i32`                |                                    |
+| `unsigned int` | `c_uint` / `u32`               |                                    |
+| `long`         | `c_long`                       | Platform-dependent                 |
+| `unsigned long`| `c_ulong`                      | Platform-dependent                 |
+| `long long`    | `c_longlong` / `i64`           |                                    |
+| `unsigned long long` | `c_ulonglong` / `u64`    |                                    |
+| `size_t`       | `size_t` / `usize`             |                                    |
+| `float`        | `c_float` / `f32`              |                                    |
+| `double`       | `c_double` / `f64`             |                                    |
+| `char*`        | `*mut c_char` / `*const c_char`| For C strings                      |
+| `void*`        | `*mut c_void` / `*const c_void`| For opaque pointers                |
+| `T*`           | `*mut T` / `*const T`          | For pointers to specific types     |
+| `struct T`     | `struct T`                     | Must match memory layout           |
+| `enum E`       | `enum E` / `c_int`             | Use `#[repr(C)]` for enums         |
+| `function*`    | `extern "C" fn(Args...) -> Ret`| For function pointers              |
+
+## Advanced Type Mappings
+
+### Fixed-Size Arrays
+
+```rust
+// C: float matrix[4][4];
+#[repr(C)]
+pub struct Matrix {
+    pub data: [[c_float; 4]; 4],
+}
+```
+
+### Flexible Array Members
+
+```rust
+// C: struct Buffer { size_t len; char data[]; }
+#[repr(C)]
+pub struct Buffer {
+    pub len: size_t,
+    pub data: [c_char; 0], // Flexible array member
+}
+```
+
+### Function Pointers with Context
+
+```rust
+// C: typedef void (*callback_t)(void* context, int data);
+pub type Callback = Option<unsafe extern "C" fn(context: *mut c_void, data: c_int)>;
+```
+
+## Struct Definitions
+
+### Basic Struct
+
+```rust
+// types.rs
+
+use libc::{c_int, c_float};
+
+/// Represents a 2D point
+#[repr(C)]
+pub struct Point {
+    pub x: c_float,
+    pub y: c_float,
+}
+
+/// Represents a rectangle
+#[repr(C)]
+pub struct Rectangle {
+    pub x: c_float,
+    pub y: c_float,
+    pub width: c_float,
+    pub height: c_float,
+}
+```
+
+### Opaque Types
+
+```rust
+// types.rs
+
+/// An opaque handle to a context
+#[repr(C)]
+pub struct Context {
+    _private: [u8; 0],  // Zero-sized field prevents instantiation
+}
+
+/// An opaque handle to a resource
+#[repr(C)]
+pub struct Resource {
+    _private: [u8; 0],
+}
+```
+
+### Unions
+
+```rust
+// types.rs
+
+use libc::{c_int, c_float};
+
+/// A union representing either an integer or a float
+#[repr(C)]
+pub union NumberValue {
+    pub i: c_int,
+    pub f: c_float,
+}
+```
+
+## Enum Definitions
+
+```rust
+// types.rs
+
+use libc::c_int;
+
+/// Status codes returned by library functions
+#[repr(C)]
+pub enum Status {
+    Success = 0,       // CORRECT: PascalCase
+    InvalidInput = 1,  // CORRECT: PascalCase
+    OutOfMemory = 2,   // CORRECT: PascalCase
+    IoError = 3,       // CORRECT: PascalCase
+}
+
+// Alternative using constants (if enum-like behavior isn't needed)
+pub type StatusCode = c_int;
+pub const STATUS_SUCCESS: StatusCode = 0;        // CORRECT: Constants in SCREAMING_CASE
+pub const STATUS_INVALID_INPUT: StatusCode = 1;  // CORRECT: Constants in SCREAMING_CASE
+pub const STATUS_OUT_OF_MEMORY: StatusCode = 2;  // CORRECT: Constants in SCREAMING_CASE
+pub const STATUS_IO_ERROR: StatusCode = 3;       // CORRECT: Constants in SCREAMING_CASE
+```
+
+## Function Declarations
+
+### Basic Functions
+
+```rust
+// core.rs
+
+use libc::{c_int, c_float, c_void, size_t};
+use crate::types::{Status, Context};
+
+#[link(name = "example")]
+extern "C" {
+    /// Initialize the library with the specified flags
+    pub fn example_initialize(flags: c_int) -> *mut Context;
+    
+    /// Shut down the library and free resources
+    pub fn example_shutdown(ctx: *mut Context);
+    
+    /// Process a block of data
+    pub fn example_process_data(data: *mut c_void, size: size_t) -> Status;
+}
+```
+
+### Function with Complex Arguments and Return Types
+
+```rust
+// graphics.rs
+
+use libc::{c_int, c_float};
+use crate::types::{Point, Rectangle, Resource};
+
+#[link(name = "example")]
+extern "C" {
+    /// Create a new graphics resource
+    pub fn graphics_create_resource() -> *mut Resource;
+    
+    /// Draw a line between two points
+    pub fn graphics_draw_line(
+        resource: *mut Resource,
+        start: Point,
+        end: Point,
+        thickness: c_float,
+        color: c_int
+    ) -> c_int;
+    
+    /// Fill a rectangle with the specified color
+    pub fn graphics_fill_rect(
+        resource: *mut Resource,
+        rect: *const Rectangle,
+        color: c_int
+    ) -> c_int;
+}
+```
+
+### Function with Callbacks
+
+```rust
+// utils.rs
+
+use libc::{c_int, c_char, c_void};
+
+/// Type definition for a progress callback function
+pub type ProgressCallback = extern "C" fn(
+    progress: c_int,
+    context: *mut c_void
+) -> c_int;
+
+/// Type definition for a logging callback function
+pub type LogCallback = extern "C" fn(
+    level: c_int,
+    message: *const c_char
+);
+
+#[link(name = "example")]
+extern "C" {
+    /// Register a progress callback
+    pub fn utils_set_progress_callback(
+        callback: Option<ProgressCallback>,
+        context: *mut c_void
+    ) -> c_int;
+    
+    /// Register a logging callback
+    pub fn utils_set_log_callback(
+        callback: Option<LogCallback>
+    ) -> c_int;
+}
+```
+
+## Constants and Global Variables
+
+```rust
+// constants.rs
+
+use libc::{c_int, c_float};
+
+// Library version
+pub const VERSION_MAJOR: c_int = 1;
+pub const VERSION_MINOR: c_int = 0;
+pub const VERSION_PATCH: c_int = 0;
+
+// Configuration constants
+pub const MAX_NAME_LENGTH: c_int = 256;
+pub const MAX_BUFFER_SIZE: c_int = 4096;
+pub const DEFAULT_TIMEOUT_MS: c_int = 5000;
+
+// Flag constants
+pub const FLAG_NONE: c_int = 0;
+pub const FLAG_VERBOSE: c_int = 1;
+pub const FLAG_SILENT: c_int = 2;
+pub const FLAG_DEBUG: c_int = 4;
+
+// Color constants
+pub const COLOR_RED: c_int = 0xFF0000;
+pub const COLOR_GREEN: c_int = 0x00FF00;
+pub const COLOR_BLUE: c_int = 0x0000FF;
+
+// Global variables exported by the library
+#[link(name = "example")]
+extern "C" {
+    pub static mut global_error_code: c_int;
+    pub static mut global_debug_level: c_int;
+    pub static mut global_config_value: c_float;
+}
+```
+
+## String Handling
+
+```rust
+// strings.rs
+
+use libc::{c_char, size_t};
+
+#[link(name = "example")]
+extern "C" {
+    /// Get a string describing the last error
+    pub fn string_get_error_message() -> *const c_char;
+    
+    /// Copy a string into a buffer
+    pub fn string_copy(
+        dest: *mut c_char,
+        src: *const c_char,
+        size: size_t
+    ) -> size_t;
+    
+    /// Concatenate two strings
+    pub fn string_concat(
+        dest: *mut c_char,
+        src: *const c_char,
+        size: size_t
+    ) -> size_t;
+    
+    /// Get the length of a string
+    pub fn string_length(
+        str: *const c_char
+    ) -> size_t;
+}
+```
+
+## Dynamic Library Loading
+
+For conditional dynamic linking (using the `dynamic` feature):
+
+```rust
+// lib.rs
+
+// Make sure to declare all modules
+mod constants;
+mod types;
+mod core;
+// ... other modules
+
+// When dynamic feature is enabled, use dylib linking
+#[cfg(feature = "dynamic")]
+#[link(name = "example", kind = "dylib")]
+extern "C" {}
+
+// Otherwise use static linking
+#[cfg(not(feature = "dynamic"))]
+#[link(name = "example", kind = "static")]
+extern "C" {}
+
+// Re-exports
+pub use constants::*;
+pub use types::*;
+pub use core::*;
+// ... other re-exports
+```
+
+## Platform-Specific Considerations
+
+```rust
+// platform.rs
+
+// Windows-specific functions
+#[cfg(target_os = "windows")]
+mod windows {
+    use libc::c_int;
+    
+    #[link(name = "example")]
+    extern "C" {
+        pub fn platform_windows_specific_function() -> c_int;
+    }
+}
+
+// Unix-specific functions
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix {
+    use libc::c_int;
+    
+    #[link(name = "example")]
+    extern "C" {
+        pub fn platform_unix_specific_function() -> c_int;
+    }
+}
+
+// Re-export based on platform
+#[cfg(target_os = "windows")]
+pub use self::windows::*;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use self::unix::*;
+
+// Common functions for all platforms
+#[link(name = "example")]
+extern "C" {
+    pub fn platform_common_function() -> libc::c_int;
+}
+```
+
+## Advanced: Building and Linking
+
+To properly build and link your *-sys crate, you might need a build script:
+
+```rust
+// build.rs
+use std::env;
+use std::path::PathBuf;
+
+fn main() {
+    // Tell cargo to look for shared libraries in the specified directory
+    let lib_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("lib");
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    
+    // Tell cargo to tell rustc to link the example library
+    println!("cargo:rustc-link-lib=example");
+    
+    // Only re-run the build script if the build script itself changes
+    println!("cargo:rerun-if-changed=build.rs");
+    
+    // Optionally use pkg-config to locate the library
+    #[cfg(feature = "use-pkg-config")]
+    {
+        pkg_config::Config::new()
+            .atleast_version("1.0")
+            .probe("example")
+            .unwrap();
+    }
+}
+```
+
+## Complete Example
+
+Here's how a complete manual *-sys crate might look:
+
+### Cargo.toml
+
+```toml
+[package]
+name = "example-sys"
+version = "0.1.0"
+edition = "2021"
+links = "example"
+description = "Raw FFI bindings to the example C library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/example-sys"
+categories = ["external-ffi-bindings"]
+keywords = ["ffi", "sys"]
+
+[dependencies]
+libc = "0.2"
+
+[features]
+default = []
+dynamic = []
+component_x = []
+```
+
+### src/lib.rs
+
+```rust
+//! Raw FFI bindings to the example C library.
+//!
+//! This crate provides raw FFI bindings to the example C library,
+//! exposing the C API through a Rust interface.
+
+// Re-export libc
+pub use libc;
+
+// CRITICAL: Declare all modules
+mod types;
+mod constants;
+mod core;
+mod graphics;
+mod utils;
+mod strings;
+mod platform;
+mod io;
+
+// Re-export everything
+pub use types::*;
+pub use constants::*;
+pub use core::*;
+pub use graphics::*;
+pub use utils::*;
+pub use strings::*;
+pub use platform::*;
+pub use io::*;
+```
+
+### src/types.rs
+
+```rust
+//! Type definitions for the example library
+
+use libc::{c_int, c_float, c_void};
+
+/// Status codes returned by library functions
+#[repr(C)]
+pub enum Status {
+    Success = 0,
+    InvalidInput = 1,
+    OutOfMemory = 2,
+    IoError = 3,
+}
+
+/// An opaque handle to a context
+#[repr(C)]
+pub struct Context {
+    _private: [u8; 0],
+}
+
+/// An opaque handle to a resource
+#[repr(C)]
+pub struct Resource {
+    _private: [u8; 0],
+}
+
+/// Represents a 2D point
+#[repr(C)]
+pub struct Point {
+    pub x: c_float,
+    pub y: c_float,
+}
+
+/// Represents a rectangle
+#[repr(C)]
+pub struct Rectangle {
+    pub x: c_float,
+    pub y: c_float,
+    pub width: c_float,
+    pub height: c_float,
+}
+
+/// Callback function types
+pub type ProgressCallback = extern "C" fn(
+    progress: c_int,
+    context: *mut c_void
+) -> c_int;
+```
+
+### src/constants.rs
+
+```rust
+//! Constants defined by the example library
+
+use libc::c_int;
+
+// Library version
+pub const VERSION_MAJOR: c_int = 1;
+pub const VERSION_MINOR: c_int = 0;
+pub const VERSION_PATCH: c_int = 0;
+
+// Configuration constants
+pub const MAX_NAME_LENGTH: c_int = 256;
+pub const MAX_BUFFER_SIZE: c_int = 4096;
+
+// Flag constants
+pub const FLAG_NONE: c_int = 0;
+pub const FLAG_VERBOSE: c_int = 1;
+pub const FLAG_SILENT: c_int = 2;
+```
+
+### src/core.rs
+
+```rust
+//! Core functionality of the example library
+
+use libc::{c_int, c_void, size_t};
+use crate::types::{Status, Context};
+
+#[link(name = "example")]
+extern "C" {
+    /// Initialize the library with the specified flags
+    pub fn example_initialize(flags: c_int) -> *mut Context;
+    
+    /// Shut down the library and free resources
+    pub fn example_shutdown(ctx: *mut Context);
+    
+    /// Process a block of data
+    pub fn example_process_data(
+        ctx: *mut Context,
+        data: *mut c_void, 
+        size: size_t
+    ) -> Status;
+}
+```
+
+### src/io/mod.rs
+
+```rust
+//! IO functionality of the example library
+
+// CRITICAL: Declare submodules
+mod file;
+mod network;
+
+// Re-export submodule contents
+pub use file::*;
+pub use network::*;
+
+use libc::c_int;
+
+#[link(name = "example")]
+extern "C" {
+    /// Initialize the IO subsystem
+    pub fn io_initialize() -> c_int;
+    
+    /// Shutdown the IO subsystem
+    pub fn io_shutdown() -> c_int;
+}
+```
+
+### src/io/file.rs
+
+```rust
+//! File operations for the example library
+
+use libc::{c_int, c_char, c_void, size_t};
+
+/// An opaque file handle
+#[repr(C)]
+pub struct FileHandle {
+    _private: [u8; 0],
+}
+
+#[link(name = "example")]
+extern "C" {
+    /// Open a file
+    pub fn file_open(
+        path: *const c_char,
+        mode: c_int
+    ) -> *mut FileHandle;
+    
+    /// Close a file
+    pub fn file_close(
+        handle: *mut FileHandle
+    ) -> c_int;
+    
+    /// Read from a file
+    pub fn file_read(
+        handle: *mut FileHandle,
+        buffer: *mut c_void,
+        size: size_t
+    ) -> size_t;
+}
+```
+
+## Advanced Testing Strategies
+
+For testing your *-sys crate, create a `tests` directory:
+
+```
+example-sys/
+├── ...
+└── tests/
+    └── basic.rs
+```
+
+```rust
+// tests/basic.rs
+
+use example_sys::*;
+use std::ffi::CString;
+use std::ptr;
+
+#[test]
+fn test_initialize_shutdown() {
+    unsafe {
+        // Test initialize function
+        let ctx = example_initialize(FLAG_NONE);
+        assert!(!ctx.is_null());
+        
+        // Test shutdown function
+        let result = example_shutdown(ctx);
+        assert_eq!(result, 0);
+    }
+}
+
+#[test]
+fn test_string_functions() {
+    unsafe {
+        let test_str = CString::new("test").unwrap();
+        let len = string_length(test_str.as_ptr());
+        assert_eq!(len, 4);
+    }
+}
+```
+
+## Best Practices
+
+1. **Manual Organization**
+   - Group related functions and types in the same module
+   - Use separate modules for different components of the library
+   - Re-export important items from lib.rs
+   - **CRITICAL**: Properly declare modules with `mod` statements
+
+2. **Naming Consistency**
+   - Use Rust naming conventions for all type definitions
+   - Keep original function names in the extern block
+   - Convert enum variants from SCREAMING_CASE to PascalCase
+   - Use descriptive module names based on functionality
+
+3. **Documentation**
+   - Document all public functions, types, and constants
+   - Include any safety requirements or invariants
+   - Explain memory ownership and lifetime requirements
+   - Note any platform-specific behavior
+
+4. **Safety**
+   - Mark all FFI functions as `unsafe` by default (happens automatically in extern blocks)
+   - Create safe Rust wrappers in a separate crate (not in the *-sys crate)
+   - Document any requirements needed for memory safety
+
+5. **Modularity**
+   - Use Rust's module system to organize code
+   - Keep the binding layer thin and focused
+   - Use relative paths for imports between modules
+
+6. **Versioning**
+   - Consider adding version compatibility information
+   - Use cargo features to support multiple library versions
+
+7. **Error Handling**
+   - Properly map C error codes to Rust types
+   - Document error handling behavior
+   - Consider adding helper functions for error translation
+
+8. **Memory Management**
+   - Document ownership transfer for memory allocated by C
+   - Provide functions to properly free C-allocated resources
+   - Be explicit about memory safety requirements
+
+## Common Errors to Avoid
+
+1. **Failing to declare modules**: You MUST add `mod module_name;` to parent modules for each child module
+2. **Incorrect file paths**: Always use paths relative to Cargo.toml for file organization
+3. **Non-idiomatic module structure**: Follow the Rust module system conventions
+4. **Binding to implementation details**: Only bind to publicly exported symbols and types
+5. **Incorrect memory layout**: Ensure structs use `#[repr(C)]` and match the expected layout
+6. **Missing link attribute**: Include `#[link(name = "...")]` with the correct library name
+7. **Incorrect type mappings**: Use the exact equivalent Rust types for C types
+8. **Incorrect styling**: Always follow Rust naming conventions (especially PascalCase for enum variants)
+9. **Name collisions**: Use modules or namespacing to avoid collisions
+10. **Incorrect type sizes**: Be careful with platform-dependent types like `long`
+11. **Missing pub visibility**: Ensure necessary items are marked as `pub`
+12. **Incorrect function signatures**: Match parameters and return types exactly
+13. **Forgetting to re-export modules**: Remember to use `pub use` in parent modules
+14. **Circular dependencies**: Avoid circular module dependencies
+15. **Unnecessary automation**: Resist the temptation to use bindgen or other tools
+16. **Cargo.toml linkage**: Do not use the link attribute on package

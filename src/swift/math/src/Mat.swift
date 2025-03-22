@@ -206,4 +206,3 @@ public func m4FromM3(m: Mat3) -> Mat4
 
 @_silgen_name("m3Normal")
 public func m3Normal(model: Mat4) -> Mat3
-```

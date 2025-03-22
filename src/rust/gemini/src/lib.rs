@@ -548,7 +548,7 @@ fn extract_text_from_response(json: &Value) -> Option<&str> {
 fn unescape_string(input: &str) -> Result<String, String> {
     let mut result = String::new();
     let mut chars = input.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
@@ -556,16 +556,16 @@ fn unescape_string(input: &str) -> Result<String, String> {
                     // Handle Unicode escape: \uXXXX
                     let mut code_point = 0u32;
                     let mut digit_count = 0;
-                    
+
                     // Check for the opening brace in \u{XXXX} format
                     let has_braces = chars.peek() == Some(&'{');
                     if has_braces {
                         chars.next(); // Consume the '{'
                     }
-                    
+
                     // Read 4 hex digits (or up to 6 if using braces)
                     let max_digits = if has_braces { 6 } else { 4 };
-                    
+
                     while digit_count < max_digits {
                         match chars.peek() {
                             Some(&c) if c.is_digit(16) => {
@@ -578,23 +578,29 @@ fn unescape_string(input: &str) -> Result<String, String> {
                                 break;
                             }
                             _ if has_braces => {
-                                return Err(format!("Invalid Unicode escape sequence: missing closing brace"));
+                                return Err(format!(
+                                    "Invalid Unicode escape sequence: missing closing brace"
+                                ));
                             }
                             _ => break,
                         }
                     }
-                    
+
                     if digit_count == 0 {
                         return Err(format!("Invalid Unicode escape sequence: no digits"));
                     }
-                    
+
                     if has_braces && chars.peek() != Some(&'}') && digit_count > 0 {
-                        return Err(format!("Invalid Unicode escape sequence: missing closing brace"));
+                        return Err(format!(
+                            "Invalid Unicode escape sequence: missing closing brace"
+                        ));
                     }
-                    
+
                     match char::from_u32(code_point) {
                         Some(unicode_char) => result.push(unicode_char),
-                        None => return Err(format!("Invalid Unicode code point: U+{:X}", code_point)),
+                        None => {
+                            return Err(format!("Invalid Unicode code point: U+{:X}", code_point));
+                        }
                     }
                 }
                 Some('n') => result.push('\n'),
@@ -611,7 +617,6 @@ fn unescape_string(input: &str) -> Result<String, String> {
             result.push(c);
         }
     }
-    
+
     Ok(result)
 }
-

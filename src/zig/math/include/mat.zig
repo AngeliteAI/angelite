@@ -1,13 +1,40 @@
-const vec = @import("vector.zig");
+const vec = @import("vec.zig");
 pub const Mat2 = extern struct {
     data: [4]f32,
+
+    pub inline fn asArray(self: *const Mat2) *const [4]f32 {
+        return &self.data;
+    }
+
+    pub inline fn fromArray(arr: *const [4]f32) Mat2 {
+        return Mat2{ .data = arr.* };
+    }
 };
+
 pub const Mat3 = extern struct {
     data: [9]f32,
+
+    pub inline fn asArray(self: *const Mat3) *const [9]f32 {
+        return &self.data;
+    }
+
+    pub inline fn fromArray(arr: *const [9]f32) Mat3 {
+        return Mat3{ .data = arr.* };
+    }
 };
+
 pub const Mat4 = extern struct {
     data: [16]f32,
+
+    pub inline fn asArray(self: *const Mat4) *const [16]f32 {
+        return &self.data;
+    }
+
+    pub inline fn fromArray(arr: *const [16]f32) Mat4 {
+        return Mat4{ .data = arr.* };
+    }
 };
+
 // Creation functions
 pub extern fn m2Id() Mat2;
 pub extern fn m3Id() Mat3;

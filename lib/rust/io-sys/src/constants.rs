@@ -1,0 +1,1 @@
+// Generated binding code for constants

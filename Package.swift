@@ -14,10 +14,17 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
+        // Math library
+        .target(
+            name: "Math",
+            dependencies: [],
+            path: "src/swift/math/src"
+        ),
+
         // Graphics library
         .target(
             name: "Gfx",
-            dependencies: [],
+            dependencies: ["Math"],
             path: "src/swift/gfx/src",
             resources: [
                 .process("Shaders.metal")

@@ -71,4 +71,3 @@ public func atan2(y: Float, x: Float) -> Float
 
 @_silgen_name("eq")
 public func eq(a: Float, b: Float, eps: Float) -> Bool
-```

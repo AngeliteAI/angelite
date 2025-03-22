@@ -1,17 +1,43 @@
 pub const Vec2 = extern struct {
     x: f32,
     y: f32,
+
+    pub inline fn asArray(self: *const Vec2) *const [2]f32 {
+        return @ptrCast(&self.x);
+    }
+
+    pub inline fn fromArray(arr: *const [2]f32) Vec2 {
+        return Vec2{ .x = arr[0], .y = arr[1] };
+    }
 };
+
 pub const Vec3 = extern struct {
     x: f32,
     y: f32,
     z: f32,
+
+    pub inline fn asArray(self: *const Vec3) *const [3]f32 {
+        return @ptrCast(&self.x);
+    }
+
+    pub inline fn fromArray(arr: *const [3]f32) Vec3 {
+        return Vec3{ .x = arr[0], .y = arr[1], .z = arr[2] };
+    }
 };
+
 pub const Vec4 = extern struct {
     x: f32,
     y: f32,
     z: f32,
     w: f32,
+
+    pub inline fn asArray(self: *const Vec4) *const [4]f32 {
+        return @ptrCast(&self.x);
+    }
+
+    pub inline fn fromArray(arr: *const [4]f32) Vec4 {
+        return Vec4{ .x = arr[0], .y = arr[1], .z = arr[2], .w = arr[3] };
+    }
 };
 // Constructor functions
 pub extern fn v2(x: f32, y: f32) Vec2;
