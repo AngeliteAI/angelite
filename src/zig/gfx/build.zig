@@ -5,8 +5,8 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
-        .name = "your-app-name",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .name = "gfx-test",
+        .root_source_file = b.path("main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -14,8 +14,9 @@ pub fn build(b: *std.Build) void {
     // Add these lines to link with Vulkan
     exe.linkSystemLibrary("vulkan");
 
+        // Link with X11 library
+        exe.linkSystemLibrary("X11");
     // On some systems, you might also need:
-    exe.addLibraryPath(.{ .path = "/usr/lib/x86_64-linux-gnu" });
 
     // Continue with the rest of your build script
     b.installArtifact(exe);
