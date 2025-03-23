@@ -181,7 +181,7 @@ class Renderer: NSObject, MTKViewDelegate {
         }
 
         // Rotate movement vector by camera's yaw
-        let rotationMatrix = qToM4(q: yaw)
+        let rotationMatrix = qToM4(q: qMul(a: yaw, b: pitch))
         let rotatedMovement = m4V4(m: rotationMatrix, v: v4FromV3(v: movement, w: 1.0))
 
         cameraPosition = v3Add(

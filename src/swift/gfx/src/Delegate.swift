@@ -153,11 +153,20 @@ class MouseHandler {
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) {
             [weak self] event in
             if let self = self, !self.isMouseCaptured {
-                print("Mouse click detected - capturing mouse")
-                Task {
-                    await self.captureMouse()
-                }
-            }
+                            // Only capture the mouse if we're clicking in the game area,
+                            // not when clicking window controls
+                            if let view = self.metalView,
+                               let window = view.window,
+                               let clickLocation = window.contentView?.convert(event.locationInWindow, from: nil) {
+                                // Check if click is inside the view area
+                                if view.bounds.contains(clickLocation) {
+                                    print("Mouse click detected in game area - capturing mouse")
+                                    Task {
+                                        await self.captureMouse()
+                                    }
+                                }
+                            }
+                        }
             return event
         }
 
