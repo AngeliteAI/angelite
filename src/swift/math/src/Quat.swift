@@ -3,14 +3,14 @@
 
 import Foundation
 
-public struct Quat {
-    public var v: Vec3
-    public var w: Float
+@frozen public struct Quat {
+  public var v: Vec3
+  public var w: Float
 
-    public init(v: Vec3, w: Float) {
-        self.v = v
-        self.w = w
-    }
+  public init(v: Vec3, w: Float) {
+    self.v = v
+    self.w = w
+  }
 }
 
 @_silgen_name("q")
@@ -92,7 +92,8 @@ public func qSlerp(a: Quat, b: Quat, t: Float) -> Quat
 public func qNlerp(a: Quat, b: Quat, t: Float) -> Quat
 
 @_silgen_name("qGetAxis")
-public func qGetAxis(q: Quat, axis: UnsafeMutablePointer<Vec3>?, angle: UnsafeMutablePointer<Float>?)
+public func qGetAxis(
+  q: Quat, axis: UnsafeMutablePointer<Vec3>?, angle: UnsafeMutablePointer<Float>?)
 
 @_silgen_name("qToEuler")
 public func qToEuler(q: Quat) -> Vec3

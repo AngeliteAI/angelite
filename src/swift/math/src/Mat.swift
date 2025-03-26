@@ -3,28 +3,37 @@
 
 import Foundation
 
-public struct Mat2 {
-    public var data: (Float, Float, Float, Float)
+@frozen public struct Mat2 {
+  public var data: (Float, Float, Float, Float)
 
-    public init(data: (Float, Float, Float, Float)) {
-        self.data = data
-    }
+  public init(data: (Float, Float, Float, Float)) {
+    self.data = data
+  }
 }
 
-public struct Mat3 {
-    public var data: (Float, Float, Float, Float, Float, Float, Float, Float, Float)
+@frozen public struct Mat3 {
+  public var data: (Float, Float, Float, Float, Float, Float, Float, Float, Float)
 
-    public init(data: (Float, Float, Float, Float, Float, Float, Float, Float, Float)) {
-        self.data = data
-    }
+  public init(data: (Float, Float, Float, Float, Float, Float, Float, Float, Float)) {
+    self.data = data
+  }
 }
 
-public struct Mat4 {
-    public var data: (Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float)
+@frozen public struct Mat4 {
+  public var data:
+    (
+      Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float,
+      Float, Float, Float
+    )
 
-    public init(data: (Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float)) {
-        self.data = data
-    }
+  public init(
+    data: (
+      Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float, Float,
+      Float, Float, Float
+    )
+  ) {
+    self.data = data
+  }
 }
 
 @_silgen_name("m2Id")
@@ -196,7 +205,8 @@ public func m4LookAt(eye: Vec3, target: Vec3, up: Vec3) -> Mat4
 public func m4Persp(fovy: Float, aspect: Float, near: Float, far: Float) -> Mat4
 
 @_silgen_name("m4Ortho")
-public func m4Ortho(left: Float, right: Float, bottom: Float, top: Float, near: Float, far: Float) -> Mat4
+public func m4Ortho(left: Float, right: Float, bottom: Float, top: Float, near: Float, far: Float)
+  -> Mat4
 
 @_silgen_name("m3FromM4")
 public func m3FromM4(m: Mat4) -> Mat3

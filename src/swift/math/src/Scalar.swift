@@ -71,3 +71,23 @@ public func atan2(y: Float, x: Float) -> Float
 
 @_silgen_name("eq")
 public func eq(a: Float, b: Float, eps: Float) -> Bool
+
+// Natural logarithm (base e)
+@_silgen_name("log")
+public func log(_ x: Float) -> Float
+
+// Base-2 logarithm
+@_silgen_name("log2")
+public func log2(_ x: Float) -> Float
+
+// Base-10 logarithm
+@_silgen_name("log10")
+public func log10(_ x: Float) -> Float
+
+// Exponential function (e^x)
+@_silgen_name("exp")
+public func exp(_ x: Float) -> Float
+
+// Base-2 exponential function (2^x)
+@_silgen_name("exp2")
+public func exp2(_ x: Float) -> Float

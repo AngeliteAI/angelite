@@ -26,7 +26,6 @@ class MeshGenerator {
     self.device = device
     self.chunkSize = chunkSize
     self.queue = device.makeCommandQueue()!
-    
 
     // Load the compute function
     guard let library = device.makeDefaultLibrary(),
@@ -51,15 +50,14 @@ class MeshGenerator {
   ) async -> (Int, [Face]?) {
     // Thread-safe ID generation
     var callId = lock.withLock {
-    let callId = nextCallId
-    nextCallId += 1
-    
-    // Create tracking info for this call
-    var info = BufferTrackingInfo(callId: callId)
-    trackingInfo[callId] = info
-    return callId;
-    };
-    
+      let callId = nextCallId
+      nextCallId += 1
+
+      // Create tracking info for this call
+      var info = BufferTrackingInfo(callId: callId)
+      trackingInfo[callId] = info
+      return callId
+    }
 
     // Create our own command buffer
     guard let localCommandBuffer = queue.makeCommandBuffer() else {
@@ -89,7 +87,7 @@ class MeshGenerator {
 
     // Store buffer references for later cleanup (thread-safe)
     lock.withLock {
-        buffersByCallId[callId] = (faceBuffer, countBuffer)
+      buffersByCallId[callId] = (faceBuffer, countBuffer)
     }
     // Create a compute command encoder
     guard let computeEncoder = localCommandBuffer.makeComputeCommandEncoder() else {
@@ -128,23 +126,23 @@ class MeshGenerator {
           return
         }
 
-        
         // Thread-safe updates
         self.lock.lock()
         // Check if we still have the tracking info and buffers
         guard var updatedInfo = self.trackingInfo[callId],
-              let buffers = self.buffersByCallId[callId] else {
+          let buffers = self.buffersByCallId[callId]
+        else {
           self.lock.unlock()
           continuation.resume(returning: (callId, nil))
           return
         }
-        
+
         // Update tracking info
         updatedInfo.complete()
         updatedInfo.additionalData["status"] = buffer.status.rawValue
         updatedInfo.additionalData["error"] = buffer.error?.localizedDescription ?? "None"
         self.trackingInfo[callId] = updatedInfo
-        
+
         // Get buffer references before releasing lock
         let faceBuffer = buffers.faceBuffer
         let countBuffer = buffers.countBuffer
@@ -158,7 +156,7 @@ class MeshGenerator {
           continuation.resume(returning: (callId, nil))
           return
         }
-        
+
         if faceCount == 0 {
           continuation.resume(returning: (callId, []))
           return
@@ -168,16 +166,15 @@ class MeshGenerator {
         let facePtr = faceBuffer.contents().bindMemory(to: Face.self, capacity: Int(faceCount))
         var faces = [Face]()
         faces.reserveCapacity(Int(faceCount))
-        
+
         for i in 0..<Int(faceCount) {
           faces.append(facePtr[i])
         }
 
-        
         // Resume the continuation with the result
         continuation.resume(returning: (callId, faces))
       }
-      
+
       // Commit the command buffer
       localCommandBuffer.commit()
     }
@@ -185,10 +182,10 @@ class MeshGenerator {
 
   // Clean up resources for a call
   func cleanup(callId: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        
-        buffersByCallId.removeValue(forKey: callId)
-        trackingInfo.removeValue(forKey: callId)
-    }
+    lock.lock()
+    defer { lock.unlock() }
+
+    buffersByCallId.removeValue(forKey: callId)
+    trackingInfo.removeValue(forKey: callId)
+  }
 }

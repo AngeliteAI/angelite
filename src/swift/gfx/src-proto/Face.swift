@@ -71,10 +71,10 @@ class FacePool {
 
   // Effective draw count (for masking)
   private var effectiveDrawCount: Int = 0
-  private let lock = NSLock() // Add thread safety
+  private let lock = NSLock()  // Add thread safety
 
   // Add this to the FacePool initialization
-init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
+  init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
     self.device = device
     self.faceBucketSize = faceBucketSize
     self.maxBuckets = maxBuckets
@@ -94,8 +94,8 @@ init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
     // we'll create one set of indices for a single quad and reuse it
     // Each face is a quad made of 2 triangles (6 indices total)
     var indices: [UInt16] = [
-        0, 1, 2,  // First triangle
-        0, 2, 3   // Second triangle
+      0, 1, 2,  // First triangle
+      0, 2, 3,  // Second triangle
     ]
 
     let indexBufferSize = indices.count * MemoryLayout<UInt16>.stride
@@ -110,7 +110,7 @@ init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
     // Initialize command indices array
     commandIndices = Array(repeating: 0, count: maxBuckets)
 
-}
+  }
 
   func _faceBucketSize() -> Int {
     return faceBucketSize
@@ -159,7 +159,7 @@ init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
   // Add a face to a bucket
   func addFace(bucketIndex: Int, faceIndex: Int, face: Face) {
     guard bucketIndex < maxBuckets && faceIndex < faceBucketSize else {
-        return
+      return
     }
 
     // Calculate offset for this face in the face buffer
@@ -168,7 +168,7 @@ init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
     // Write the face data to the buffer
     let facesPtr = faceBuffer.contents().advanced(by: offset).bindMemory(to: Face.self, capacity: 1)
     facesPtr.pointee = face
-}
+  }
   // Release a bucket
   func releaseBucket(commandIndex: UInt32) {
     lock.lock()
@@ -320,15 +320,15 @@ init(device: MTLDevice, faceBucketSize: Int, maxBuckets: Int) {
   }
 
   // Draw using the pool
-// Replace the draw method in FacePool
-func draw(commandEncoder: MTLRenderCommandEncoder, maskAndSort: Bool = true) {
+  // Replace the draw method in FacePool
+  func draw(commandEncoder: MTLRenderCommandEncoder, maskAndSort: Bool = true) {
     lock.lock()
     let drawCount = drawCommands.count
     lock.unlock()
 
     // No draw commands to render
     if drawCount == 0 {
-        return
+      return
     }
 
     // Update indirect buffer before drawing
@@ -339,29 +339,28 @@ func draw(commandEncoder: MTLRenderCommandEncoder, maskAndSort: Bool = true) {
 
     // Draw each bucket directly, reusing the same index pattern
     for i in 0..<drawCount {
-        let cmd = drawCommands[i]
+      let cmd = drawCommands[i]
 
-        // Get the actual face count for this bucket
-        let faceCount = Int(cmd.indexCount) / 6  // Each face uses 6 indices
+      // Get the actual face count for this bucket
+      let faceCount = Int(cmd.indexCount) / 6  // Each face uses 6 indices
 
-        // Draw each face in this bucket separately
-        for faceIndex in 0..<faceCount {
-            // Draw this face using the shared index pattern
-            commandEncoder.drawIndexedPrimitives(
-                type: .triangle,
-                indexCount: 6,  // Always 6 indices (2 triangles)
-                indexType: .uint16,
-                indexBuffer: indexBuffer,
-                indexBufferOffset: 0, // Always start at the beginning of the index buffer
-                instanceCount: 1,
-                baseVertex: Int(cmd.baseVertex) + (faceIndex * 4), // 4 vertices per face
-                baseInstance: 0
-            )
-        }
+      // Draw each face in this bucket separately
+      for faceIndex in 0..<faceCount {
+        // Draw this face using the shared index pattern
+        commandEncoder.drawIndexedPrimitives(
+          type: .triangle,
+          indexCount: 6,  // Always 6 indices (2 triangles)
+          indexType: .uint16,
+          indexBuffer: indexBuffer,
+          indexBufferOffset: 0,  // Always start at the beginning of the index buffer
+          instanceCount: 1,
+          baseVertex: Int(cmd.baseVertex) + (faceIndex * 4),  // 4 vertices per face
+          baseInstance: 0
+        )
+      }
     }
 
-}
-
+  }
 
   // Get resources
   func getFaceBuffer() -> MTLBuffer { return faceBuffer }
