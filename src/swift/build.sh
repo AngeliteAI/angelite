@@ -26,9 +26,19 @@ OSX_SDK_FRAMEWORKS_DIR="$OSX_SDK_PATH/System/Library/Frameworks"
 
 echo "Using macOS SDK path: $OSX_SDK_PATH"
 
+
 # --- Create Build Directory ---
 mkdir -p "$BUILD_DIR"
 echo "Build directory: $BUILD_DIR"
+
+cd "$GFX_SRC_DIR"
+if [ -f "Shaders.metal" ]; then
+    echo "Compiling Shaders.metal..."
+    xcrun -sdk macosx metal -c Shaders.metal -o "$BUILD_DIR/Shaders.air"
+    xcrun -sdk macosx metallib "$BUILD_DIR/Shaders.air" -o "$BUILD_DIR/default.metallib"
+else
+    echo "Warning: Shaders.metal not found, skipping shader compilation"
+fi
 
 # --- Build Zig Math Static Library ---
 echo "Building Zig math library..."

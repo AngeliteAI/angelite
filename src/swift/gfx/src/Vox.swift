@@ -3,24 +3,31 @@ import Math
 
 public struct VoxelGrid {
     private var data: Palette
-    private var size: IVec3
+    private var size: UVec3
     private var position: Vec3
     private var rotation: Quat
 
     private var dirty: Bool
 
-    init(data: Palette) {
+    init(data: Palette, size: UVec3) {
         self.data = data
+        self.size = size 
+        self.position = v3Splat(s: 0) 
+        self.rotation = qId()
         self.dirty = true
     }
 
-    func setPos(pos: Vec3) {
+    mutating func setPos(pos: Vec3) {
         self.position = pos
-        self.dirty = true
+        self.markDirty()
     }
 
-    func setRot(rot: Quat) {
+    mutating func setRot(rot: Quat) {
         self.rotation = rot
+        self.markDirty()
+    }
+
+    mutating func markDirty() {
         self.dirty = true
     }
 
@@ -28,11 +35,11 @@ public struct VoxelGrid {
         return self.dirty
     }
 
-    func clearDirty() {
+    mutating func clearDirty() {
         self.dirty = false
     }
 
-    func getSize() -> IVec3 {
+    func getSize() -> UVec3 {
         return self.size
     }
 

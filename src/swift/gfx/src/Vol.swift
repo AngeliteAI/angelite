@@ -22,7 +22,7 @@ public func createEmptyVolume(size_x: UInt32, size_y: UInt32, size_z: UInt32) ->
     volumePointer.pointee = volume;
 
     // Initialize the volume grid with default values
-    let voxelGrid = VoxelGrid(data: Palette(single: 0, count: Int(size_x * size_y * size_z)))
+    let voxelGrid = VoxelGrid(data: Palette(single: 0, count: Int(size_x * size_y * size_z)), size: UVec3(x: size_x, y: size_y, z: size_z))
     let voxelGridPointer = UnsafeMutablePointer<VoxelGrid>.allocate(capacity: 1)
     voxelGridPointer.pointee = voxelGrid
     volumeGrids[volumePointer.pointee.id] = voxelGridPointer
