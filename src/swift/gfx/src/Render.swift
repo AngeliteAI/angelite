@@ -100,7 +100,6 @@ public struct Renderer {
     var activeChunks: [ActiveChunk : Int] = [:]
 
     var pipelines: PipelineManager
-    var palettes: PaletteManager
 
     public init(device: MTLDevice) {
         self.device = device

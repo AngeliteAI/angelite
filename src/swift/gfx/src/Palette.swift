@@ -1,19 +1,19 @@
 import Math
 
 public struct Palette {
-  public var palette: [UInt64] = []
+  public var palette: [Int] = []
   public var count: Int
-  public var data: [UInt64] = []
+  public var data: [Int] = []
 
-  init(single: UInt64, count: Int) {
+  init(single: Int, count: Int) {
     self.palette = [single]
     self.count = count
     self.data = []
   }
 
-  init(uncompressed: [UInt64]) {
+  init(uncompressed: [Int]) {
     count = uncompressed.count;
-    var seen = Set<UInt64>()
+    var seen = Set<Int>()
     for value in uncompressed {
       if !seen.contains(value) {
         seen.insert(value)
@@ -35,24 +35,24 @@ public struct Palette {
       let outerOffset = bitCursor / 64
       let innerOffset = bitCursor % 64
 
-      if outerOffset >= UInt64(palette.count) {
+      if outerOffset >= Int(palette.count) {
         break
       }
 
-      let mask = UInt64(1) << UInt64(bits) - UInt64(1)
+      let mask = Int(1) << Int(bits) - Int(1)
       let innerValue = value & mask
 
-      let remainingBitsInCurrentUInt64 = 64 - innerOffset
+      let remainingBitsInCurrentInt = 64 - innerOffset
 
-      if bits <= remainingBitsInCurrentUInt64 {
+      if bits <= remainingBitsInCurrentInt {
         data[Int(outerOffset)] |= (innerValue << innerOffset)
       } else {
-        let bitsInCurrent = remainingBitsInCurrentUInt64
+        let bitsInCurrent = remainingBitsInCurrentInt
         let bitsInNext = bits - bitsInCurrent
 
         data[Int(outerOffset)] |= (innerValue & ((1 << bitsInCurrent) - 1)) << innerOffset
 
-        if outerOffset + 1 < UInt64(palette.count) {
+        if outerOffset + 1 < Int(palette.count) {
           data[Int(outerOffset) + 1] |= (innerValue >> bitsInCurrent)
         } else {
             fatalError("out of bounds of palette")
@@ -63,12 +63,12 @@ public struct Palette {
     }
   }
 
-  public func decompress() -> [UInt64] {
+  public func decompress() -> [Int] {
     if palette.isEmpty {
         return [] // Handle empty palette case to avoid log2 of 0
     }
     var bits = Int(ceil(x: log2(Float(palette.count))))
-    var decompressedData: [UInt64] = []
+    var decompressedData: [Int] = []
     var bitCursor = 0
 
     let totalBitsInCompressedData = data.count * 64
@@ -78,18 +78,18 @@ public struct Palette {
         let outerOffset = bitCursor / 64
         let innerOffset = bitCursor % 64
 
-        var paletteIndex: UInt64 = 0
+        var paletteIndex: Int = 0
 
-        let remainingBitsInCurrentUInt64 = 64 - innerOffset
+        let remainingBitsInCurrentInt = 64 - innerOffset
 
-        if bits <= remainingBitsInCurrentUInt64 {
+        if bits <= remainingBitsInCurrentInt {
             if outerOffset < data.count {
                 paletteIndex = (data[outerOffset] >> innerOffset) & ((1 << Int(bits)) - 1)
             } else {
                 break // Out of data bounds, stop decompression
             }
         } else {
-            let bitsInCurrent = remainingBitsInCurrentUInt64
+            let bitsInCurrent = remainingBitsInCurrentInt
             let bitsInNext = bits - bitsInCurrent
 
             if outerOffset < data.count {
@@ -113,7 +113,7 @@ public struct Palette {
     }
     return decompressedData
   }
-    public subscript(index: Int) -> UInt64 {
+    public subscript(index: Int) -> Int {
         // 1. Input Validation
         precondition(index >= 0 && index < count, "Index \(index) out of bounds (count: \(count))")
 
@@ -148,23 +148,23 @@ public struct Palette {
 
 
         // 6. Extract the Palette Index from 'data' (Logic adapted from decompress)
-        var paletteIndex: UInt64 = 0
-        let remainingBitsInCurrentUInt64 = 64 - innerOffset
-        let mask = (UInt64(1) << bits) - 1 // Mask to extract exactly 'bits' bits
+        var paletteIndex: Int = 0
+        let remainingBitsInCurrentInt = 64 - innerOffset
+        let mask = (Int(1) << bits) - 1 // Mask to extract exactly 'bits' bits
 
-        if bits <= remainingBitsInCurrentUInt64 {
-            // Value fits entirely in the current UInt64
+        if bits <= remainingBitsInCurrentInt {
+            // Value fits entirely in the current Int
             paletteIndex = (data[outerOffset] >> innerOffset) & mask
         } else {
-            // Value spans across two UInt64s
-            let bitsInCurrent = remainingBitsInCurrentUInt64
+            // Value spans across two Ints
+            let bitsInCurrent = remainingBitsInCurrentInt
             let bitsInNext = bits - bitsInCurrent
 
-            // Get lower bits from the current UInt64
+            // Get lower bits from the current Int
             let part1 = data[outerOffset] >> innerOffset // No mask needed here yet
 
-            // Get upper bits from the next UInt64 (already checked bounds with requiredDataIndex)
-            let maskNext = (UInt64(1) << bitsInNext) - 1
+            // Get upper bits from the next Int (already checked bounds with requiredDataIndex)
+            let maskNext = (Int(1) << bitsInNext) - 1
             let part2 = data[outerOffset + 1] & maskNext
 
             // Combine the parts
@@ -179,4 +179,34 @@ public struct Palette {
 
         return palette[paletteArrayIndex]
     }
+}
+
+public struct PaletteId: Hashable {
+  public var id: Int
+  public init(id: Int) {
+    self.id = id
+  }
+}
+
+public struct PaletteManager {
+  public var gpuAllocator: GpuAllocator;
+  public var nextPaletteId: PaletteId = PaletteId(id: 0);
+  public var allocations: [PaletteId : TypedGpuAllocation] = [:]
+
+  public init(gpuAllocator: GpuAllocator) {
+    self.gpuAllocator = gpuAllocator
+
+  }
+
+  public mutating func allocate(palette: Palette) -> PaletteId {
+    let u64Size = Int(8);
+    let allocation = self.gpuAllocator.allocate(size: u64Size * Int(palette.data.count + palette.palette.count), type: .palette)!
+
+    let paletteId = nextPaletteId
+    nextPaletteId.id += 1
+
+    self.allocations[paletteId] = allocation
+
+    return paletteId;
+  }
 }

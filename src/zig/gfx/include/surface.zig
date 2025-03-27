@@ -1,14 +1,14 @@
 pub const Surface = extern struct {
-        id: u64, // Just an identifier for now, details will be platform-specific
-    };
+    id: u64, // Just an identifier for now, details will be platform-specific
+};
 
 // Surface creation/destruction
-pub extern fn create() ?*Surface;
-pub extern fn destroy(s: *Surface) void; // Renamed parameter to 's'
-pub extern fn supportsMultiple() bool;
+pub extern fn createSurface() ?*Surface;
+pub extern fn destroySurface(s: *Surface) void; // Renamed parameter to 's'
+pub extern fn supportsMultipleSurfaces() bool;
 
 // Surface updates
-pub extern fn poll() void;
+pub extern fn pollSurface() void;
 
 // Surface properties
 pub extern fn setName(s: *Surface, name: []const u8) void;

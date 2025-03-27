@@ -3,6 +3,7 @@ import Math
 
 public struct VoxelGrid {
     private var data: Palette
+    private var origin: IVec3
     private var size: UVec3
     private var position: Vec3
     private var rotation: Quat

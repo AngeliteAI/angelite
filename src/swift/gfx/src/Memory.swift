@@ -2,22 +2,22 @@ import Metal
 import Foundation
 
 private var nextAllocationID: AllocationId = AllocationId(id: 0)
-private func generateAllocationID() -> UInt32 {
+private func generateAllocationId() -> AllocationId {
     let id = nextAllocationID
     nextAllocationID.id += 1
     return id
 }
 
-struct AllocationId {
-    let id: UInt32
+struct AllocationId: Hashable {
+    private var id: UInt32
     init(id: UInt32) {
         self.id = id
     }
 }
 
 struct Block {
-    var offset: UInt64
-    let size: UInt64
+    var offset: Int
+    let size: Int
 }
 
 struct GpuAllocation {
@@ -26,7 +26,7 @@ struct GpuAllocation {
     let id: AllocationId 
 }
 
-enum GpuMemoryPoolType: Int, CaseIterable {
+public enum GpuMemoryPoolType: Int, CaseIterable {
     case voxel
     case palette
     case face
@@ -55,11 +55,11 @@ enum GpuMemoryPoolType: Int, CaseIterable {
 
     var storageMode: MTLResourceOptions {
         switch self {
-            case .voxelData: return .storageModeManaged  // CPU writes, GPU reads
-            case .palette:   return .storageModeManaged  // CPU writes, GPU reads
-            case .faceMesh:  return .storageModePrivate  // GPU only for generated mesh
-            case .indirect:  return .storageModePrivate  // GPU only for draw commands
-            case .metadata:  return .storageModeShared   // CPU and GPU read/write for atomic updates
+            case .voxelData: return .storageModeManaged  // CPU writes, Gpu reads
+            case .palette:   return .storageModeManaged  // CPU writes, Gpu reads
+            case .faceMesh:  return .storageModePrivate  // Gpu only for generated mesh
+            case .indirect:  return .storageModePrivate  // Gpu only for draw commands
+            case .metadata:  return .storageModeShared   // CPU and Gpu read/write for atomic updates
         }
     }
 
@@ -78,10 +78,10 @@ class GpuMemoryPool {
     private let device: MTLDevice
     private let poolType: GpuMemoryPoolType
     private var buffers: [MTLBuffer] = []
-    private var freeBlocks: [Int : Block] = []
+    private var freeBlocks: [Int : [Block]] = [:]
 
-    private var totalUsed: UInt64 = 0
-    private var totalFree: UInt64 = 0
+    private var totalUsed: Int = 0
+    private var totalFree: Int = 0
 
     init(device: MTLDevice, poolType: GpuMemoryPoolType) {
         self.device = device
@@ -90,7 +90,7 @@ class GpuMemoryPool {
         createNewBuffer(size: poolType.initialSize)
     }
 
-    private func createNewBuffer(size: UInt64) {
+    private func createNewBuffer(size: Int) {
         // Create buffer with the specified storage mode
         guard let buffer = device.makeBuffer(length: size, options: poolType.storageMode) else {
             fatalError("Failed to create buffer for \(poolType.name) pool")
@@ -104,22 +104,21 @@ class GpuMemoryPool {
         buffers.append(buffer)
         
         // Initialize free blocks list for this buffer
-        freeBlocks[bufferIndex] = [FreeBlock(offset: 0, size: size)]
+        freeBlocks[bufferIndex] = [Block(offset: 0, size: size)]
         
         totalFree += size
         
         print("Created new \(poolType.name) buffer: \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .memory))")
     }
 
-    func allocate(size: UInt64) -> GpuAllocation? {
+    func allocate(size: Int) -> GpuAllocation? {
         let alignedSize = align(size: size, to: poolType.alignment)
 
         for (bufferIndex, blocks) in freeBlocks {
             for (blockIndex, block) in blocks.enumerated() {
                 if block.size >= alignedSize {
                     let allocation = GpuAllocation(
-                        offset: block.offset,
-                        size: alignedSize,
+                        block: block,
                         buffer: buffers[bufferIndex],
                         id: generateAllocationId()
                     )
@@ -146,27 +145,7 @@ class GpuMemoryPool {
         return allocate(size: size)
     }
 
-    func free(allocation: GpuAllocation) {
-        guard let bufferIndex = buffers.firstIndex(where: { $0 === allocation.buffer }) else {
-            print("Warning: Allocation buffer not found in pool")
-            return
-        }
-
-        let newBlock = allocation.block
-
-        if freeBlocks[bufferIndex] == nil {
-            freeBlocks[bufferIndex] = [newBlock]
-        } else {
-            freeBlocks[bufferIndex]!.append(newBlock)
-            freeBlocks[bufferIndex]!.sort { $0.offset < $1.offset }
-            coaleseFreeBlocks(bufferIndex: bufferIndex)
-        }
-
-        totalUsed -= allocation.size
-        totalFree += allocation.size
-    }
-    
-    private func coalesceFreeBlocks(bufferIndex: Int) {
+     func coalesceBlocks(bufferIndex: Int) {
         guard var blocks = freeBlocks[bufferIndex], blocks.count > 1 else {
             return
         }
@@ -178,7 +157,7 @@ class GpuMemoryPool {
             
             if current.offset + current.size == next.offset {
                 // Blocks are adjacent, merge them
-                blocks[i] = FreeBlock(offset: current.offset, size: current.size + next.size)
+                blocks[i] = Block(offset: current.offset, size: current.size + next.size)
                 blocks.remove(at: i + 1)
                 // Don't increment i since we need to check again with the new next block
             } else {
@@ -189,6 +168,27 @@ class GpuMemoryPool {
         freeBlocks[bufferIndex] = blocks
     }
 
+    func free(allocation: GpuAllocation) {
+        guard let bufferIndex = buffers.firstIndex(where: { $0 === allocation.buffer }) else {
+            print("Warning: allocation.memory.buffer not found in pool")
+            return
+        }
+
+        let newBlock = allocation.block
+
+        if freeBlocks[bufferIndex] == nil {
+            freeBlocks[bufferIndex] = [newBlock]
+        } else {
+            freeBlocks[bufferIndex]!.append(newBlock)
+            freeBlocks[bufferIndex]!.sort { $0.offset < $1.offset }
+            coalesceBlocks(bufferIndex: bufferIndex)
+        }
+
+        totalUsed -= allocation.block.size
+        totalFree += allocation.block.size
+    }
+    
+
 private func align(size: Int, to alignment: Int) -> Int {
         let remainder = size % alignment
         return remainder == 0 ? size : size + (alignment - remainder)
@@ -196,13 +196,11 @@ private func align(size: Int, to alignment: Int) -> Int {
     
     /// Generate a unique allocation ID
         func getStats() -> (totalSize: Int, allocated: Int, free: Int, fragmentation: Double) {
-        lock.lock()
-        defer { lock.unlock() }
         
         let totalSize = buffers.reduce(0) { $0 + $1.length }
         let fragmentation = totalFree > 0 ? 1.0 - (Double(largestFreeBlockSize()) / Double(totalFree)) : 0.0
         
-        return (totalSize, totalAllocated, totalFree, fragmentation)
+        return (totalSize, totalUsed, totalFree, fragmentation)
     }
     
     /// Find the largest free block size
@@ -211,7 +209,8 @@ private func align(size: Int, to alignment: Int) -> Int {
         
         for (_, blocks) in freeBlocks {
             for block in blocks {
-                largest = max(largest, block.size)
+            largest = max(largest, block.size)
+
             }
         }
         
@@ -219,16 +218,16 @@ private func align(size: Int, to alignment: Int) -> Int {
     }
     
     /// Create a staging buffer for a particular allocation (if needed)
-    func createStagingBuffer(for allocation: GPUAllocation) -> MTLBuffer? {
+    func createStagingBuffer(for allocation: GpuAllocation) -> MTLBuffer? {
         // Only create staging buffers for private storage mode
         if poolType.storageMode == .storageModePrivate {
-            return device.makeBuffer(length: allocation.size, options: .storageModeShared)
+            return device.makeBuffer(length: allocation.block.size, options: .storageModeShared)
         }
         return nil
     }
     
     /// Copy from staging buffer to allocation (if needed)
-    func copyFromStaging(stagingBuffer: MTLBuffer, to allocation: GPUAllocation, commandBuffer: MTLCommandBuffer) {
+    func copyFromStaging(stagingBuffer: MTLBuffer, to allocation: GpuAllocation, commandBuffer: MTLCommandBuffer) {
         // Only need to copy for private storage mode
         if poolType.storageMode == .storageModePrivate {
             guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else { return }
@@ -237,8 +236,8 @@ private func align(size: Int, to alignment: Int) -> Int {
                 from: stagingBuffer,
                 sourceOffset: 0,
                 to: allocation.buffer,
-                destinationOffset: allocation.offset,
-                size: allocation.size
+                destinationOffset: Int(allocation.block.offset),
+                size: Int(allocation.block.size)
             )
             
             blitEncoder.endEncoding()
@@ -246,18 +245,23 @@ private func align(size: Int, to alignment: Int) -> Int {
     }
 }
 
-class TypedGpuAllocation {
+public class TypedGpuAllocation {
     var poolType: GpuMemoryPoolType
-    var allocation: GpuAllocation
+    var memory: GpuAllocation
+    
+    init(poolType: GpuMemoryPoolType, allocation: GpuAllocation) {
+        self.poolType = poolType
+        self.memory = allocation
+    }
 }
 
-class GpuMemoryAllocator {
+public class GpuAllocator {
     private let device: MTLDevice
     private var pools: [GpuMemoryPoolType : GpuMemoryPool] = [:] 
 
     private var allocations: [AllocationId : TypedGpuAllocation] = [:]
     private var needsCommit: [AllocationId : Bool] = [:]
-    private var stagingBuffers: [UInt32 : MTLBuffer] = [:]
+    private var stagingBuffers: [AllocationId : MTLBuffer] = [:]
 
     init(device: MTLDevice) {
         self.device = device
@@ -267,7 +271,7 @@ class GpuMemoryAllocator {
         }
     }
 
-    func allocate(size: UInt64, type: GpuMemoryPoolType) -> TypedGpuAllocation? {
+    func allocate(size: Int, type: GpuMemoryPoolType) -> TypedGpuAllocation? {
         guard let pool = pools[type] else {
             print("Warning: Memory pool not found for type \(type)")
             return nil
@@ -298,9 +302,9 @@ class GpuMemoryAllocator {
             return
         }
 
-        pool.free(allocation: allocation.allocation)
-        allocations.removeValue(forKey: allocation.allocation.id)
-        stagingBuffers.removeValue(forKey: allocation.allocation.id)
+        pool.free(allocation: allocation.memory)
+        allocations.removeValue(forKey: allocation.memory.id)
+        stagingBuffers.removeValue(forKey: allocation.memory.id)
     }
 
     func write<T>(data: [T], to allocationID: AllocationId, offset: Int = 0) -> Bool {
@@ -310,27 +314,26 @@ class GpuMemoryAllocator {
         }
 
         let size = data.count * MemoryLayout<T>.stride
-        let buffer = stagingBuffers[allocationID.id]
+        let buffer = stagingBuffers[allocationID]
 
-        if poolType.storageMode == .storageModePrivate {
+        if allocation.poolType.storageMode == .storageModePrivate {
             // Write to staging buffer
             guard let stagingBuffer = stagingBuffers[allocationID] else {
                 print("Error: Staging buffer not found for allocation \(allocationID)")
                 return false
             }
-            lock.unlock()
             
             let bufferPtr = stagingBuffer.contents().advanced(by: offset)
             
             data.withUnsafeBytes { rawBufferPointer in
-                memcpy(bufferPtr, rawBufferPointer.baseAddress!, dataSize)
+                memcpy(bufferPtr, rawBufferPointer.baseAddress!, size)
             }
         } else {
             // Write directly to allocation
-            let bufferPtr = allocation.buffer.contents().advanced(by: allocation.offset + offset)
+            let bufferPtr = allocation.memory.buffer.contents().advanced(by: Int(allocation.memory.block.offset) + offset)
             
             data.withUnsafeBytes { rawBufferPointer in
-                memcpy(bufferPtr, rawBufferPointer.baseAddress!, dataSize)
+                memcpy(bufferPtr, rawBufferPointer.baseAddress!, size)
             }
         }
 
@@ -345,15 +348,16 @@ class GpuMemoryAllocator {
         }
 
         let size = count * MemoryLayout<T>.stride
-        let buffer = stagingBuffers[allocationID.id]
+        let buffer = stagingBuffers[allocationID]
 
-        if poolType.storageMode == .storageModePrivate {
+        if allocation.poolType.storageMode == .storageModePrivate {
             print("Error: Cannot read directly from private memory allocation")
             return nil
         }
         // Read directly from allocation
-        let bufferPtr = allocation.buffer.contents().advanced(by: allocation.offset + offset)
-        return bufferPtr.bindMemory(to: T.self, capacity: count).map { $0 }
+        let bufferPtr = allocation.memory.buffer.contents().advanced(by: Int(allocation.memory.block.offset) + offset)
+        let typedPtr = bufferPtr.bindMemory(to: T.self, capacity: count)
+        return Array(UnsafeBufferPointer(start: typedPtr, count: count))
     }
 
     func getStats() -> [(poolType: GpuMemoryPoolType, stats: (totalSize: Int, allocated: Int, free: Int, fragmentation: Double))] {
@@ -363,17 +367,18 @@ class GpuMemoryAllocator {
     func commitWrites(commandBuffer: MTLCommandBuffer) {
         guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else { return }
         
-        for (id, stagingBuffer) in stagingCopy {
-            if !needsCommit[id] {
+        for (id, stagingBuffer) in stagingBuffers {
+            if !(needsCommit[id] ?? true) {
                 continue
             }
-            if let (allocation, _) = allocations[id] {
+            needsCommit[id] = false;
+            if let allocation = allocations[id] {
                 blitEncoder.copy(
                     from: stagingBuffer,
                     sourceOffset: 0,
-                    to: allocation.buffer,
-                    destinationOffset: allocation.offset,
-                    size: min(stagingBuffer.length, allocation.size)
+                    to: allocation.memory.buffer,
+                    destinationOffset: Int(allocation.memory.block.offset),
+                    size: min(stagingBuffer.length, Int(allocation.memory.block.size))
                 )
             }
         }

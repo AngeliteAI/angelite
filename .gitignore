@@ -1,5 +1,5 @@
 **/target
-/zig-cache
+**/zig-cache
 .DS_Store
 .env
 .obsidian
@@ -10,3 +10,4 @@
 **/yes/**
 **/.svelte-kit/**
 **/build/**
+

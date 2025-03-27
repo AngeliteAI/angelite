@@ -1,3 +1,1 @@
-kernel void countFacesFromPalette(
-    device ChunkMetadata* metadata [[buffer(0)]]
-)
+#include <metal_stdlib>

@@ -197,7 +197,7 @@ public func getVoxel(
             typedOutBlocks[i] = 0
         } else {
             let index = x + y * sx + z * sx * sy
-            typedOutBlocks[i] = voxelData[index]
+            typedOutBlocks[i] = UInt64(voxelData[index])
         }
     }
 

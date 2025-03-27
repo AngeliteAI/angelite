@@ -24,3 +24,8 @@ pub extern fn acos(x: f32) f32;
 pub extern fn atan(x: f32) f32;
 pub extern fn atan2(y: f32, x: f32) f32;
 pub extern fn eq(a: f32, b: f32, eps: f32) bool;
+pub extern fn log(x: f32) f32;
+pub extern fn log2(x: f32) f32;
+pub extern fn log10(x: f32) f32;
+pub extern fn exp(x: f32) f32;
+pub extern fn exp2(x: f32) f32;
