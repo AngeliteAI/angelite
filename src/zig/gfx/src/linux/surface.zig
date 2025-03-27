@@ -1,80 +1,87 @@
-const x = @import("x11.zig");
+const xcb = @import("xcb.zig");
 const surface = @import("../../include/surface.zig");
 const std = @import("std");
 
 const Surface = surface.Surface;
 
-pub const X11Surface = struct {
+pub const XcbSurface = struct {
     id: u64,
-    display: *x.Display,
-    window: x.Window,
+    connection: *xcb.Connection,
+    window: xcb.Window,
+    screen: *xcb.Screen,
 };
 
 var next_surface_id: u64 = 1;
-var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined; // Declare gpa as var and undefined initially
-var x11_surface_allocator: std.mem.Allocator = undefined; // Declare x11_surface_allocator as var and undefined
-var x11_surfaces: std.AutoHashMap(u64, X11Surface) = undefined; // Declare x11_surfaces as var and undefined
+var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
+var xcb_surface_allocator: std.mem.Allocator = undefined;
+var xcb_surfaces: std.AutoHashMap(u64, XcbSurface) = undefined;
 var init: bool = false;
 
 pub export fn create() ?*Surface {
     if (!init) {
         init = true;
-        gpa = std.heap.GeneralPurposeAllocator(.{}){}; // Initialize gpa in init
-        x11_surface_allocator = gpa.allocator(); // Initialize x11_surface_allocator using gpa after gpa is initialized
-        x11_surfaces = std.AutoHashMap(u64, X11Surface).init(gpa.allocator());
+        gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        xcb_surface_allocator = gpa.allocator();
+        xcb_surfaces = std.AutoHashMap(u64, XcbSurface).init(gpa.allocator());
     }
 
-    const display = x.OpenDisplay(null).?;
+    // Connect to the X server
+    const connection = xcb.connect(null, null) orelse return null;
 
-    @import("std").debug.print("yo", .{});
+    // Get the first screen
+    const setup = xcb.get_setup(connection);
+    const iter = xcb.setup_roots_iterator(setup);
+    const screen = iter.data;
 
-    const screen = x.DefaultScreen(display);
-    @import("std").debug.print("yo", .{});
+    // Calculate window dimensions (center on screen at half-size)
+    const screen_width = screen.width_in_pixels;
+    const screen_height = screen.height_in_pixels;
+    const calc_width = screen_width / 2;
+    const calc_height = screen_height / 2;
+    const pos_x = @as(i16, @intCast(screen_width / 4));
+    const pos_y = @as(i16, @intCast(screen_height / 4));
 
-    const screenWidth = @as(u32, @intCast(x.DisplayWidth(display, screen))); // Get display width
-    const screenHeight = @as(u32, @intCast(x.DisplayHeight(display, screen))); // Get display height
+    // Create the window
+    const window = xcb.generate_id(connection);
+    const value_mask = xcb.CW_BACK_PIXEL | xcb.CW_EVENT_MASK;
+    const value_list = [_]u32{
+        screen.white_pixel, // background color
+        xcb.EVENT_MASK_EXPOSURE | xcb.EVENT_MASK_KEY_PRESS, // event mask
+    };
 
-    const calcWidth = screenWidth / 2;
-    const calcHeight = screenHeight / 2;
-    const posX = @as(c_int, @intCast(screenWidth / 4));
-    const posY = @as(c_int, @intCast(screenHeight / 4));
+    _ = xcb.create_window(connection, // connection
+        xcb.COPY_FROM_PARENT, // depth
+        window, // window id
+        screen.root, // parent window
+        pos_x, pos_y, // x, y position
+        @intCast(calc_width), // width
+        @intCast(calc_height), // height
+        1, // border width
+        xcb.WINDOW_CLASS_INPUT_OUTPUT, // class
+        screen.root_visual, // visual
+        value_mask, // value mask
+        &value_list // value list
+    );
 
-    @import("std").debug.print("yo", .{});
-    const borderWidth = 1;
+    // Set window title
+    const title = "Hello, XCB Surface!";
+    _ = xcb.change_property(connection, xcb.PROP_MODE_REPLACE, window, xcb.ATOM_WM_NAME, xcb.ATOM_STRING, 8, // 8-bit format
+        title.len, title.ptr);
 
-    const root = x.RootWindow(display, screen);
+    // Map the window
+    _ = xcb.map_window(connection, window);
+    _ = xcb.flush(connection);
 
-    const black = x.BlackPixel(display, screen);
-    const white = x.WhitePixel(display, screen);
-
-    @import("std").debug.print("yo", .{});
-    const window = x.CreateSimpleWindow(display, root, posX, posY, calcWidth, calcHeight, borderWidth, black, white);
-
-    @import("std").debug.print("yo", .{});
-    if (window == 0) {
-        _ = x.CloseDisplay(display);
-        return null;
-    }
-
-    @import("std").debug.print("yo", .{});
     const surface_id = next_surface_id;
     next_surface_id += 1;
 
-    const x11_surface = X11Surface{ .id = surface_id, .display = display, .window = window };
+    const xcb_surface = XcbSurface{ .id = surface_id, .connection = connection, .window = window, .screen = screen };
 
-    @import("std").debug.print("yo", .{});
-    x11_surfaces.put(surface_id, x11_surface) catch {
+    xcb_surfaces.put(surface_id, xcb_surface) catch {
         return null;
     };
 
-    _ = x.SelectInput(display, window, x.ExposureMask);
-    _ = x.StoreName(display, window, "Hello, Surface!");
-
-    _ = x.MapWindow(display, window);
-    _ = x.Flush(display);
-
-    @import("std").debug.print("yo", .{});
-    const memory = x11_surface_allocator.alloc(Surface, 1) catch {
+    const memory = xcb_surface_allocator.alloc(Surface, 1) catch {
         return null;
     };
 
@@ -82,12 +89,35 @@ pub export fn create() ?*Surface {
 }
 
 pub export fn poll() void {
-    var x11_surface_iter = x11_surfaces.valueIterator();
-    while (x11_surface_iter.next()) |x11_surface| {
-        var event: x.Event = undefined;
-        @import("std").debug.print("yo", .{});
-        while (x.pending(x11_surface.display) > 0) {
-            _ = x.nextEvent(x11_surface.display, &event);
+    var xcb_surface_iter = xcb_surfaces.valueIterator();
+    while (xcb_surface_iter.next()) |xcb_surface| {
+        var event = xcb.poll_for_event(xcb_surface.connection);
+        while (event != null) : (event = xcb.poll_for_event(xcb_surface.connection)) {
+            switch (event.?.response_type & ~@as(u8, 0x80)) {
+                xcb.EXPOSE => {
+                    // Handle expose events if needed
+                },
+                xcb.KEY_PRESS => {
+                    // Handle key press events if needed
+                },
+                else => {},
+            }
+            xcb_surface_allocator.free(event.?);
         }
     }
+}
+
+pub export fn destroy(surface_ptr: *Surface) void {
+    const id = surface_ptr.id;
+    if (xcb_surfaces.get(id)) |xcb_surface| {
+        // Destroy the window
+        _ = xcb.destroy_window(xcb_surface.connection, xcb_surface.window);
+        // Disconnect from the X server
+        xcb.disconnect(xcb_surface.connection);
+
+        // Remove from hash map
+        _ = xcb_surfaces.remove(id);
+    }
+    // Free the memory
+    xcb_surface_allocator.free(@as([*]Surface, @ptrCast(surface_ptr))[0..1]);
 }
