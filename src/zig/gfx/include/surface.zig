@@ -1,6 +1,6 @@
 pub const Surface = extern struct {
-        id: u64, // Just an identifier for now, details will be platform-specific
-    };
+    id: u64, // Just an identifier for now, details will be platform-specific
+};
 
 // Surface creation/destruction
 pub extern fn create() ?*Surface;

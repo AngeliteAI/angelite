@@ -1,15 +1,19 @@
 const render = @import("src/linux/render.zig");
 const surface = @import("src/linux/surface.zig");
-
+const std = @import("std");
 pub fn main() void {
-        @import("std").debug.print("surface!", .{});
-    _ = surface.create();
-        @import("std").debug.print("render!", .{});
-    if (render.init()) {
-        @import("std").debug.print("success!", .{});
+    std.debug.print("surface!", .{});
+    const activeSurface = surface.create();
+    std.debug.print("render!", .{});
+    const activeRenderer = render.init(activeSurface);
+    if (activeRenderer == null) {
+        std.debug.print("Failed to initialize renderer.\n", .{});
+        return;
     }
 
-    while(true){
+    std.debug.print("Renderer initialized successfully.\n", .{});
+
+    while (true) {
         surface.poll();
     }
 }
