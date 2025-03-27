@@ -34,8 +34,9 @@ pub export fn create() ?*Surface {
     const screen = iter.data;
 
     // Calculate window dimensions (center on screen at half-size)
-    const screen_width = screen.width_in_pixels;
-    const screen_height = screen.height_in_pixels;
+    // Use the C accessor functions instead of direct field access
+    const screen_width = xcb.get_screen_width(screen);
+    const screen_height = xcb.get_screen_height(screen);
     const calc_width = screen_width / 2;
     const calc_height = screen_height / 2;
     const pos_x = @as(i16, @intCast(screen_width / 4));
@@ -45,20 +46,20 @@ pub export fn create() ?*Surface {
     const window = xcb.generate_id(connection);
     const value_mask = xcb.CW_BACK_PIXEL | xcb.CW_EVENT_MASK;
     const value_list = [_]u32{
-        screen.white_pixel, // background color
+        xcb.get_screen_white_pixel(screen), // background color
         xcb.EVENT_MASK_EXPOSURE | xcb.EVENT_MASK_KEY_PRESS, // event mask
     };
 
     _ = xcb.create_window(connection, // connection
         xcb.COPY_FROM_PARENT, // depth
         window, // window id
-        screen.root, // parent window
+        xcb.get_screen_root(screen), // parent window
         pos_x, pos_y, // x, y position
         @intCast(calc_width), // width
         @intCast(calc_height), // height
         1, // border width
         xcb.WINDOW_CLASS_INPUT_OUTPUT, // class
-        screen.root_visual, // visual
+        xcb.get_screen_root_visual(screen), // visual
         value_mask, // value mask
         &value_list // value list
     );
@@ -92,8 +93,11 @@ pub export fn poll() void {
     var xcb_surface_iter = xcb_surfaces.valueIterator();
     while (xcb_surface_iter.next()) |xcb_surface| {
         var event = xcb.poll_for_event(xcb_surface.connection);
-        while (event != null) : (event = xcb.poll_for_event(xcb_surface.connection)) {
-            switch (event.?.response_type & ~@as(u8, 0x80)) {
+
+        // Fixed event handling loop
+        while (event != null) {
+            const event_type = event.?.response_type & ~@as(u8, 0x80);
+            switch (event_type) {
                 xcb.EXPOSE => {
                     // Handle expose events if needed
                 },
@@ -102,7 +106,10 @@ pub export fn poll() void {
                 },
                 else => {},
             }
-            xcb_surface_allocator.free(event.?);
+
+            // Free event using proper allocation approach
+            std.c.free(event);
+            event = xcb.poll_for_event(xcb_surface.connection);
         }
     }
 }
