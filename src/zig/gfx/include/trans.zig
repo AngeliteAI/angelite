@@ -1,4 +1,4 @@
-pub const *Transform = struct { id: u64 };
+pub const Transform = struct { id: u64 };
 
 pub const Dim = enum { X, Y, Z };
 

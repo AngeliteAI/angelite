@@ -1,6 +1,6 @@
 const trans = @import("trans.zig");
 const brush = @import("brush.zig");
-const vec = @import("vec.zig");
+const vec = @import("../../math/src/vec.zig");
 
 const Vec3 = vec.Vec3;
 

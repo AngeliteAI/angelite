@@ -25,7 +25,83 @@ const Renderer = struct {
     command_buffer: vk.CommandBuffer,
     graphics_queue: vk.Queue,
 
+    const InstanceExtensions = [_][*:0]const u8{
+        vk.KHR_SURFACE_EXTENSION_NAME,
+        vk.KHR_XCB_SURFACE_EXTENSION_NAME,
+    };
+
+    const DeviceExtensions = [_][*:0]const u8{
+        vk.KHR_SWAPCHAIN_EXTENSION_NAME,
+    };
+
+    fn checkExtensionsSupport(
+        required_extensions: []const [*:0]const u8,
+        available_extensions: []const vk.ExtensionProperties,
+    ) !bool {
+        for (required_extensions) |required_ext| {
+            const req_name = std.mem.span(required_ext);
+            var found = false;
+
+            for (available_extensions) |available_ext| {
+                const ext_name = std.mem.sliceTo(&available_ext.extensionName, 0);
+                if (std.mem.eql(u8, ext_name, req_name)) {
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                std.debug.print("Required extension not supported: {s}\n", .{req_name});
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn getAvailableInstanceExtensions() ![]vk.ExtensionProperties {
+        var extension_count: u32 = 0;
+        _ = vk.enumerateInstanceExtensionProperties(null, &extension_count, null);
+
+        const extensions = try renderAllocator.alloc(vk.ExtensionProperties, extension_count);
+        const result = vk.enumerateInstanceExtensionProperties(null, &extension_count, @ptrCast(extensions));
+
+        if (result != vk.SUCCESS) {
+            std.debug.print("Failed to enumerate instance extensions: {}\n", .{result});
+            return error.EnumerationFailed;
+        }
+
+        return extensions[0..extension_count];
+    }
+
+    fn getAvailableDeviceExtensions(physical_device: vk.PhysicalDevice) ![]vk.ExtensionProperties {
+        var extension_count: u32 = 0;
+        _ = vk.enumerateDeviceExtensionProperties(physical_device, null, &extension_count, null);
+
+        const extensions = try renderAllocator.alloc(vk.ExtensionProperties, extension_count);
+        const result = vk.enumerateDeviceExtensionProperties(physical_device, null, &extension_count, @ptrCast(extensions));
+
+        if (result != vk.SUCCESS) {
+            std.debug.print("Failed to enumerate device extensions: {}\n", .{result});
+            return error.EnumerationFailed;
+        }
+
+        return extensions[0..extension_count];
+    }
+
     fn init(surface: *Surface) ?*Renderer {
+        // Check instance extensions
+        const instance_extensions = getAvailableInstanceExtensions() catch {
+            std.debug.print("Failed to get available instance extensions\n", .{});
+            return null;
+        };
+        defer renderAllocator.free(instance_extensions);
+
+        const instance_extensions_supported = checkExtensionsSupport(&InstanceExtensions, instance_extensions) catch |err| {
+            std.debug.print("Error checking instance extensions: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        // Create app and instance info with appropriate extensions
         const app_info = vk.AppInfo{
             .sType = vk.sTy(vk.StructureType.AppInfo),
             .pApplicationName = "Hello Vulkan",
@@ -38,12 +114,18 @@ const Renderer = struct {
         const instance_info = vk.InstanceInfo{
             .sType = vk.sTy(vk.StructureType.InstanceInfo),
             .pApplicationInfo = &app_info,
+            .enabledExtensionCount = if (instance_extensions_supported) InstanceExtensions.len else 0,
+            .ppEnabledExtensionNames = if (instance_extensions_supported) &InstanceExtensions else null,
         };
 
         const instance = create: {
             var instance: vk.Instance = undefined;
             const result = vk.createInstance(&instance_info, null, @ptrCast(&instance));
-            std.debug.print("{}", .{result});
+            if (result != vk.SUCCESS) {
+                std.debug.print("Failed to create instance: {}\n", .{result});
+                return null;
+            }
+            std.debug.print("Vulkan instance created successfully\n", .{});
             break :create instance;
         };
 
@@ -58,6 +140,8 @@ const Renderer = struct {
                 std.debug.print("Failed to allocate memory for physical devices\n {s}", .{@errorName(err)});
                 return null;
             };
+            defer renderAllocator.free(physical_devices);
+
             _ = vk.enumeratePhysicalDevices(instance, &device_count, @ptrCast(physical_devices));
 
             var best_device: ?vk.PhysicalDevice = null;
@@ -91,6 +175,19 @@ const Renderer = struct {
             break :determine best_device.?;
         };
 
+        // Check device extensions
+        const device_extensions = getAvailableDeviceExtensions(physical_device) catch {
+            std.debug.print("Failed to get available device extensions\n", .{});
+            return null;
+        };
+        defer renderAllocator.free(device_extensions);
+
+        const device_extensions_supported = checkExtensionsSupport(&DeviceExtensions, device_extensions) catch |err| {
+            std.debug.print("Error checking device extensions: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        // Queue creation
         const queue_priority: f32 = 1.0;
         const queue_create_info = vk.DeviceQueueCreateInfo{
             .sType = vk.sTy(vk.StructureType.DeviceQueueCreateInfo),
@@ -99,67 +196,13 @@ const Renderer = struct {
             .pQueuePriorities = &queue_priority,
         };
 
-        // Required extensions for XCB surface support
-        const headExtensions = [_][*:0]const u8{
-            vk.KHR_SWAPCHAIN_EXTENSION_NAME,
-            vk.KHR_SURFACE_EXTENSION_NAME,
-            vk.KHR_XCB_SURFACE_EXTENSION_NAME,
-        };
-
-        //Check for extensions before creating the device
-        var extension_count: u32 = 0;
-        const result = vk.enumerateDeviceExtensionProperties(physical_device, null, &extension_count, null);
-        if (result != vk.SUCCESS) {
-            std.debug.print("Failed to enumerate device extensions: {}\n", .{result});
-            return null;
-        }
-        const extensions = renderAllocator.alloc(vk.ExtensionProperties, extension_count) catch |err| {
-            std.debug.print("Failed to allocate memory for device extensions\n {s}", .{@errorName(err)});
-            return null;
-        };
-        const result_enum = vk.enumerateDeviceExtensionProperties(physical_device, null, &extension_count, @ptrCast(extensions));
-        if (result_enum != vk.SUCCESS) {
-            std.debug.print("Failed to enumerate device extensions: {}\n", .{result_enum});
-            return null;
-        }
-        for (extensions[0..extension_count]) |extension| {
-            std.debug.print("Extension: {s}\n", .{extension.extensionName});
-        }
-        // Check if required extensions are supported
-        var allExtensionsFound = true;
-        for (headExtensions) |required_extension| {
-            var found = false;
-            for (extensions[0..extension_count]) |extension| {
-                const ext_name = std.mem.sliceTo(&extension.extensionName, 0);
-                const req_name = std.mem.span(required_extension);
-                if (std.mem.eql(u8, ext_name, req_name)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                std.debug.print("Required extension not supported: {s}\n", .{required_extension});
-                allExtensionsFound = false;
-            }
-        }
-        var deviceExtensionsLen: u32 = 0;
-        const deviceExtensions: ?*const [*:0]const u8 = found: {
-            if (allExtensionsFound) {
-                std.debug.print("All required extensions are supported.\n", .{});
-                deviceExtensionsLen = @intCast(headExtensions.len);
-                break :found @ptrCast(&headExtensions);
-            } else {
-                std.debug.print("Not all required extensions are supported. Running in headless mode.\n", .{});
-                deviceExtensionsLen = 0;
-                break :found undefined;
-            }
-        };
+        // Create device with supported extensions
         const device_create_info = vk.DeviceCreateInfo{
             .sType = vk.sTy(vk.StructureType.DeviceCreateInfo),
             .queueCreateInfoCount = 1,
             .pQueueCreateInfos = &queue_create_info,
-            .enabledExtensionCount = deviceExtensionsLen,
-            .ppEnabledExtensionNames = deviceExtensions orelse null,
+            .enabledExtensionCount = if (device_extensions_supported) DeviceExtensions.len else 0,
+            .ppEnabledExtensionNames = if (device_extensions_supported) &DeviceExtensions else null,
             .enabledLayerCount = 0,
             .ppEnabledLayerNames = null,
             .pEnabledFeatures = null,
@@ -168,18 +211,16 @@ const Renderer = struct {
         var device: vk.Device = undefined;
         const deviceResult = vk.createDevice(physical_device, &device_create_info, null, &device);
         if (deviceResult != vk.SUCCESS) {
-            std.debug.print("Failed to create logical device: {}\n", .{result});
+            std.debug.print("Failed to create logical device: {}\n", .{deviceResult});
             return null;
         }
         std.debug.print("Logical device created successfully.\n", .{});
 
         const activeVkSurface = set: {
-            if (allExtensionsFound) {
+            if (instance_extensions_supported) {
                 // Create Vulkan surface from the platform surface
                 var vk_surface: vk.Surface = undefined;
 
-                // Access surface internals to create Vulkan surface using XCB
-                // Get the XcbSurface data from our surface
                 std.debug.print("Surface ID: {}\n", .{surface.*.id});
                 const xcb_surface = sf.xcb_surfaces.get(SurfaceId{ .id = surface.*.id }) orelse {
                     std.debug.print("Failed to find XCB surface data\n", .{});

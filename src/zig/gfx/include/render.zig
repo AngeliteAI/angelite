@@ -1,5 +1,9 @@
 const math = @import("../../math/root.zig");
-const vox = @import("vox.zig");
+const vol = @import("vol.zig");
+const surface = @import("surface.zig");
+
+const Surface = surface.Surface;
+const Volume = vol.Volume;
 
 pub const Camera = extern struct {
     position: math.Vec3,
@@ -12,6 +16,10 @@ pub const RenderSettings = extern struct {
     enable_ao: bool = true,
 };
 
+pub const Renderer = extern struct {
+    id: u64
+};
+
 pub extern fn init(surface: *Surface) bool;
 pub extern fn shutdown() void;
 pub extern fn supportsMultiple() bool;
@@ -21,7 +29,7 @@ pub extern fn setCamera(renderer: *Renderer, camera: *Camera) void;
 pub extern fn setSettings(renderer: *Renderer, settings: *RenderSettings) void;
 
 // Simple chunk management - just add/remove voxel volumes
-pub extern fn addVolume(renderer: *Renderer, voxels: &vox.Volume, position: [3]i32) void;
+pub extern fn addVolume(renderer: *Renderer, volume: *vol.Volume, position: [3]i32) void;
 pub extern fn removeVolume(renderer: *Renderer, position: [3]i32) void;
 pub extern fn clearVolumes(renderer: *Renderer) void;
 

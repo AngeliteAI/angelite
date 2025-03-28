@@ -1,12 +1,12 @@
 const trans = @import("trans.zig");
 
-const *Transform = trans.*Transform;
+const Transform = trans.Transform;
 
 pub const Brush = extern struct {
     id: u64,
 };
 
-pub const *Condition = extern struct {
+pub const Condition = extern struct {
     id: u64,
 };
 
@@ -14,7 +14,7 @@ pub const *Condition = extern struct {
 pub extern fn brush(name: []const u8) *Brush;
 
 // Apply a material when a condition is met
-pub extern fn when(brush: *Brush, condition: *Condition, material: u16)* Brush;
+pub extern fn when(brush: *Brush, condition: *Condition, material: u16) *Brush;
 
 // Combine brushes (later brushes override earlier ones)
 pub extern fn layer(brushes: []const Brush) *Brush;
