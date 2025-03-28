@@ -2,42 +2,42 @@
 pub const Error = enum(i32) {
     // Success (no error)
     OK = 0,
-    
+
     // Memory errors
     OUT_OF_MEMORY = 1,
-    
+
     // I/O errors
     IO_ERROR = 10,
     BAD_FILE_DESCRIPTOR = 11,
     BAD_ADDRESS = 12,
     BUFFER_FULL = 13,
     RESOURCE_UNAVAILABLE = 14,
-    
+
     // Argument errors
     INVALID_ARGUMENT = 20,
-    
+
     // Operation errors
     OPERATION_TIMEOUT = 30,
     OPERATION_INTERRUPTED = 31,
     OPERATION_NOT_SUPPORTED = 32,
-    
+
     // Network errors
     NETWORK_UNREACHABLE = 40,
     CONNECTION_REFUSED = 41,
     CONNECTION_RESET = 42,
     ADDRESS_IN_USE = 43,
     ADDRESS_NOT_AVAILABLE = 44,
-    
+
     // Context errors
     CONTEXT_NOT_INITIALIZED = 50,
     SUBMISSION_QUEUE_FULL = 51,
-    
+
     // System errors
     SYSTEM_LIMIT_REACHED = 60,
-    
+
     // Unknown/unexpected errors
     UNKNOWN = 999,
-    
+
     // Convert from system error codes to this enum
     pub fn fromOsError(code: i32) Error {
         return switch (code) {
@@ -58,7 +58,7 @@ pub const Error = enum(i32) {
             else => .UNKNOWN,
         };
     }
-    
+
     // Convert from Zig error to this enum
     pub fn fromError(err: anyerror) Error {
         return switch (err) {
@@ -82,4 +82,3 @@ pub const Error = enum(i32) {
         };
     }
 };
-

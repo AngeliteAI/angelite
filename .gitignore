@@ -1,5 +1,9 @@
 **/target
+<<<<<<< HEAD
 **/zig-cache
+=======
+**/.zig-cache
+>>>>>>> refs/remotes/origin/main
 .DS_Store
 .env
 .obsidian
