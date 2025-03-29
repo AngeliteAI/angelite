@@ -1,4 +1,6 @@
-const math = @import("../../math/root.zig");
+const vec = @import("math/include/vec.zig");
+const mat = @import("math/include/mat.zig");
+const quat = @import("math/include/quat.zig");
 const vol = @import("vol.zig");
 const surface = @import("surface.zig");
 
@@ -6,9 +8,9 @@ const Surface = surface.Surface;
 const Volume = vol.Volume;
 
 pub const Camera = extern struct {
-    position: math.Vec3,
-    rotation: math.Quat,
-    projection: math.Mat4,
+    position: vec.Vec3,
+    rotation: quat.Quat,
+    projection: mat.Mat4,
 };
 
 pub const RenderSettings = extern struct {
@@ -16,9 +18,7 @@ pub const RenderSettings = extern struct {
     enable_ao: bool = true,
 };
 
-pub const Renderer = extern struct {
-    id: u64
-};
+pub const Renderer = extern struct { id: u64 };
 
 pub extern fn init(surface: *Surface) bool;
 pub extern fn shutdown() void;

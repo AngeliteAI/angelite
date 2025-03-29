@@ -101,13 +101,16 @@ public struct Renderer {
 
     var pipelines: PipelineManager
 
+    var allocator: GpuAllocator
+
     public init(device: MTLDevice) {
         self.device = device
         self.commandQueue = device.makeCommandQueue()!
 
         self.maxConcurrentChunks = 64
         self.pipelines = PipelineManager(device: device)
-        self.palettes = PaletteManager(device: device)
+
+        self.allocator = GpuAllocator(device: device)
 
         setupPipelines()
     }
@@ -153,76 +156,6 @@ public struct Renderer {
             print("❌ Failed to create pipelines: \(error)")
             fatalError("Pipeline creation failed")
         }
-    }
-    
-    private func setupBuffers() {
-        // Create chunk metadata buffer (Shared since CPU needs to read/write)
-        let chunkMetadataSize = maxConcurrentChunks * MemoryLayout<ChunkMetadata>.stride
-        _ = buffers.createBuffer(
-            name: "chunkMetadata", 
-            length: chunkMetadataSize, 
-            options: .storageModeShared
-        )
-        
-        // Create voxel data buffer (Private with staging for optimal performance)
-        let voxelDataSize = maxConcurrentChunks * Int(worldChunkSize.x * worldChunkSize.y * worldChunkSize.z)
-        _ = buffers.createBuffer(
-            name: "voxelData", 
-            length: voxelDataSize, 
-            options: .storageModePrivate,
-            createStaging: true
-        )
-        
-        // Create faces buffer (Private with staging)
-        let totalPossibleFaces = maxConcurrentChunks * maxFacesPerChunk
-        let facesSize = totalPossibleFaces * MemoryLayout<Face>.stride
-        _ = buffers.createBuffer(
-            name: "faces", 
-            length: facesSize, 
-            options: .storageModePrivate,
-            createStaging: true
-        )
-        
-        // Create draw commands buffer (Private with staging)
-        let drawCommandsSize = totalPossibleFaces * MemoryLayout<DrawCommand>.stride
-        _ = buffers.createBuffer(
-            name: "drawCommands", 
-            length: drawCommandsSize, 
-            options: .storageModePrivate,
-            createStaging: true
-        )
-        
-        // Create compacted draw commands buffer (Private with staging)
-        _ = buffers.createBuffer(
-            name: "compactedDrawCommands", 
-            length: drawCommandsSize, 
-            options: .storageModePrivate,
-            createStaging: true
-        )
-        
-        // Create visibility buffer (Shared for atomic operations)
-        let visibilitySize = maxConcurrentChunks * MemoryLayout<UInt32>.stride
-        _ = buffers.createBuffer(
-            name: "visibility", 
-            length: visibilitySize, 
-            options: .storageModeShared
-        )
-        
-        // Create indirect args buffer (Shared for atomic counters)
-        let indirectArgsSize = 8 * MemoryLayout<UInt32>.stride
-        _ = buffers.createBuffer(
-            name: "indirectArgs", 
-            length: indirectArgsSize, 
-            options: .storageModeShared
-        )
-        
-        // Create index buffer (Immutable, so we can use Managed mode for best performance)
-        let indices: [UInt16] = [0, 1, 2, 0, 2, 3] // Indices for a quad
-        _ = buffers.createOrUpdateBuffer(
-            name: "indexBuffer", 
-            data: indices, 
-            options: .storageModeManaged
-        )
     }
 }
 

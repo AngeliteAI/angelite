@@ -9,380 +9,246 @@ private func generateAllocationId() -> AllocationId {
 }
 
 struct AllocationId: Hashable {
-    private var id: UInt32
+    var id: UInt32
     init(id: UInt32) {
         self.id = id
     }
 }
 
-struct Block {
-    var offset: Int
-    let size: Int
+enum HeapResourceType: Int {
+    case voxel = 0
+    case palette = 1
+    case face = 2
+    case indirect = 3
+    case metadata = 4
 }
 
-struct GpuAllocation {
-    let block: Block
+@frozen public struct HeapBlock {
+    let offset: UInt64
+    let size: UInt64
+}
+
+public struct HeapAllocation {
     let buffer: MTLBuffer
-    let id: AllocationId 
+    let block: HeapBlock
+    let type: HeapResourceType
+    let id: AllocationId
 }
 
-public enum GpuMemoryPoolType: Int, CaseIterable {
-    case voxel
-    case palette
-    case face
-    case indirect
-    case metadata
-
-    var initialSize: Int {
-        switch self {
-            case .voxel: return 1024 * 1024 * 1024 // 1 GB
-            case .palette: return 64 * 1024 * 1024 // 64 MB
-            case .face: return 1024 * 1024 * 1024 // 1 GB
-            case .indirect: return 64 * 1024 * 1024 // 64 MB
-            case .metadata: return 64 * 1024 * 1024 // 64 MB
+// Ring buffer for staging operations
+class StagingRingBuffer {
+    private let buffer: MTLBuffer
+    private let size: Int
+    private var head: Int = 0
+    private var tail: Int = 0
+    private var allocations: [Range<Int>: AllocationId] = [:]
+    
+    init(device: MTLDevice, size: Int) {
+        guard let buffer = device.makeBuffer(length: size, options: .storageModeShared) else {
+            fatalError("Failed to create staging ring buffer")
         }
+        self.buffer = buffer
+        self.size = size
+        buffer.label = "StagingRingBuffer"
     }
-
-    var alignment: Int {
-        switch self {
-            case .voxelData: return 16  // Align to 16 bytes (typical for SIMD)
-            case .palette:   return 8   // Align to 8 bytes (64-bit values)
-            case .faceMesh:  return 16  // Align to 16 bytes (for SIMD)
-            case .indirect:  return 16  // Align to 16 bytes (for indirect commands)
-            case .metadata:  return 8   // Align to 8 bytes (64-bit values)
-        }
-    }
-
-    var storageMode: MTLResourceOptions {
-        switch self {
-            case .voxelData: return .storageModeManaged  // CPU writes, Gpu reads
-            case .palette:   return .storageModeManaged  // CPU writes, Gpu reads
-            case .faceMesh:  return .storageModePrivate  // Gpu only for generated mesh
-            case .indirect:  return .storageModePrivate  // Gpu only for draw commands
-            case .metadata:  return .storageModeShared   // CPU and Gpu read/write for atomic updates
-        }
-    }
-
-    var name: String {
-        switch self {
-            case .voxelData: return "VoxelData"
-            case .palette:   return "Palette"
-            case .faceMesh:  return "FaceMesh"
-            case .indirect:  return "Indirect"
-            case .metadata:  return "Metadata"
-        }
-    }
-}
-
-class GpuMemoryPool {
-    private let device: MTLDevice
-    private let poolType: GpuMemoryPoolType
-    private var buffers: [MTLBuffer] = []
-    private var freeBlocks: [Int : [Block]] = [:]
-
-    private var totalUsed: Int = 0
-    private var totalFree: Int = 0
-
-    init(device: MTLDevice, poolType: GpuMemoryPoolType) {
-        self.device = device
-        self.poolType = poolType
+    
+    func allocate(size: Int, alignment: Int = 256) -> (buffer: MTLBuffer, offset: Int, id: AllocationId)? {
+        let alignedSize = (size + alignment - 1) & ~(alignment - 1)
+        var availableSpace = 0
         
-        createNewBuffer(size: poolType.initialSize)
-    }
-
-    private func createNewBuffer(size: Int) {
-        // Create buffer with the specified storage mode
-        guard let buffer = device.makeBuffer(length: size, options: poolType.storageMode) else {
-            fatalError("Failed to create buffer for \(poolType.name) pool")
+        if head >= tail {
+            // Space available from head to end of buffer and from start to tail
+            availableSpace = (size - head) + tail
+        } else {
+            // Space available between tail and head
+            availableSpace = tail - head
         }
         
-        // Set a label for debugging
-        buffer.label = "MemoryPool_\(poolType.name)_\(buffers.count)"
+        if availableSpace < alignedSize {
+            print("Staging buffer full, cannot allocate \(alignedSize) bytes")
+            return nil
+        }
         
-        // Add to our list
-        let bufferIndex = buffers.count
-        buffers.append(buffer)
+        var allocOffset = head
+        // Align offset
+        allocOffset = (allocOffset + alignment - 1) & ~(alignment - 1)
         
-        // Initialize free blocks list for this buffer
-        freeBlocks[bufferIndex] = [Block(offset: 0, size: size)]
+        // Handle wrapping
+        if allocOffset + alignedSize > size {
+            // Not enough space at the end, wrap to beginning
+            allocOffset = 0
+            allocOffset = (allocOffset + alignment - 1) & ~(alignment - 1)
+        }
         
-        totalFree += size
+        // Update head
+        head = (allocOffset + alignedSize) % size
         
-        print("Created new \(poolType.name) buffer: \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .memory))")
+        let allocationId = generateAllocationId()
+        allocations[allocOffset..<(allocOffset + alignedSize)] = allocationId
+        
+        return (buffer, allocOffset, allocationId)
     }
-
-    func allocate(size: Int) -> GpuAllocation? {
-        let alignedSize = align(size: size, to: poolType.alignment)
-
-        for (bufferIndex, blocks) in freeBlocks {
-            for (blockIndex, block) in blocks.enumerated() {
-                if block.size >= alignedSize {
-                    let allocation = GpuAllocation(
-                        block: block,
-                        buffer: buffers[bufferIndex],
-                        id: generateAllocationId()
-                    )
-
-                    let newOffset = block.offset + alignedSize
-                    let newSize = block.size - alignedSize
-
-                    if newSize > 0 {
-                        freeBlocks[bufferIndex]![blockIndex] = Block(offset: newOffset, size: newSize)
-                    } else {
-                        freeBlocks[bufferIndex]!.remove(at: blockIndex)
-                    }
-
-                    totalUsed += alignedSize
-                    totalFree -= alignedSize
-
-                    return allocation
+    
+    func free(id: AllocationId) {
+        // Find allocation by ID
+        if let range = allocations.first(where: { $0.value == id })?.key {
+            allocations.removeValue(forKey: range)
+            
+            // Update tail if this was the oldest allocation
+            if range.lowerBound == tail {
+                tail = range.upperBound
+                
+                // Find next allocation
+                while let nextRange = allocations.keys.sorted(by: { $0.lowerBound < $1.lowerBound }).first(where: { $0.lowerBound == tail }) {
+                    tail = nextRange.upperBound
                 }
             }
         }
-
-        createNewBuffer(size: poolType.initialSize)
-
-        return allocate(size: size)
-    }
-
-     func coalesceBlocks(bufferIndex: Int) {
-        guard var blocks = freeBlocks[bufferIndex], blocks.count > 1 else {
-            return
-        }
-        
-        var i = 0
-        while i < blocks.count - 1 {
-            let current = blocks[i]
-            let next = blocks[i + 1]
-            
-            if current.offset + current.size == next.offset {
-                // Blocks are adjacent, merge them
-                blocks[i] = Block(offset: current.offset, size: current.size + next.size)
-                blocks.remove(at: i + 1)
-                // Don't increment i since we need to check again with the new next block
-            } else {
-                i += 1
-            }
-        }
-        
-        freeBlocks[bufferIndex] = blocks
-    }
-
-    func free(allocation: GpuAllocation) {
-        guard let bufferIndex = buffers.firstIndex(where: { $0 === allocation.buffer }) else {
-            print("Warning: allocation.memory.buffer not found in pool")
-            return
-        }
-
-        let newBlock = allocation.block
-
-        if freeBlocks[bufferIndex] == nil {
-            freeBlocks[bufferIndex] = [newBlock]
-        } else {
-            freeBlocks[bufferIndex]!.append(newBlock)
-            freeBlocks[bufferIndex]!.sort { $0.offset < $1.offset }
-            coalesceBlocks(bufferIndex: bufferIndex)
-        }
-
-        totalUsed -= allocation.block.size
-        totalFree += allocation.block.size
     }
     
-
-private func align(size: Int, to alignment: Int) -> Int {
-        let remainder = size % alignment
-        return remainder == 0 ? size : size + (alignment - remainder)
-    }
-    
-    /// Generate a unique allocation ID
-        func getStats() -> (totalSize: Int, allocated: Int, free: Int, fragmentation: Double) {
-        
-        let totalSize = buffers.reduce(0) { $0 + $1.length }
-        let fragmentation = totalFree > 0 ? 1.0 - (Double(largestFreeBlockSize()) / Double(totalFree)) : 0.0
-        
-        return (totalSize, totalUsed, totalFree, fragmentation)
-    }
-    
-    /// Find the largest free block size
-    private func largestFreeBlockSize() -> Int {
-        var largest = 0
-        
-        for (_, blocks) in freeBlocks {
-            for block in blocks {
-            largest = max(largest, block.size)
-
-            }
-        }
-        
-        return largest
-    }
-    
-    /// Create a staging buffer for a particular allocation (if needed)
-    func createStagingBuffer(for allocation: GpuAllocation) -> MTLBuffer? {
-        // Only create staging buffers for private storage mode
-        if poolType.storageMode == .storageModePrivate {
-            return device.makeBuffer(length: allocation.block.size, options: .storageModeShared)
-        }
-        return nil
-    }
-    
-    /// Copy from staging buffer to allocation (if needed)
-    func copyFromStaging(stagingBuffer: MTLBuffer, to allocation: GpuAllocation, commandBuffer: MTLCommandBuffer) {
-        // Only need to copy for private storage mode
-        if poolType.storageMode == .storageModePrivate {
-            guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else { return }
-            
-            blitEncoder.copy(
-                from: stagingBuffer,
-                sourceOffset: 0,
-                to: allocation.buffer,
-                destinationOffset: Int(allocation.block.offset),
-                size: Int(allocation.block.size)
-            )
-            
-            blitEncoder.endEncoding()
-        }
-    }
-}
-
-public class TypedGpuAllocation {
-    var poolType: GpuMemoryPoolType
-    var memory: GpuAllocation
-    
-    init(poolType: GpuMemoryPoolType, allocation: GpuAllocation) {
-        self.poolType = poolType
-        self.memory = allocation
+    func reset() {
+        head = 0
+        tail = 0
+        allocations.removeAll()
     }
 }
 
 public class GpuAllocator {
     private let device: MTLDevice
-    private var pools: [GpuMemoryPoolType : GpuMemoryPool] = [:] 
-
-    private var allocations: [AllocationId : TypedGpuAllocation] = [:]
-    private var needsCommit: [AllocationId : Bool] = [:]
-    private var stagingBuffers: [AllocationId : MTLBuffer] = [:]
-
-    init(device: MTLDevice) {
+    private let heap: MTLHeap
+    private let stagingBuffer: StagingRingBuffer
+    private var allocations: [AllocationId: HeapAllocation] = [:]
+    private var pendingTransfers: [(source: MTLBuffer, sourceOffset: Int, destination: MTLBuffer, destinationOffset: Int, size: Int)] = []
+    
+    // Resource tracking
+    private var resourceOffsets: [HeapResourceType: Int] = [:]
+    
+    init(device: MTLDevice, heapSize: Int = 2 * 1024 * 1024 * 1024, stagingSize: Int = 256 * 1024 * 1024) {
         self.device = device
-
-        for poolType in GpuMemoryPoolType.allCases {
-            pools[poolType] = GpuMemoryPool(device: device, poolType: poolType)
+        
+        // Create heap descriptor
+        let heapDescriptor = MTLHeapDescriptor()
+        heapDescriptor.size = heapSize
+        heapDescriptor.storageMode = .private // GPU-only memory for performance
+        heapDescriptor.hazardTrackingMode = .tracked
+        
+        // Create heap
+        guard let heap = device.makeHeap(descriptor: heapDescriptor) else {
+            fatalError("Failed to create GPU heap")
+        }
+        self.heap = heap
+        heap.label = "MainGPUHeap"
+        
+        // Create staging buffer
+        self.stagingBuffer = StagingRingBuffer(device: device, size: stagingSize)
+        
+        // Initialize resource offsets
+        for type in HeapResourceType.allCases {
+            resourceOffsets[type] = 0
         }
     }
-
-    func allocate(size: Int, type: GpuMemoryPoolType) -> TypedGpuAllocation? {
-        guard let pool = pools[type] else {
-            print("Warning: Memory pool not found for type \(type)")
+    
+    func allocate(size: Int, type: HeapResourceType, options: MTLResourceOptions = []) -> HeapAllocation? {
+        // Create buffer from heap
+        guard let buffer = heap.makeBuffer(length: size, options: [.storageModePrivate]) else {
+            print("Failed to allocate \(size) bytes from heap for \(type)")
             return nil
         }
-
-        guard let allocation = pool.allocate(size: size) else {
-            print("Warning: Failed to allocate \(size) bytes from pool \(type)")
-            return nil
-        }
-
-        let typedAllocation = TypedGpuAllocation(poolType: type, allocation: allocation)
-        let id = allocation.id
-        allocations[id] = typedAllocation
-
-        if type.storageMode == .storageModePrivate {
-            let stagingBuffer = pool.createStagingBuffer(for: allocation)
-            if let buffer = stagingBuffer {
-                stagingBuffers[allocation.id] = buffer
-            }
-        }
-
-        return typedAllocation
+        buffer.label = "Heap_\(type)_Buffer"
+        
+        // Create allocation
+        let id = generateAllocationId()
+        let allocation = HeapAllocation(
+            buffer: buffer,
+            block: HeapBlock(offset: 0, size: UInt64(size)),
+            type: type,
+            id: id
+        )
+        
+        // Store allocation
+        allocations[id] = allocation
+        
+        return allocation
     }
-
-    func free(allocation: TypedGpuAllocation) {
-        guard let pool = pools[allocation.poolType] else {
-            print("Warning: Memory pool not found for type \(allocation.poolType)")
+    
+    func free(id: AllocationId) {
+        guard let allocation = allocations[id] else {
+            print("Warning: Allocation not found for ID \(id)")
             return
         }
-
-        pool.free(allocation: allocation.memory)
-        allocations.removeValue(forKey: allocation.memory.id)
-        stagingBuffers.removeValue(forKey: allocation.memory.id)
+        
+        // Remove allocation
+        allocations.removeValue(forKey: id)
     }
-
-    func write<T>(data: [T], to allocationID: AllocationId, offset: Int = 0) -> Bool {
-        guard let allocation = allocations[allocationID] else {
-            print("Warning: Allocation not found for ID \(allocationID)")
+    
+    func write<T>(data: [T], to allocation: HeapAllocation) -> Bool {
+        let size = data.count * MemoryLayout<T>.stride
+        
+        // Allocate space in staging buffer
+        guard let staging = stagingBuffer.allocate(size: size) else {
+            print("Failed to allocate staging buffer for write operation")
             return false
         }
-
-        let size = data.count * MemoryLayout<T>.stride
-        let buffer = stagingBuffers[allocationID]
-
-        if allocation.poolType.storageMode == .storageModePrivate {
-            // Write to staging buffer
-            guard let stagingBuffer = stagingBuffers[allocationID] else {
-                print("Error: Staging buffer not found for allocation \(allocationID)")
-                return false
-            }
-            
-            let bufferPtr = stagingBuffer.contents().advanced(by: offset)
-            
-            data.withUnsafeBytes { rawBufferPointer in
-                memcpy(bufferPtr, rawBufferPointer.baseAddress!, size)
-            }
-        } else {
-            // Write directly to allocation
-            let bufferPtr = allocation.memory.buffer.contents().advanced(by: Int(allocation.memory.block.offset) + offset)
-            
-            data.withUnsafeBytes { rawBufferPointer in
-                memcpy(bufferPtr, rawBufferPointer.baseAddress!, size)
-            }
-        }
-
-        return true 
-    }
-
-
-    func read<T>(from allocationID: AllocationId, count: Int, offset: Int = 0) -> [T]? {
-        guard let allocation = allocations[allocationID] else {
-            print("Warning: Allocation not found for ID \(allocationID)")
-            return nil
-        }
-
-        let size = count * MemoryLayout<T>.stride
-        let buffer = stagingBuffers[allocationID]
-
-        if allocation.poolType.storageMode == .storageModePrivate {
-            print("Error: Cannot read directly from private memory allocation")
-            return nil
-        }
-        // Read directly from allocation
-        let bufferPtr = allocation.memory.buffer.contents().advanced(by: Int(allocation.memory.block.offset) + offset)
-        let typedPtr = bufferPtr.bindMemory(to: T.self, capacity: count)
-        return Array(UnsafeBufferPointer(start: typedPtr, count: count))
-    }
-
-    func getStats() -> [(poolType: GpuMemoryPoolType, stats: (totalSize: Int, allocated: Int, free: Int, fragmentation: Double))] {
-        return pools.map { ($0.key, $0.value.getStats()) }
-    }
-
-    func commitWrites(commandBuffer: MTLCommandBuffer) {
-        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else { return }
         
-        for (id, stagingBuffer) in stagingBuffers {
-            if !(needsCommit[id] ?? true) {
-                continue
-            }
-            needsCommit[id] = false;
-            if let allocation = allocations[id] {
-                blitEncoder.copy(
-                    from: stagingBuffer,
-                    sourceOffset: 0,
-                    to: allocation.memory.buffer,
-                    destinationOffset: Int(allocation.memory.block.offset),
-                    size: min(stagingBuffer.length, Int(allocation.memory.block.size))
-                )
-            }
+        // Copy data to staging buffer
+        let stagingPtr = staging.buffer.contents().advanced(by: staging.offset)
+        data.withUnsafeBytes { rawBufferPointer in
+            memcpy(stagingPtr, rawBufferPointer.baseAddress!, size)
+        }
+        
+        // Queue transfer operation
+        pendingTransfers.append((
+            source: staging.buffer,
+            sourceOffset: staging.offset,
+            destination: allocation.buffer,
+            destinationOffset: 0,
+            size: size
+        ))
+        
+        return true
+    }
+    
+    func commitWrites(commandBuffer: MTLCommandBuffer) {
+        guard !pendingTransfers.isEmpty else { return }
+        
+        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else { 
+            print("Failed to create blit encoder for transfers")
+            return 
+        }
+        
+        for transfer in pendingTransfers {
+            blitEncoder.copy(
+                from: transfer.source,
+                sourceOffset: transfer.sourceOffset,
+                to: transfer.destination,
+                destinationOffset: transfer.destinationOffset,
+                size: transfer.size
+            )
         }
         
         blitEncoder.endEncoding()
+        
+        // Clear pending transfers
+        pendingTransfers.removeAll()
+    }
+    
+    // Helper to get the heap pointer for offset calculations
+    func getHeapBufferOffsets() -> [UInt64] {
+        var offsets: [UInt64] = []
+        for type in HeapResourceType.allCases {
+            let buffers = allocations.values.filter { $0.type == type }.map { $0.buffer }
+            if let buffer = buffers.first {
+                offsets.append(UInt64(buffer.gpuAddress))
+            } else {
+                offsets.append(0)
+            }
+        }
+        return offsets
+    }
+}
+
+extension HeapResourceType: CaseIterable {
+    static var allCases: [HeapResourceType] {
+        return [.voxel, .palette, .face, .indirect, .metadata]
     }
 }

@@ -191,7 +191,7 @@ public struct PaletteId: Hashable {
 public struct PaletteManager {
   public var gpuAllocator: GpuAllocator;
   public var nextPaletteId: PaletteId = PaletteId(id: 0);
-  public var allocations: [PaletteId : TypedGpuAllocation] = [:]
+  public var allocations: [PaletteId : HeapAllocation] = [:]
 
   public init(gpuAllocator: GpuAllocator) {
     self.gpuAllocator = gpuAllocator

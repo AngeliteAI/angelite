@@ -13,12 +13,11 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     
     # --- Project Directories ---
     ROOT_DIR="${ROOT_DIR:-$PROJECT_ROOT}"
-    SWIFT_SRC_DIR="$ROOT_DIR/src/swift"
-    GFX_SRC_DIR="$ROOT_DIR/src/gfx-swift/src"
+    GFX_SRC_DIR="$ROOT_DIR/src/gfx/src/macos"
     GFX_TEST_SRC_DIR="$ROOT_DIR/src/gfx-swift-test/src"
-    MATH_SRC_DIR="$ROOT_DIR/src/zig/math"
-    MATH_SWIFT_SRC_DIR="$ROOT_DIR/src/swift/math/src"
-    BUILD_DIR="$SWIFT_SRC_DIR/build"
+    MATH_SRC_DIR="$ROOT_DIR/src/math/src"
+    MATH_SWIFT_SRC_DIR="$ROOT_DIR/src/math/bindings/macos"
+    BUILD_DIR="$ROOT_DIR/build"
     
     # Check if the executable exists, if not, run the build script
     if [ ! -f "$BUILD_DIR/gfx-test" ]; then
@@ -46,7 +45,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "Building Zig math library..."
         cd "$MATH_SRC_DIR"
         zig build -Doptimize=ReleaseFast
-        ZIG_MATH_LIB_PATH="$MATH_SRC_DIR/zig-out/lib/libmath.a"
+        ZIG_MATH_LIB_PATH="$MATH_SRC_DIR/../zig-out/lib/libmath.a"
         if [ ! -f "$ZIG_MATH_LIB_PATH" ]; then
             echo "Error: Zig math static library build failed or not found."
             exit 1
@@ -59,7 +58,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
         GFX_TEST_SWIFT_FILES=$(find "$GFX_TEST_SRC_DIR" -name "*.swift" -type f | tr '\n' ' ')
         
         # Build Math module and library
-        cd "$SWIFT_SRC_DIR"
+        cd "$MATH_SWIFT_SRC_DIR"
         echo "Building Math module interface..."
         swiftc -parse-as-library -emit-module -module-name Math \
             -emit-module-path "$BUILD_DIR/Math.swiftmodule" \

@@ -13,6 +13,7 @@ public struct VoxelGrid {
     init(data: Palette, size: UVec3) {
         self.data = data
         self.size = size 
+        self.origin = iv3Splat(s: 0)
         self.position = v3Splat(s: 0) 
         self.rotation = qId()
         self.dirty = true

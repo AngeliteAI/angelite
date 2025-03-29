@@ -12,14 +12,11 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("root.zig"),
     });
 
-    // Add include path
-    lib.addIncludePath(b.path("include"));
+    // Add include paths
+    lib.addIncludePath(b.path("./include"));
 
     // Bundle compiler_rt
     lib.bundle_compiler_rt = true;
-
-    // Install headers
-    lib.installHeadersDirectory(b.path("include"), "", .{});
 
     // Install the library
     b.installArtifact(lib);
