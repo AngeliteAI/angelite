@@ -370,6 +370,7 @@ pub const PipelineCompiler = struct {
         const layout_result = vk.createPipelineLayout(self.device, &pipeline_layout_info, null, &pipeline_layout);
 
         if (layout_result != vk.SUCCESS) {
+            std.debug.print("deez", .{});
             return PipelineError.PipelineCreationFailed;
         }
 
@@ -553,6 +554,7 @@ pub const PipelineCompiler = struct {
 
         if (result != vk.SUCCESS) {
             vk.destroyPipelineLayout(self.device, pipeline_layout, null);
+            std.debug.print("Pipeline creation failed with error code: {any}", .{result});
             return PipelineError.PipelineCreationFailed;
         }
 

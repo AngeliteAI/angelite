@@ -36,7 +36,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::cout << "Compiling shader of type: " << shaderKind << std::endl;
 
     // Read shader source from file or stdin
     std::string shaderSource;

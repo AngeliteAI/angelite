@@ -10,6 +10,11 @@ pub const COPY = c.VK_LOGIC_OP_COPY;
 pub const VIEWPORT = c.VK_DYNAMIC_STATE_VIEWPORT;
 pub const SCISSOR = c.VK_DYNAMIC_STATE_SCISSOR;
 pub const SAMPLE_COUNT_1 = c.VK_SAMPLE_COUNT_1_BIT;
+pub const LayerProperties = c.VkLayerProperties;
+pub const SIGNALED = c.VK_FENCE_CREATE_SIGNALED_BIT;
+pub const PipelineStageFlags = c.VkPipelineStageFlags;
+pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+pub const OUT_OF_DATE = c.VK_ERROR_OUT_OF_DATE_KHR;
 
 pub const StructureType = enum(c_uint) {
     AppInfo = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -90,8 +95,20 @@ pub const getPhysicalDeviceMemoryProperties = c.vkGetPhysicalDeviceMemoryPropert
 pub const createDevice = c.vkCreateDevice;
 pub const destroyDevice = c.vkDestroyDevice;
 pub const destroyInstance = c.vkDestroyInstance;
+pub const getSwapchainImages = c.vkGetSwapchainImagesKHR;
+pub const createImageView = c.vkCreateImageView;
+pub const destroyImageView = c.vkDestroyImageView;
 pub const enumerateInstanceExtensionProperties = c.vkEnumerateInstanceExtensionProperties;
+pub const queuePresent = c.vkQueuePresentKHR;
+pub const resetFences = c.vkResetFences;
+pub const waitForFences = c.vkWaitForFences;
+pub const createSemaphore = c.vkCreateSemaphore;
+pub const destroySemaphore = c.vkDestroySemaphore;
+pub const createFence = c.vkCreateFence;
+pub const destroyFence = c.vkDestroyFence;
 pub const enumerateDeviceExtensionProperties = c.vkEnumerateDeviceExtensionProperties;
+pub const SemaphoreCreateInfo = c.VkSemaphoreCreateInfo;
+pub const FenceCreateInfo = c.VkFenceCreateInfo;
 pub const ExtensionProperties = c.VkExtensionProperties;
 
 pub const XcbSurfaceCreateInfo = c.VkXcbSurfaceCreateInfoKHR;
@@ -108,6 +125,7 @@ pub const getPhysicalDeviceSurfaceSupportKHR = c.vkGetPhysicalDeviceSurfaceSuppo
 pub const getPhysicalDeviceSurfaceCapabilitiesKHR = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
 pub const getPhysicalDeviceSurfaceFormatsKHR = c.vkGetPhysicalDeviceSurfaceFormatsKHR;
 pub const getPhysicalDeviceSurfacePresentModesKHR = c.vkGetPhysicalDeviceSurfacePresentModesKHR;
+pub const enumerateInstanceLayerProperties = c.vkEnumerateInstanceLayerProperties;
 
 // Function to create an XCB surface
 pub fn createXcbSurface(instance: Instance, connection: *xcb.Connection, window: xcb.Window) ?Surface {
@@ -201,7 +219,7 @@ pub fn createCommandPool(
     const create_info = CommandPoolCreateInfo{
         .sType = sTy(.InstanceInfo),
         .pNext = null,
-        .flags = 0, // Adjust flags as needed
+        .flags = COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, // Adjust flags as needed
         .queueFamilyIndex = queue_family_index,
     };
 

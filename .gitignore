@@ -12,4 +12,5 @@ src/compiler/external
 **/yes/**
 **/.svelte-kit/**
 **/build/**
-
+src/compiler/bin
+src/gfx-zig-test/zig-out

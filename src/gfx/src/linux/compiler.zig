@@ -83,7 +83,7 @@ pub const ShaderCompiler = struct {
         defer self.allocator.free(full_tmp_path);
 
         // Open the file created by mktemp
-        std.debug.print("opening {s}", .{full_tmp_path});
+        std.debug.print("opening {s}\n", .{full_tmp_path});
         const tmp_file = try std.fs.openFileAbsolute(full_tmp_path, .{ .mode = .write_only });
         defer {
             tmp_file.close();
@@ -113,7 +113,7 @@ pub const ShaderCompiler = struct {
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Pipe;
 
-        std.debug.print("spawning", .{});
+        std.debug.print("spawning\n", .{});
         try child.spawn();
         // Prepare buffers for stdout and stderr
         var stdout_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 8192) catch |err| {
@@ -146,6 +146,8 @@ pub const ShaderCompiler = struct {
 
         // Process the SPIR-V data from stdout
         const spirv_data = stdout_buffer;
+        std.debug.print("SPIR-V data size: {d}\n", .{spirv_data.capacity});
+        std.debug.print("SPIR-V data: {s}\n", .{spirv_data.items});
 
         // Verify SPIR-V size is valid
         if (spirv_data.items.len % 4 != 0) {

@@ -18,6 +18,11 @@ var platformRendererActive = PlatformRenderer{
     .id = 0,
 };
 
+const Frame = struct {
+    width: u32,
+    height: u32,
+};
+
 const Renderer = struct {
     instance: vk.Instance,
     physicalDevice: vk.PhysicalDevice,
@@ -25,10 +30,16 @@ const Renderer = struct {
     queue: vk.Queue,
     surface: ?vk.Surface,
     swapchain: vk.Swapchain,
+    swapchainImageViews: []vk.ImageView,
     command_pool: vk.CommandPool,
     command_buffer: vk.CommandBuffer,
+    image_available_semaphore: vk.Semaphore,
+    render_finished_semaphore: vk.Semaphore,
+    in_flight_fence: vk.Fence,
 
     pipeline: *PipelineCompiler,
+
+    frame: ?Frame = undefined,
 
     const InstanceExtensions = [_][*:0]const u8{
         vk.KHR_SURFACE_EXTENSION_NAME,
@@ -41,6 +52,36 @@ const Renderer = struct {
         vk.KHR_PUSH_DESCRIPTOR_EXTENSION_NAME,
         vk.EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
     };
+
+    fn createSemaphore(device: vk.Device) !vk.Semaphore {
+        const semaphore_info = vk.SemaphoreCreateInfo{
+            .sType = vk.sTy(vk.StructureType.SemaphoreCreateInfo),
+            .pNext = null,
+            .flags = 0,
+        };
+
+        var semaphore: vk.Semaphore = undefined;
+        const result = vk.createSemaphore(device, &semaphore_info, null, &semaphore);
+        if (result != vk.SUCCESS) {
+            return error.SemaphoreCreationFailed;
+        }
+        return semaphore;
+    }
+
+    fn createFence(device: vk.Device) !vk.Fence {
+        const fence_info = vk.FenceCreateInfo{
+            .sType = vk.sTy(vk.StructureType.FenceCreateInfo),
+            .pNext = null,
+            .flags = vk.SIGNALED, // Start signaled so first wait succeeds
+        };
+
+        var fence: vk.Fence = undefined;
+        const result = vk.createFence(device, &fence_info, null, &fence);
+        if (result != vk.SUCCESS) {
+            return error.FenceCreationFailed;
+        }
+        return fence;
+    }
 
     fn checkExtensionsSupport(
         required_extensions: []const [*:0]const u8,
@@ -96,6 +137,44 @@ const Renderer = struct {
     }
 
     fn createInstance(head: bool) vk.Instance {
+        // Define validation layers to use
+        const ValidationLayers = [_][*:0]const u8{
+            "VK_LAYER_KHRONOS_validation",
+        };
+
+        // Check validation layer support
+        var layerCount: u32 = 0;
+        _ = vk.enumerateInstanceLayerProperties(&layerCount, null);
+
+        const availableLayers = renderAllocator.alloc(vk.LayerProperties, layerCount) catch {
+            std.debug.print("Failed to allocate memory for layer properties\n", .{});
+            return null;
+        };
+        defer renderAllocator.free(availableLayers);
+
+        _ = vk.enumerateInstanceLayerProperties(&layerCount, @ptrCast(availableLayers));
+
+        // Check if all requested validation layers are available
+        var validationLayersSupported = true;
+        for (ValidationLayers) |layerName| {
+            var layerFound = false;
+            const layerNameStr = std.mem.span(layerName);
+
+            for (availableLayers) |layerProperties| {
+                const availableLayerName = std.mem.sliceTo(&layerProperties.layerName, 0);
+                if (std.mem.eql(u8, availableLayerName, layerNameStr)) {
+                    layerFound = true;
+                    break;
+                }
+            }
+
+            if (!layerFound) {
+                validationLayersSupported = false;
+                std.debug.print("Validation layer not found: {s}\n", .{layerNameStr});
+                break;
+            }
+        }
+
         // Create app and instance info with appropriate extensions
         const app_info = vk.AppInfo{
             .sType = vk.sTy(vk.StructureType.AppInfo),
@@ -111,6 +190,8 @@ const Renderer = struct {
             .pApplicationInfo = &app_info,
             .enabledExtensionCount = if (head) InstanceExtensions.len else 0,
             .ppEnabledExtensionNames = if (head) &InstanceExtensions else null,
+            .enabledLayerCount = if (validationLayersSupported) ValidationLayers.len else 0,
+            .ppEnabledLayerNames = if (validationLayersSupported) &ValidationLayers else null,
         };
 
         var instance: vk.Instance = undefined;
@@ -120,6 +201,12 @@ const Renderer = struct {
             return null;
         }
         std.debug.print("Vulkan instance created successfully\n", .{});
+
+        if (validationLayersSupported) {
+            std.debug.print("Validation layers enabled\n", .{});
+        } else {
+            std.debug.print("Validation layers requested but not available\n", .{});
+        }
 
         return instance;
     }
@@ -376,6 +463,52 @@ const Renderer = struct {
         return swapchain;
     }
 
+    fn getSwapchainImageViews(device: vk.Device, swapchain: vk.Swapchain) ![]vk.ImageView {
+        var image_count: u32 = 0;
+        _ = vk.getSwapchainImages(device, swapchain, &image_count, null);
+        const swapchain_images = renderAllocator.alloc(vk.Image, image_count) catch {
+            std.debug.print("Failed to allocate memory for swapchain images\n", .{});
+            return error.OutOfMemory;
+        };
+        defer renderAllocator.free(swapchain_images);
+        _ = vk.getSwapchainImages(device, swapchain, &image_count, swapchain_images.ptr);
+
+        // Create image views for swapchain images
+        const swapchain_image_views = renderAllocator.alloc(vk.ImageView, image_count) catch {
+            std.debug.print("Failed to allocate memory for swapchain image views\n", .{});
+            return error.OutOfMemory;
+        };
+
+        // Create image views for each swapchain image
+        for (swapchain_images, 0..) |image, i| {
+            const view_create_info = vk.ImageViewCreateInfo{
+                .sType = vk.sTy(vk.StructureType.ImageViewCreateInfo),
+                .image = image,
+                .viewType = vk.IMAGE_VIEW_TYPE_2D,
+                .format = vk.FORMAT_B8G8R8A8_SRGB, // Use same format as swapchain
+                .components = .{
+                    .r = vk.COMPONENT_SWIZZLE_IDENTITY,
+                    .g = vk.COMPONENT_SWIZZLE_IDENTITY,
+                    .b = vk.COMPONENT_SWIZZLE_IDENTITY,
+                    .a = vk.COMPONENT_SWIZZLE_IDENTITY,
+                },
+                .subresourceRange = .{
+                    .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
+
+            if (vk.CreateImageView(device, &view_create_info, null, &swapchain_image_views[i]) != vk.SUCCESS) {
+                std.debug.print("Failed to create image view for swapchain image {}\n", .{i});
+                return error.ImageViewCreationFailed;
+            }
+        }
+        return swapchain_image_views;
+    }
+
     fn createCommandPool(device: vk.Device, qfi: u32) !vk.CommandPool {
         const result = vk.createCommandPool(device, qfi);
         if (result == null) {
@@ -453,6 +586,11 @@ const Renderer = struct {
             return null;
         };
 
+        const swapchainImageViews: []vk.ImageView = Renderer.getSwapchainImageViews(device, swapchain) catch |err| {
+            std.debug.print("Failed to get swapchain image views: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
         const command_pool = Renderer.createCommandPool(device, qfi) catch |err| {
             std.debug.print("Failed to create command pool: {s}\n", .{@errorName(err)});
             return null;
@@ -477,6 +615,22 @@ const Renderer = struct {
             return null;
         };
 
+        // In the init function, before returning renderer:
+        const image_available_semaphore = Renderer.createSemaphore(device) catch |err| {
+            std.debug.print("Failed to create image available semaphore: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        const render_finished_semaphore = Renderer.createSemaphore(device) catch |err| {
+            std.debug.print("Failed to create render finished semaphore: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        const in_flight_fence = Renderer.createFence(device) catch |err| {
+            std.debug.print("Failed to create in-flight fence: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
         var renderer = renderAllocator.create(Renderer) catch |err| {
             std.debug.print("Failed to allocate memory for renderer\n {s}", .{@errorName(err)});
             return null;
@@ -491,6 +645,10 @@ const Renderer = struct {
         renderer.swapchain = swapchain;
         renderer.command_buffer = command_buffer;
         renderer.command_pool = command_pool;
+        renderer.swapchainImageViews = swapchainImageViews;
+        renderer.in_flight_fence = in_flight_fence;
+        renderer.image_available_semaphore = image_available_semaphore;
+        renderer.render_finished_semaphore = render_finished_semaphore;
 
         return renderer;
     }
@@ -548,6 +706,50 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         return;
     };
 
+    if (renderer.frame == null) {
+        renderer.frame = Frame{
+            .width = 800,
+            .height = 600,
+        };
+    }
+
+    const frame = &renderer.frame.?;
+
+    _ = vk.waitForFences(renderer.device, 1, &renderer.in_flight_fence, vk.TRUE, 100000000);
+    _ = vk.resetFences(renderer.device, 1, &renderer.in_flight_fence);
+
+    var frameIndex: u32 = undefined;
+    const result = vk.acquireNextImageKHR(renderer.device, renderer.swapchain, 0, renderer.image_available_semaphore, null, &frameIndex);
+    if (result == vk.OUT_OF_DATE) {
+        // Get current surface capabilities to determine the proper swapchain size
+        var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
+        _ = vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(renderer.physicalDevice, renderer.surface.?, &capabilities);
+
+        // Use the current extent from surface capabilities
+        const width = capabilities.currentExtent.width;
+        const height = capabilities.currentExtent.height;
+
+        std.debug.print("Recreating swapchain with dimensions: {}x{}\n", .{ width, height });
+
+        renderer.swapchain = Renderer.createSwapchain(renderer.device, renderer.physicalDevice, renderer.surface.?, width, height, renderer.swapchain) catch |err| {
+            std.debug.print("Failed to recreate swapchain: {s}\n", .{@errorName(err)});
+            return;
+        };
+        renderer.swapchainImageViews = Renderer.getSwapchainImageViews(renderer.device, renderer.swapchain) catch |err| {
+            std.debug.print("Failed to recreate swapchain image views: {s}\n", .{@errorName(err)});
+            return;
+        };
+        frame.*.width = width;
+        frame.*.height = height;
+        std.debug.print("Swapchain recreated successfully.\n", .{});
+        return;
+    }
+    if (result != vk.SUCCESS) {
+        std.debug.print("Failed to acquire next image\n", .{});
+        return;
+    }
+    std.debug.print("Acquired image index: {}\n", .{frameIndex});
+
     _ = vk.BeginCommandBuffer(renderer.command_buffer, &.{
         .sType = vk.sTy(vk.StructureType.CommandBufferBeginInfo),
         .flags = vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -556,7 +758,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
 
     const color_attachment = vk.RenderingAttachmentInfoKHR{
         .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
-        .imageView = null,
+        .imageView = renderer.swapchainImageViews[frameIndex],
         .imageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
         .resolveImageView = null,
@@ -574,7 +776,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         .sType = vk.sTy(vk.StructureType.RenderingInfoKHR),
         .renderArea = vk.Rect2D{
             .offset = vk.Offset2D{ .x = 0, .y = 0 },
-            .extent = vk.Extent2D{ .width = 800, .height = 600 },
+            .extent = vk.Extent2D{ .width = frame.*.width, .height = frame.*.height },
         },
         .layerCount = 1,
         .colorAttachmentCount = 1,
@@ -591,8 +793,8 @@ pub export fn render(handle: ?*PlatformRenderer) void {
     const viewport = vk.Viewport{
         .x = 0.0,
         .y = 0.0,
-        .width = 800.0,
-        .height = 600.0,
+        .width = @floatFromInt(frame.*.width),
+        .height = @floatFromInt(frame.*.height),
         .minDepth = 0.0,
         .maxDepth = 1.0,
     };
@@ -601,7 +803,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
 
     const scissor = vk.Rect2D{
         .offset = vk.Offset2D{ .x = 0, .y = 0 },
-        .extent = vk.Extent2D{ .width = 800, .height = 600 },
+        .extent = vk.Extent2D{ .width = frame.*.width, .height = frame.*.height },
     };
 
     vk.CmdSetScissor(renderer.command_buffer, 0, 1, &scissor);
@@ -611,6 +813,35 @@ pub export fn render(handle: ?*PlatformRenderer) void {
     vk.cmdEndRenderingKHR(renderer.command_buffer);
 
     _ = vk.EndCommandBuffer(renderer.command_buffer);
+
+    // After command buffer recording is complete, submit it
+    const wait_stage = [_]vk.PipelineStageFlags{vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT};
+
+    const submit_info = vk.SubmitInfo{
+        .sType = vk.sTy(vk.StructureType.SubmitInfo),
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &renderer.image_available_semaphore,
+        .pWaitDstStageMask = &wait_stage,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &renderer.command_buffer,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &renderer.render_finished_semaphore,
+    };
+
+    _ = vk.queueSubmit(renderer.queue, 1, &submit_info, renderer.in_flight_fence);
+
+    // Present the swapchain image
+    const present_info = vk.PresentInfoKHR{
+        .sType = vk.sTy(vk.StructureType.PresentInfoKHR),
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &renderer.render_finished_semaphore,
+        .swapchainCount = 1,
+        .pSwapchains = &renderer.swapchain,
+        .pImageIndices = &frameIndex,
+        .pResults = null,
+    };
+
+    _ = vk.queuePresent(renderer.queue, &present_info);
 }
 
 pub export fn destroy() void {
