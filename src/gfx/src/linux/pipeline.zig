@@ -3,6 +3,7 @@ const vk = @import("vk.zig");
 const compiler = @import("compiler.zig");
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
+const ShaderCompiler = compiler.ShaderCompiler;
 
 pub const PipelineError = error{
     LibraryNotFound,
@@ -103,6 +104,10 @@ pub const GraphicsPipeline = struct {
         };
     }
 
+    pub fn getHandle(self: *GraphicsPipeline) vk.Pipeline {
+        return self.base.handle;
+    }
+
     pub fn deinit(self: *GraphicsPipeline, allocator: Allocator) void {
         allocator.free(self.vertex_shader_path);
         allocator.free(self.fragment_shader_path);
@@ -156,9 +161,9 @@ pub const GraphicsPipelineConfig = struct {
     descriptor_set_layouts: []const vk.DescriptorSetLayout = &[_]vk.DescriptorSetLayout{},
     vertex_bindings: ?[]const vk.VertexInputBindingDescription = null,
     vertex_attributes: ?[]const vk.VertexInputAttributeDescription = null,
-    topology: vk.PrimitiveTopology = .TRIANGLE_LIST,
-    cull_mode: vk.CullModeFlags = vk.CULL_MODE_BACK_BIT,
-    front_face: vk.FrontFace = .CLOCKWISE,
+    topology: vk.PrimitiveTopology = vk.TRIANGLE_LIST,
+    cull_mode: vk.CullModeFlags = vk.CULL_MODE_BACK,
+    front_face: vk.FrontFace = vk.CLOCKWISE,
     blend_enable: bool = false,
     depth_test_enable: bool = true,
     depth_write_enable: bool = true,
@@ -170,7 +175,7 @@ pub const PipelineCompiler = struct {
     allocator: Allocator,
     pipelines: std.StringHashMap(*AnyPipeline),
     shader_monitors: std.ArrayList(ShaderMonitor),
-    shader_compiler: compiler.ShaderCompiler,
+    shader_compiler: *ShaderCompiler,
 
     pub fn init(allocator: Allocator, device: vk.Device) !*PipelineCompiler {
         var self = try allocator.create(PipelineCompiler);
@@ -264,7 +269,7 @@ pub const PipelineCompiler = struct {
         config: ComputePipelineConfig,
     ) !*ComputePipeline {
         // Compile or get cached compute shader
-        const shader_module = try self.shader_compiler.getOrCompileShader(config.shader.path, config.shader.shader_type);
+        const shader_module = try self.shader_compiler.compileShaderFile(config.shader.path, config.shader.shader_type);
 
         // Create pipeline layout
         var pipeline_layout_info = vk.PipelineLayoutCreateInfo{
@@ -279,7 +284,7 @@ pub const PipelineCompiler = struct {
         var push_constant_range: vk.PushConstantRange = undefined;
         if (config.push_constant_size > 0) {
             push_constant_range = .{
-                .stageFlags = vk.SHADER_STAGE_COMPUTE_BIT,
+                .stageFlags = vk.SHADER_STAGE_COMPUTE,
                 .offset = 0,
                 .size = config.push_constant_size,
             };
@@ -297,7 +302,7 @@ pub const PipelineCompiler = struct {
         // Create compute pipeline
         const shader_stage = vk.PipelineShaderStageCreateInfo{
             .sType = vk.sTy(vk.StructureType.PipelineShaderStageCreateInfo),
-            .stage = vk.SHADER_STAGE_COMPUTE_BIT,
+            .stage = vk.SHADER_STAGE_COMPUTE,
             .module = shader_module,
             .pName = config.shader.entry_point.ptr,
             .pSpecializationInfo = config.specialization_info,
@@ -336,9 +341,9 @@ pub const PipelineCompiler = struct {
         config: GraphicsPipelineConfig,
     ) !*GraphicsPipeline {
         // Compile or get cached shaders
-        const vertex_module = try self.shader_compiler.getOrCompileShader(config.vertex_shader.path, config.vertex_shader.shader_type);
+        const vertex_module = try self.shader_compiler.compileShaderFile(config.vertex_shader.path, config.vertex_shader.shader_type);
 
-        const fragment_module = try self.shader_compiler.getOrCompileShader(config.fragment_shader.path, config.fragment_shader.shader_type);
+        const fragment_module = try self.shader_compiler.compileShaderFile(config.fragment_shader.path, config.fragment_shader.shader_type);
 
         // Create pipeline layout
         var pipeline_layout_info = vk.PipelineLayoutCreateInfo{
@@ -353,7 +358,7 @@ pub const PipelineCompiler = struct {
         var push_constant_range: vk.PushConstantRange = undefined;
         if (config.push_constant_size > 0) {
             push_constant_range = .{
-                .stageFlags = vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT,
+                .stageFlags = vk.SHADER_STAGE_VERTEX | vk.SHADER_STAGE_FRAGMENT,
                 .offset = 0,
                 .size = config.push_constant_size,
             };
@@ -372,14 +377,14 @@ pub const PipelineCompiler = struct {
         const shader_stages = [_]vk.PipelineShaderStageCreateInfo{
             .{
                 .sType = vk.sTy(vk.StructureType.PipelineShaderStageCreateInfo),
-                .stage = vk.SHADER_STAGE_VERTEX_BIT,
+                .stage = vk.SHADER_STAGE_VERTEX,
                 .module = vertex_module,
                 .pName = config.vertex_shader.entry_point.ptr,
                 .pSpecializationInfo = null,
             },
             .{
                 .sType = vk.sTy(vk.StructureType.PipelineShaderStageCreateInfo),
-                .stage = vk.SHADER_STAGE_FRAGMENT_BIT,
+                .stage = vk.SHADER_STAGE_FRAGMENT,
                 .module = fragment_module,
                 .pName = config.fragment_shader.entry_point.ptr,
                 .pSpecializationInfo = null,
@@ -391,9 +396,9 @@ pub const PipelineCompiler = struct {
             .sType = vk.sTy(vk.StructureType.PipelineRenderingCreateInfo),
             .viewMask = 0,
             .colorAttachmentCount = @intCast(config.color_attachment_formats.len),
-            .pColorAttachmentFormats = config.color_attachment_formats.ptr,
-            .depthAttachmentFormat = if (config.depth_attachment_format) |fmt| fmt else .UNDEFINED,
-            .stencilAttachmentFormat = if (config.stencil_attachment_format) |fmt| fmt else .UNDEFINED,
+            .pColorAttachmentFormats = @ptrCast(config.color_attachment_formats.ptr),
+            .depthAttachmentFormat = if (config.depth_attachment_format) |fmt| @intFromEnum(fmt) else @intFromEnum(vk.Format.Undefined),
+            .stencilAttachmentFormat = if (config.stencil_attachment_format) |fmt| @intFromEnum(fmt) else @intFromEnum(vk.Format.Undefined),
         };
 
         // Vertex input state
@@ -429,7 +434,7 @@ pub const PipelineCompiler = struct {
             .sType = vk.sTy(vk.StructureType.PipelineRasterizationStateCreateInfo),
             .depthClampEnable = vk.FALSE,
             .rasterizerDiscardEnable = vk.FALSE,
-            .polygonMode = .FILL,
+            .polygonMode = vk.FILL,
             .cullMode = config.cull_mode,
             .frontFace = config.front_face,
             .depthBiasEnable = vk.FALSE,
@@ -442,7 +447,7 @@ pub const PipelineCompiler = struct {
         // Multisample state
         const multisample_state = vk.PipelineMultisampleStateCreateInfo{
             .sType = vk.sTy(vk.StructureType.PipelineMultisampleStateCreateInfo),
-            .rasterizationSamples = .@"1_BIT",
+            .rasterizationSamples = vk.SAMPLE_COUNT_1,
             .sampleShadingEnable = vk.FALSE,
             .minSampleShading = 1.0,
             .pSampleMask = null,
@@ -455,23 +460,23 @@ pub const PipelineCompiler = struct {
             .sType = vk.sTy(vk.StructureType.PipelineDepthStencilStateCreateInfo),
             .depthTestEnable = if (config.depth_test_enable) vk.TRUE else vk.FALSE,
             .depthWriteEnable = if (config.depth_write_enable) vk.TRUE else vk.FALSE,
-            .depthCompareOp = .LESS_OR_EQUAL,
+            .depthCompareOp = vk.LESS_OR_EQUAL,
             .depthBoundsTestEnable = vk.FALSE,
             .stencilTestEnable = vk.FALSE,
             .front = .{
-                .failOp = .KEEP,
-                .passOp = .KEEP,
-                .depthFailOp = .KEEP,
-                .compareOp = .ALWAYS,
+                .failOp = vk.KEEP,
+                .passOp = vk.KEEP,
+                .depthFailOp = vk.KEEP,
+                .compareOp = vk.ALWAYS,
                 .compareMask = 0,
                 .writeMask = 0,
                 .reference = 0,
             },
             .back = .{
-                .failOp = .KEEP,
-                .passOp = .KEEP,
-                .depthFailOp = .KEEP,
-                .compareOp = .ALWAYS,
+                .failOp = vk.KEEP,
+                .passOp = vk.KEEP,
+                .depthFailOp = vk.KEEP,
+                .compareOp = vk.ALWAYS,
                 .compareMask = 0,
                 .writeMask = 0,
                 .reference = 0,
@@ -483,16 +488,16 @@ pub const PipelineCompiler = struct {
         // Color blend attachment
         const color_blend_attachment = vk.PipelineColorBlendAttachmentState{
             .blendEnable = if (config.blend_enable) vk.TRUE else vk.FALSE,
-            .srcColorBlendFactor = .SRC_ALPHA,
-            .dstColorBlendFactor = .ONE_MINUS_SRC_ALPHA,
-            .colorBlendOp = .ADD,
-            .srcAlphaBlendFactor = .ONE,
-            .dstAlphaBlendFactor = .ZERO,
-            .alphaBlendOp = .ADD,
-            .colorWriteMask = vk.COLOR_COMPONENT_R_BIT |
-                vk.COLOR_COMPONENT_G_BIT |
-                vk.COLOR_COMPONENT_B_BIT |
-                vk.COLOR_COMPONENT_A_BIT,
+            .srcColorBlendFactor = vk.SRC_ALPHA,
+            .dstColorBlendFactor = vk.ONE_MINUS_SRC_ALPHA,
+            .colorBlendOp = vk.ADD,
+            .srcAlphaBlendFactor = vk.ONE,
+            .dstAlphaBlendFactor = vk.ZERO,
+            .alphaBlendOp = vk.ADD,
+            .colorWriteMask = vk.R |
+                vk.G |
+                vk.B |
+                vk.A,
         };
 
         // We need one attachment state per color attachment
@@ -507,14 +512,14 @@ pub const PipelineCompiler = struct {
         const color_blend_state = vk.PipelineColorBlendStateCreateInfo{
             .sType = vk.sTy(vk.StructureType.PipelineColorBlendStateCreateInfo),
             .logicOpEnable = vk.FALSE,
-            .logicOp = .COPY,
+            .logicOp = vk.COPY,
             .attachmentCount = @intCast(color_blend_attachments.len),
             .pAttachments = color_blend_attachments.ptr,
             .blendConstants = [_]f32{ 0.0, 0.0, 0.0, 0.0 },
         };
 
         // Define dynamic states
-        var dynamic_states = [_]vk.DynamicState{ .VIEWPORT, .SCISSOR };
+        var dynamic_states = [_]vk.DynamicState{ vk.VIEWPORT, vk.SCISSOR };
         const dynamic_state = vk.PipelineDynamicStateCreateInfo{
             .sType = vk.sTy(vk.StructureType.PipelineDynamicStateCreateInfo),
             .dynamicStateCount = dynamic_states.len,
@@ -556,7 +561,7 @@ pub const PipelineCompiler = struct {
         graphics_pipeline.* = try GraphicsPipeline.init(name, pipeline, pipeline_layout, config.vertex_shader.path, config.fragment_shader.path, config.color_attachment_formats, config.depth_attachment_format, self.allocator);
 
         // Automatically register the pipeline for hot reloading
-        try self._registerPipeline(graphics_pipeline.base.asAny());
+        try self.registerPipeline(graphics_pipeline.base.asAny());
 
         return graphics_pipeline;
     }
@@ -652,15 +657,15 @@ pub const PipelineCompiler = struct {
 
                 // For now, just reload the shader and report success
                 // In a real implementation, store pipeline configuration and completely recreate
-                _ = try self.shader_compiler.getOrCompileShader(compute.shader_path, .Compute);
+                _ = try self.shader_compiler.compileShaderFile(compute.shader_path, .Compute);
                 std.debug.print("Compute shader reloaded for {s}\n", .{name});
             },
             .Graphics => {
                 const graphics = pipeline.asGraphics().?;
 
                 // Reload vertex and fragment shaders
-                _ = try self.shader_compiler.getOrCompileShader(graphics.vertex_shader_path, .Vertex);
-                _ = try self.shader_compiler.getOrCompileShader(graphics.fragment_shader_path, .Fragment);
+                _ = try self.shader_compiler.compileShaderFile(graphics.vertex_shader_path, .Vertex);
+                _ = try self.shader_compiler.compileShaderFile(graphics.fragment_shader_path, .Fragment);
                 std.debug.print("Graphics shaders reloaded for {s}\n", .{name});
             },
         }

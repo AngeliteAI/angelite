@@ -21,3 +21,13 @@ pub fn build(b: *std.Build) !void {
     // Install the library
     b.installArtifact(lib);
 }
+
+pub fn getModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    return module;
+}

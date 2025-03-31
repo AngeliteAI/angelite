@@ -1,5 +1,5 @@
 const xcb = @import("xcb.zig");
-const surface = @import("../../include/surface.zig");
+const surface = @import("include/surface.zig");
 const std = @import("std");
 
 pub const Surface = surface.Surface;

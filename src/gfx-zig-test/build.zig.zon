@@ -1,0 +1,16 @@
+.{
+    .name = .gfx_test,
+    .version = "0.1.0",
+    .dependencies = .{
+        .gfx = .{
+            .path = "../gfx",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0xf36379b2a7cceb7f,
+}

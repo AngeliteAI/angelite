@@ -1,9 +1,7 @@
 **/target
-<<<<<<< HEAD
-**/zig-cache
-=======
+src/compiler/CMakeFiles
+src/compiler/external
 **/.zig-cache
->>>>>>> refs/remotes/origin/main
 .DS_Store
 .env
 .obsidian

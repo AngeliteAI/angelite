@@ -6,12 +6,52 @@ const c = @cImport({
 const std = @import("std");
 const xcb = @import("xcb.zig");
 
+pub const COPY = c.VK_LOGIC_OP_COPY;
+pub const VIEWPORT = c.VK_DYNAMIC_STATE_VIEWPORT;
+pub const SCISSOR = c.VK_DYNAMIC_STATE_SCISSOR;
+pub const SAMPLE_COUNT_1 = c.VK_SAMPLE_COUNT_1_BIT;
+
 pub const StructureType = enum(c_uint) {
-    AppInfo = 0,
-    InstanceInfo = 1,
-    DeviceQueueCreateInfo = 2,
-    DeviceCreateInfo = 3,
-    XcbSurfaceCreateInfoKHR = 1000005000,
+    AppInfo = c.VK_STRUCTURE_TYPE_APPLICATION_INFO,
+    InstanceInfo = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+    DeviceQueueCreateInfo = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+    DeviceCreateInfo = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+    CommandPoolCreateInfo = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+    CommandBufferAllocateInfo = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+    CommandBufferBeginInfo = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    SubmitInfo = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+    ShaderModuleCreateInfo = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+    PipelineLayoutCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+    SwapchainCreateInfoKHR = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+    PresentInfoKHR = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+    ImageViewCreateInfo = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    RenderingInfoKHR = c.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+    RenderingAttachmentInfoKHR = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+    XcbSurfaceCreateInfoKHR = c.VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR,
+
+    // Pipeline-related structure types
+    GraphicsPipelineCreateInfo = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+    PipelineViewportStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    PipelineMultisampleStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+    PipelineDynamicStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+    PipelineShaderStageCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+    PipelineVertexInputStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    PipelineInputAssemblyStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+    PipelineRasterizationStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+    PipelineColorBlendStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    PipelineDepthStencilStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+
+    // Descriptor-related structure types
+    DescriptorSetLayoutCreateInfo = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+
+    // Add these for pipeline rendering and descriptors
+    PhysicalDeviceDynamicRenderingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
+    PhysicalDeviceDescriptorIndexingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT,
+
+    // Synchronization-related structure types
+    FenceCreateInfo = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    SemaphoreCreateInfo = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    PipelineRenderingCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
 };
 
 pub const NULL = c.VK_NULL_HANDLE;
@@ -22,6 +62,7 @@ pub fn sTy(ty: StructureType) c.VkStructureType {
 }
 
 pub const API_VERSION_1_0 = c.VK_API_VERSION_1_0;
+pub const API_VERSION_1_3 = c.VK_API_VERSION_1_3;
 pub const MAKE_VERSION = c.VK_MAKE_VERSION;
 
 pub const AppInfo = c.VkApplicationInfo;
@@ -229,7 +270,29 @@ pub const QUEUE_GRAPHICS_BIT = c.VK_QUEUE_GRAPHICS_BIT;
 pub const QUEUE_COMPUTE_BIT = c.VK_QUEUE_COMPUTE_BIT;
 pub const QUEUE_TRANSFER_BIT = c.VK_QUEUE_TRANSFER_BIT;
 pub const QUEUE_SPARSE_BINDING_BIT = c.VK_QUEUE_SPARSE_BINDING_BIT;
+
+pub const PipelineDepthStencilStateCreateInfo = c.VkPipelineDepthStencilStateCreateInfo;
 // Add these constants to your vk.zig file
+pub const LESS_OR_EQUAL = c.VK_COMPARE_OP_LESS_OR_EQUAL;
+pub const KEEP = c.VK_STENCIL_OP_KEEP;
+pub const REPLACE = c.VK_STENCIL_OP_REPLACE;
+pub const ZERO = c.VK_STENCIL_OP_ZERO;
+pub const INCREMENT_AND_CLAMP = c.VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+pub const DECREMENT_AND_CLAMP = c.VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+pub const INVERT = c.VK_STENCIL_OP_INVERT;
+pub const INCREMENT_AND_WRAP = c.VK_STENCIL_OP_INCREMENT_AND_WRAP;
+pub const ALWAYS = c.VK_COMPARE_OP_ALWAYS;
+pub const NEVER = c.VK_COMPARE_OP_NEVER;
+
+pub const SRC_COLOR = c.VK_SRC_COLOR;
+pub const ONE_MINUS_SRC_COLOR = c.VK_ONE_MINUS_SRC_COLOR;
+pub const ADD = c.VK_BLEND_OP_ADD;
+pub const SUBTRACT = c.VK_BLEND_OP_SUBTRACT;
+pub const REVERSE_SUBTRACT = c.VK_BLEND_OP_REVERSE_SUBTRACT;
+pub const MIN = c.VK_BLEND_OP_MIN;
+pub const MAX = c.VK_BLEND_OP_MAX;
+pub const DST_COLOR = c.VK_BLEND_OP_DST_COLOR;
+pub const ONE_MINUS_DST_COLOR = c.VK_BLEND_OP_ONE_MINUS_DST_COLOR;
 
 // Physical device types
 pub const PHYSICAL_DEVICE_TYPE_OTHER = c.VK_PHYSICAL_DEVICE_TYPE_OTHER;
@@ -296,3 +359,258 @@ pub fn API_VERSION_MINOR(version: u32) u32 {
 pub fn API_VERSION_PATCH(version: u32) u32 {
     return (version & 0xfff);
 }
+
+// Add these to your vk.zig file
+
+// Boolean values
+pub const TRUE = c.VK_TRUE;
+pub const FALSE = c.VK_FALSE;
+
+// Extension names
+pub const KHR_DYNAMIC_RENDERING_EXTENSION_NAME = c.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME;
+pub const KHR_PUSH_DESCRIPTOR_EXTENSION_NAME = c.VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME;
+pub const EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME = c.VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME;
+
+// Structure types for StructureType enum
+pub const PhysicalDeviceDynamicRenderingFeatures = c.VkPhysicalDeviceDynamicRenderingFeaturesKHR;
+pub const PhysicalDeviceDescriptorIndexingFeatures = c.VkPhysicalDeviceDescriptorIndexingFeaturesEXT;
+
+// Queue family properties
+pub const QueueFamilyProperties = c.VkQueueFamilyProperties;
+pub const getPhysicalDeviceQueueFamilyProperties = c.vkGetPhysicalDeviceQueueFamilyProperties;
+
+// Surface support function (capital G version is used in render.zig)
+pub const GetPhysicalDeviceSurfaceSupportKHR = c.vkGetPhysicalDeviceSurfaceSupportKHR;
+
+// ...existing code...
+
+// Surface-related structures
+pub const SurfaceCapabilitiesKHR = c.VkSurfaceCapabilitiesKHR;
+pub const SurfaceFormatKHR = c.VkSurfaceFormatKHR;
+pub const PresentModeKHR = c.VkPresentModeKHR;
+
+// Surface-related constants
+pub const COLOR_SPACE_SRGB_NONLINEAR_KHR = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+pub const PRESENT_MODE_FIFO_KHR = c.VK_PRESENT_MODE_FIFO_KHR;
+pub const PRESENT_MODE_MAILBOX_KHR = c.VK_PRESENT_MODE_MAILBOX_KHR;
+pub const PRESENT_MODE_IMMEDIATE_KHR = c.VK_PRESENT_MODE_IMMEDIATE_KHR;
+pub const COMPOSITE_ALPHA_OPAQUE_BIT_KHR = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+// Image-related constants
+pub const FORMAT_B8G8R8A8_SRGB = c.VK_FORMAT_B8G8R8A8_SRGB;
+pub const IMAGE_USAGE_COLOR_ATTACHMENT_BIT = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+pub const SHARING_MODE_EXCLUSIVE = c.VK_SHARING_MODE_EXCLUSIVE;
+
+// Surface transformation constants
+pub const SURFACE_TRANSFORM_IDENTITY_BIT_KHR = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+
+// Surface functions
+pub const GetPhysicalDeviceSurfaceCapabilitiesKHR = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
+pub const GetPhysicalDeviceSurfaceFormatsKHR = c.vkGetPhysicalDeviceSurfaceFormatsKHR;
+pub const GetPhysicalDeviceSurfacePresentModesKHR = c.vkGetPhysicalDeviceSurfacePresentModesKHR;
+pub const CreateSwapchainKHR = c.vkCreateSwapchainKHR;
+
+// Image/view-related types
+pub const Image = c.VkImage;
+pub const ImageView = c.VkImageView;
+pub const ImageViewCreateInfo = c.VkImageViewCreateInfo;
+pub const SwapchainCreateInfoKHR = c.VkSwapchainCreateInfoKHR;
+
+// Dynamic rendering types and constants
+pub const RenderingAttachmentInfoKHR = c.VkRenderingAttachmentInfoKHR;
+pub const RenderingInfoKHR = c.VkRenderingInfoKHR;
+pub const ATTACHMENT_LOAD_OP_CLEAR = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
+pub const ATTACHMENT_STORE_OP_STORE = c.VK_ATTACHMENT_STORE_OP_STORE;
+pub const IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+pub const PIPELINE_BIND_POINT_GRAPHICS = c.VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+// Command buffer functions for dynamic rendering
+pub const CmdBindPipeline = c.vkCmdBindPipeline;
+pub const CmdDraw = c.vkCmdDraw;
+pub const CmdSetScissor = c.vkCmdSetScissor;
+pub const CmdSetViewport = c.vkCmdSetViewport;
+pub const BeginCommandBuffer = c.vkBeginCommandBuffer;
+pub const EndCommandBuffer = c.vkEndCommandBuffer;
+pub const CreateImageView = c.vkCreateImageView;
+pub const AcquireNextImageKHR = c.vkAcquireNextImageKHR;
+
+// Command buffer and synchronization types
+pub const CommandBufferBeginInfo = c.VkCommandBufferBeginInfo;
+pub const COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+pub const IMAGE_ASPECT_COLOR_BIT = c.VK_IMAGE_ASPECT_COLOR_BIT;
+pub const COMPONENT_SWIZZLE_IDENTITY = c.VK_COMPONENT_SWIZZLE_IDENTITY;
+pub const IMAGE_VIEW_TYPE_2D = c.VK_IMAGE_VIEW_TYPE_2D;
+
+pub const COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT = c.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+pub const COMMAND_BUFFER_LEVEL_PRIMARY = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+pub const RESOLVE_MODE_NONE_KHR = c.VK_RESOLVE_MODE_NONE_KHR;
+
+pub const RENDER_PASS_LOAD_OP_CLEAR = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
+pub const RENDER_PASS_STORE_OP_STORE = c.VK_ATTACHMENT_STORE_OP_STORE;
+pub const ClearValue = c.VkClearValue;
+pub const ClearColorValue = c.VkClearColorValue;
+
+pub const Rect2D = c.VkRect2D;
+pub const Offset2D = c.VkOffset2D;
+pub const Format = enum(c_uint) {
+    // Standard formats
+    Undefined = c.VK_FORMAT_UNDEFINED,
+
+    // 8-bit formats
+    R8Unorm = c.VK_FORMAT_R8_UNORM,
+    R8Snorm = c.VK_FORMAT_R8_SNORM,
+    R8Uint = c.VK_FORMAT_R8_UINT,
+    R8Sint = c.VK_FORMAT_R8_SINT,
+    R8G8Unorm = c.VK_FORMAT_R8G8_UNORM,
+    R8G8Snorm = c.VK_FORMAT_R8G8_SNORM,
+    R8G8Uint = c.VK_FORMAT_R8G8_UINT,
+    R8G8Sint = c.VK_FORMAT_R8G8_SINT,
+    R8G8B8Unorm = c.VK_FORMAT_R8G8B8_UNORM,
+    R8G8B8Snorm = c.VK_FORMAT_R8G8B8_SNORM,
+    R8G8B8Uint = c.VK_FORMAT_R8G8B8_UINT,
+    R8G8B8Sint = c.VK_FORMAT_R8G8B8_SINT,
+    R8G8B8A8Unorm = c.VK_FORMAT_R8G8B8A8_UNORM,
+    R8G8B8A8Snorm = c.VK_FORMAT_R8G8B8A8_SNORM,
+    R8G8B8A8Uint = c.VK_FORMAT_R8G8B8A8_UINT,
+    R8G8B8A8Sint = c.VK_FORMAT_R8G8B8A8_SINT,
+    R8G8B8A8Srgb = c.VK_FORMAT_R8G8B8A8_SRGB,
+    B8G8R8A8Unorm = c.VK_FORMAT_B8G8R8A8_UNORM,
+    B8G8R8A8Srgb = c.VK_FORMAT_B8G8R8A8_SRGB,
+
+    // 16-bit formats
+    R16Unorm = c.VK_FORMAT_R16_UNORM,
+    R16Snorm = c.VK_FORMAT_R16_SNORM,
+    R16Uint = c.VK_FORMAT_R16_UINT,
+    R16Sint = c.VK_FORMAT_R16_SINT,
+    R16Sfloat = c.VK_FORMAT_R16_SFLOAT,
+    R16G16Unorm = c.VK_FORMAT_R16G16_UNORM,
+    R16G16Snorm = c.VK_FORMAT_R16G16_SNORM,
+    R16G16Uint = c.VK_FORMAT_R16G16_UINT,
+    R16G16Sint = c.VK_FORMAT_R16G16_SINT,
+    R16G16Sfloat = c.VK_FORMAT_R16G16_SFLOAT,
+    R16G16B16Unorm = c.VK_FORMAT_R16G16B16_UNORM,
+    R16G16B16Snorm = c.VK_FORMAT_R16G16B16_SNORM,
+    R16G16B16Uint = c.VK_FORMAT_R16G16B16_UINT,
+    R16G16B16Sint = c.VK_FORMAT_R16G16B16_SINT,
+    R16G16B16Sfloat = c.VK_FORMAT_R16G16B16_SFLOAT,
+    R16G16B16A16Unorm = c.VK_FORMAT_R16G16B16A16_UNORM,
+    R16G16B16A16Snorm = c.VK_FORMAT_R16G16B16A16_SNORM,
+    R16G16B16A16Uint = c.VK_FORMAT_R16G16B16A16_UINT,
+    R16G16B16A16Sint = c.VK_FORMAT_R16G16B16A16_SINT,
+    R16G16B16A16Sfloat = c.VK_FORMAT_R16G16B16A16_SFLOAT,
+
+    // 32-bit formats
+    R32Uint = c.VK_FORMAT_R32_UINT,
+    R32Sint = c.VK_FORMAT_R32_SINT,
+    R32Sfloat = c.VK_FORMAT_R32_SFLOAT,
+    R32G32Uint = c.VK_FORMAT_R32G32_UINT,
+    R32G32Sint = c.VK_FORMAT_R32G32_SINT,
+    R32G32Sfloat = c.VK_FORMAT_R32G32_SFLOAT,
+    R32G32B32Uint = c.VK_FORMAT_R32G32B32_UINT,
+    R32G32B32Sint = c.VK_FORMAT_R32G32B32_SINT,
+    R32G32B32Sfloat = c.VK_FORMAT_R32G32B32_SFLOAT,
+    R32G32B32A32Uint = c.VK_FORMAT_R32G32B32A32_UINT,
+    R32G32B32A32Sint = c.VK_FORMAT_R32G32B32A32_SINT,
+    R32G32B32A32Sfloat = c.VK_FORMAT_R32G32B32A32_SFLOAT,
+};
+
+pub const Viewport = c.VkViewport;
+pub const FILL = c.VK_POLYGON_MODE_FILL;
+
+// Function pointer types
+pub var cmdBeginRenderingKHR: *const fn (CommandBuffer, *const RenderingInfoKHR) callconv(.C) void = undefined;
+pub var cmdEndRenderingKHR: *const fn (CommandBuffer) callconv(.C) void = undefined;
+
+pub fn loadDeviceExtensionFunctions(device: Device) void {
+    // Function to load a device function pointer
+    const loadDeviceProc = struct {
+        fn load(dev: Device, name: [*:0]const u8) ?*const anyopaque {
+            return c.vkGetDeviceProcAddr(dev, name);
+        }
+    }.load;
+
+    // Load dynamic rendering functions
+    if (@as(?*const anyopaque, loadDeviceProc(device, "vkCmdBeginRenderingKHR"))) |proc_addr| {
+        cmdBeginRenderingKHR = @ptrCast(proc_addr);
+        std.debug.print("Successfully loaded vkCmdBeginRenderingKHR\n", .{});
+    } else {
+        std.debug.print("Failed to load vkCmdBeginRenderingKHR\n", .{});
+    }
+
+    if (@as(?*const anyopaque, loadDeviceProc(device, "vkCmdEndRenderingKHR"))) |proc_addr| {
+        cmdEndRenderingKHR = @ptrCast(proc_addr);
+        std.debug.print("Successfully loaded vkCmdEndRenderingKHR\n", .{});
+    } else {
+        std.debug.print("Failed to load vkCmdEndRenderingKHR\n", .{});
+    }
+}
+
+pub const DescriptorSetLayout = c.VkDescriptorSetLayout;
+pub const DescriptorSetLayoutBinding = c.VkDescriptorSetLayoutBinding;
+pub const DescriptorSetLayoutCreateInfo = c.VkDescriptorSetLayoutCreateInfo;
+pub const DescriptorSetLayoutBindingFlagsCreateInfo = c.VkDescriptorSetLayoutBindingFlagsCreateInfo;
+pub const DescriptorSetLayoutBindingFlags = c.VkDescriptorSetLayoutBindingFlagsCreateInfo;
+pub const VertexInputBindingDescription = c.VkVertexInputBindingDescription;
+pub const VertexInputAttributeDescription = c.VkVertexInputAttributeDescription;
+pub const PipelineVertexInputStateCreateInfo = c.VkPipelineVertexInputStateCreateInfo;
+pub const PipelineInputAssemblyStateCreateInfo = c.VkPipelineInputAssemblyStateCreateInfo;
+pub const PipelineRasterizationStateCreateInfo = c.VkPipelineRasterizationStateCreateInfo;
+pub const PrimitiveTopology = c.VkPrimitiveTopology;
+pub const CullModeFlags = c.VkCullModeFlags;
+pub const FrontFace = c.VkFrontFace;
+pub const TRIANGLE_LIST = c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+pub const CULL_MODE_BACK = c.VK_CULL_MODE_BACK_BIT;
+pub const CLOCKWISE = c.VK_FRONT_FACE_CLOCKWISE;
+pub const PipelineColorBlendStateCreateInfo = c.VkPipelineColorBlendStateCreateInfo;
+pub const ShaderModuleCreateInfo = c.VkShaderModuleCreateInfo;
+
+pub const createShaderModule = c.vkCreateShaderModule;
+pub const PipelineLayoutCreateInfo = c.VkPipelineLayoutCreateInfo;
+pub const PushConstantRange = c.VkPushConstantRange;
+
+pub const SHADER_STAGE_VERTEX = c.VK_SHADER_STAGE_VERTEX_BIT;
+pub const SHADER_STAGE_FRAGMENT = c.VK_SHADER_STAGE_FRAGMENT_BIT;
+pub const SHADER_STAGE_COMPUTE = c.VK_SHADER_STAGE_COMPUTE_BIT;
+
+// ...existing code...
+
+// Add missing pipeline-related types
+pub const PipelineCache = c.VkPipelineCache;
+pub const GraphicsPipelineCreateInfo = c.VkGraphicsPipelineCreateInfo;
+pub const PipelineViewportStateCreateInfo = c.VkPipelineViewportStateCreateInfo;
+pub const PipelineMultisampleStateCreateInfo = c.VkPipelineMultisampleStateCreateInfo;
+pub const PipelineColorBlendAttachmentState = c.VkPipelineColorBlendAttachmentState;
+pub const PipelineDynamicStateCreateInfo = c.VkPipelineDynamicStateCreateInfo;
+pub const PipelineShaderStageCreateInfo = c.VkPipelineShaderStageCreateInfo;
+pub const SpecializationInfo = c.VkSpecializationInfo;
+pub const DynamicState = c.VkDynamicState;
+
+// Add missing constants for dynamic state
+pub const DYNAMIC_STATE_VIEWPORT = c.VK_DYNAMIC_STATE_VIEWPORT;
+pub const DYNAMIC_STATE_SCISSOR = c.VK_DYNAMIC_STATE_SCISSOR;
+
+// Add missing functions for pipeline creation
+pub const createGraphicsPipelines = c.vkCreateGraphicsPipelines;
+pub const createPipelineLayout = c.vkCreatePipelineLayout;
+pub const createDescriptorSetLayout = c.vkCreateDescriptorSetLayout;
+
+// Add missing functions for shader module
+pub const destroyShaderModule = c.vkDestroyShaderModule;
+
+// Add missing functions for pipeline layout management
+pub const destroyPipelineLayout = c.vkDestroyPipelineLayout;
+pub const destroyPipeline = c.vkDestroyPipeline;
+pub const destroyDescriptorSetLayout = c.vkDestroyDescriptorSetLayout;
+
+// Add missing blend constants and flags
+pub const SRC_ALPHA = c.VK_BLEND_FACTOR_SRC_ALPHA;
+pub const ONE_MINUS_SRC_ALPHA = c.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+pub const ONE = c.VK_BLEND_FACTOR_ONE;
+pub const R = c.VK_COLOR_COMPONENT_R_BIT;
+pub const G = c.VK_COLOR_COMPONENT_G_BIT;
+pub const B = c.VK_COLOR_COMPONENT_B_BIT;
+pub const A = c.VK_COLOR_COMPONENT_A_BIT;
+
+pub const PipelineRenderingCreateInfo = c.VkPipelineRenderingCreateInfo;

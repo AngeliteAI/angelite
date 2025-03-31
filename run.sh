@@ -111,22 +111,13 @@ elif [[ "$OSTYPE" == "linux"* ]]; then
     echo "Detected Linux - Running Zig implementation"
     
     # Ensure we're in the project root directory
-    cd "$PROJECT_ROOT"
+    cd "$PROJECT_ROOT/src/gfx-zig-test/"
     echo "Running from directory: $(pwd)"
     
     # Run the Zig code from the root directory
-    zig run \
-      -lc \
-      -lvulkan \
-      -lxcb \
-      -lstdc++ \
-      -I /usr/include/ \
-      -I /usr/include/x86_64-linux-gnu \
-      -I ./vendor/shaderc/include \
-      -L ./vendor/shaderc/build/lib \
-      -lshaderc_combined \
-      ./src/gfx/linux/main.zig
-    
+    zig build
+
+    ./zig-out/bin/gfx-test
 else
     echo "Unsupported operating system: $OSTYPE"
     exit 1

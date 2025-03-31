@@ -1,6 +1,4 @@
-const vec = @import("math/include/vec.zig");
-const mat = @import("math/include/mat.zig");
-const quat = @import("math/include/quat.zig");
+const math = @import("math");
 const vol = @import("vol.zig");
 const surface = @import("surface.zig");
 
@@ -8,9 +6,9 @@ const Surface = surface.Surface;
 const Volume = vol.Volume;
 
 pub const Camera = extern struct {
-    position: vec.Vec3,
-    rotation: quat.Quat,
-    projection: mat.Mat4,
+    position: math.vec.Vec3,
+    rotation: math.quat.Quat,
+    projection: math.mat.Mat4,
 };
 
 pub const RenderSettings = extern struct {
