@@ -46,6 +46,12 @@ pub const StructureType = enum(c_uint) {
     PipelineColorBlendStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
     PipelineDepthStencilStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 
+    DependencyInfoKHR = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR,
+    BufferMemoryBarrier2KHR = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2_KHR,
+    ImageMemoryBarrier2KHR = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR,
+    MemoryBarrier2KHR = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR,
+    PhysicalDeviceSynchronization2FeaturesKHR = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+
     // Descriptor-related structure types
     DescriptorSetLayoutCreateInfo = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 
@@ -563,6 +569,13 @@ pub fn loadDeviceExtensionFunctions(device: Device) void {
     } else {
         std.debug.print("Failed to load vkCmdEndRenderingKHR\n", .{});
     }
+
+    if (@as(?*const anyopaque, loadDeviceProc(device, "vkCmdPipelineBarrier2KHR"))) |proc_addr| {
+        cmdPipelineBarrier2KHR = @ptrCast(proc_addr);
+        std.debug.print("Successfully loaded vkCmdPipelineBarrier2KHR\n", .{});
+    } else {
+        std.debug.print("Failed to load vkCmdPipelineBarrier2KHR\n", .{});
+    }
 }
 
 pub const DescriptorSetLayout = c.VkDescriptorSetLayout;
@@ -632,3 +645,43 @@ pub const B = c.VK_COLOR_COMPONENT_B_BIT;
 pub const A = c.VK_COLOR_COMPONENT_A_BIT;
 
 pub const PipelineRenderingCreateInfo = c.VkPipelineRenderingCreateInfo;
+
+pub const KHR_SYNCHRONIZATION_2_EXTENSION_NAME = c.VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME;
+
+// Add Synchronization2 structures
+pub const DependencyInfoKHR = c.VkDependencyInfoKHR;
+pub const BufferMemoryBarrier2KHR = c.VkBufferMemoryBarrier2KHR;
+pub const ImageMemoryBarrier2KHR = c.VkImageMemoryBarrier2KHR;
+pub const MemoryBarrier2KHR = c.VkMemoryBarrier2KHR;
+pub const AccessFlags2KHR = c.VkAccessFlags2KHR;
+pub const PipelineStageFlags2KHR = c.VkPipelineStageFlags2KHR;
+
+// Add Synchronization2 constants
+pub const PIPELINE_STAGE_2_NONE_KHR = c.VK_PIPELINE_STAGE_2_NONE_KHR;
+pub const PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR = c.VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT_KHR;
+pub const PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR = c.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+pub const PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR = c.VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR;
+pub const PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT_KHR;
+
+// Add AccessFlags2 constants
+pub const ACCESS_2_NONE = c.VK_ACCESS_2_NONE;
+pub const ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR = c.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR;
+pub const ACCESS_2_COLOR_ATTACHMENT_READ_BIT_KHR = c.VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT_KHR;
+pub const ACCESS_2_MEMORY_READ_BIT = c.VK_ACCESS_2_MEMORY_READ_BIT;
+pub const ACCESS_2_MEMORY_WRITE_BIT = c.VK_ACCESS_2_MEMORY_WRITE_BIT;
+
+// Add Synchronization2 function pointer declarations
+pub var cmdPipelineBarrier2KHR: *const fn (CommandBuffer, *const DependencyInfoKHR) callconv(.C) void = undefined;
+
+pub const BufferView = c.VkBufferView;
+pub const Buffer = c.VkBuffer;
+pub const AccessFlags = c.VkAccessFlags;
+pub const ImageLayout = c.VkImageLayout;
+pub const PIPELINE_STAGE_NONE = c.VK_PIPELINE_STAGE_NONE;
+pub const IMAGE_LAYOUT_UNDEFINED = c.VK_IMAGE_LAYOUT_UNDEFINED;
+pub const QUEUE_FAMILY_IGNORED= c.VK_QUEUE_FAMILY_IGNORED;
+pub const ACCESS_COLOR_ATTACHMENT_WRITE = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+pub const REMAINING_ARRAY_LAYERS = c.VK_REMAINING_ARRAY_LAYERS;
+pub const REMAINING_MIP_LEVELS = c.VK_REMAINING_MIP_LEVELS;
+pub const WHOLE_SIZE = c.VK_WHOLE_SIZE;

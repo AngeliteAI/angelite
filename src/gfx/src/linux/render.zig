@@ -3,11 +3,18 @@ const vk = @import("vk.zig");
 const sf = @import("surface.zig");
 const std = @import("std");
 const pipelines = @import("pipeline.zig");
+const task = @import("task.zig");
+const frame = @import("frame.zig");
 
 const SurfaceId = sf.Id;
 const Surface = sf.Surface;
 const PlatformRenderer = inc.Renderer;
 const PipelineCompiler = pipelines.PipelineCompiler;
+const Graph = task.Graph;
+const Pass = task.Pass;
+const PassContext = task.PassContext;
+const ResourceState = task.ResourceState;
+const Frame = frame.Frame;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const renderAllocator = gpa.allocator();
@@ -18,11 +25,6 @@ var platformRendererActive = PlatformRenderer{
     .id = 0,
 };
 
-const Frame = struct {
-    width: u32,
-    height: u32,
-};
-
 const Renderer = struct {
     instance: vk.Instance,
     physicalDevice: vk.PhysicalDevice,
@@ -30,13 +32,15 @@ const Renderer = struct {
     queue: vk.Queue,
     surface: ?vk.Surface,
     swapchain: vk.Swapchain,
-    swapchainImageViews: []vk.ImageView,
+    swapchainImages: []vk.Image,
     command_pool: vk.CommandPool,
     command_buffer: vk.CommandBuffer,
     image_available_semaphore: vk.Semaphore,
     render_finished_semaphore: vk.Semaphore,
     in_flight_fence: vk.Fence,
 
+    graph: Graph,
+    swapchainImageResource: *task.Resource,
     pipeline: *PipelineCompiler,
 
     frame: ?Frame = undefined,
@@ -463,7 +467,7 @@ const Renderer = struct {
         return swapchain;
     }
 
-    fn getSwapchainImageViews(device: vk.Device, swapchain: vk.Swapchain) ![]vk.ImageView {
+    fn getSwapchainImages(device: vk.Device, swapchain: vk.Swapchain) ![]vk.Image {
         var image_count: u32 = 0;
         _ = vk.getSwapchainImages(device, swapchain, &image_count, null);
         const swapchain_images = renderAllocator.alloc(vk.Image, image_count) catch {
@@ -472,41 +476,7 @@ const Renderer = struct {
         };
         defer renderAllocator.free(swapchain_images);
         _ = vk.getSwapchainImages(device, swapchain, &image_count, swapchain_images.ptr);
-
-        // Create image views for swapchain images
-        const swapchain_image_views = renderAllocator.alloc(vk.ImageView, image_count) catch {
-            std.debug.print("Failed to allocate memory for swapchain image views\n", .{});
-            return error.OutOfMemory;
-        };
-
-        // Create image views for each swapchain image
-        for (swapchain_images, 0..) |image, i| {
-            const view_create_info = vk.ImageViewCreateInfo{
-                .sType = vk.sTy(vk.StructureType.ImageViewCreateInfo),
-                .image = image,
-                .viewType = vk.IMAGE_VIEW_TYPE_2D,
-                .format = vk.FORMAT_B8G8R8A8_SRGB, // Use same format as swapchain
-                .components = .{
-                    .r = vk.COMPONENT_SWIZZLE_IDENTITY,
-                    .g = vk.COMPONENT_SWIZZLE_IDENTITY,
-                    .b = vk.COMPONENT_SWIZZLE_IDENTITY,
-                    .a = vk.COMPONENT_SWIZZLE_IDENTITY,
-                },
-                .subresourceRange = .{
-                    .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1,
-                },
-            };
-
-            if (vk.CreateImageView(device, &view_create_info, null, &swapchain_image_views[i]) != vk.SUCCESS) {
-                std.debug.print("Failed to create image view for swapchain image {}\n", .{i});
-                return error.ImageViewCreationFailed;
-            }
-        }
-        return swapchain_image_views;
+        return swapchain_images;
     }
 
     fn createCommandPool(device: vk.Device, qfi: u32) !vk.CommandPool {
@@ -586,7 +556,7 @@ const Renderer = struct {
             return null;
         };
 
-        const swapchainImageViews: []vk.ImageView = Renderer.getSwapchainImageViews(device, swapchain) catch |err| {
+        const swapchainImages: []vk.ImageView = Renderer.getSwapchainImages(device, swapchain) catch |err| {
             std.debug.print("Failed to get swapchain image views: {s}\n", .{@errorName(err)});
             return null;
         };
@@ -636,6 +606,116 @@ const Renderer = struct {
             return null;
         };
 
+        const graph = Graph.init(renderAllocator, device) catch |err| {
+            std.debug.print("Failed to initialize graph: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        const trianglePassFn = struct {
+            fn execute(ctx: PassContext) void {
+                const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(ctx.userData)));
+                const color_attachment = vk.RenderingAttachmentInfoKHR{
+                    .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
+                    .imageView = ctx.pass.outputs.items[0].resource.view.?.imageView,
+                    .imageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
+                    .resolveImageView = null,
+                    .resolveImageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                    .loadOp = vk.RENDER_PASS_LOAD_OP_CLEAR,
+                    .storeOp = vk.RENDER_PASS_STORE_OP_STORE,
+                    .clearValue = vk.ClearValue{
+                        .color = vk.ClearColorValue{
+                            .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 },
+                        },
+                    },
+                };
+
+                const rendering_info = vk.RenderingInfoKHR{
+                    .sType = vk.sTy(vk.StructureType.RenderingInfoKHR),
+                    .renderArea = vk.Rect2D{
+                        .offset = vk.Offset2D{ .x = 0, .y = 0 },
+                        .extent = vk.Extent2D{ .width = ctx.frame.*.width, .height = ctx.frame.*.height },
+                    },
+                    .layerCount = 1,
+                    .colorAttachmentCount = 1,
+                    .pColorAttachments = &color_attachment,
+                };
+
+                vk.cmdBeginRenderingKHR(ctx.cmd, &rendering_info);
+                const pipeline = taskRenderer.pipeline.getPipeline("triangle") catch |err| {
+                    std.debug.print("Failed to get pipeline: {s}\n", .{@errorName(err)});
+                    return;
+                };
+                vk.CmdBindPipeline(ctx.cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
+
+                const viewport = vk.Viewport{
+                    .x = 0.0,
+                    .y = 0.0,
+                    .width = @floatFromInt(ctx.frame.*.width),
+                    .height = @floatFromInt(ctx.frame.*.height),
+                    .minDepth = 0.0,
+                    .maxDepth = 1.0,
+                };
+
+                vk.CmdSetViewport(ctx.cmd, 0, 1, &viewport);
+
+                const scissor = vk.Rect2D{
+                    .offset = vk.Offset2D{ .x = 0, .y = 0 },
+                    .extent = vk.Extent2D{ .width = ctx.frame.*.width, .height = ctx.frame.*.height },
+                };
+
+                vk.CmdSetScissor(ctx.cmd, 0, 1, &scissor);
+
+                vk.CmdDraw(ctx.cmd, 3, 1, 0, 0);
+
+                vk.cmdEndRenderingKHR(ctx.cmd);
+            }
+        }.execute;
+
+        const trianglePass = Pass.init(renderAllocator, "triangle", trianglePassFn) catch |err| {
+            std.debug.print("Failed to initialize triangle pass: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        renderer.swapchainImageResource = renderAllocator.create(task.Resource) catch |err| {
+            std.debug.print("Failed to allocate memory for swapchain image resource\n {s}", .{@errorName(err)});
+            return null;
+        };
+        renderer.swapchainImageResource.* = task.Resource{
+            .ty = task.ResourceType.Image,
+            .name="SwapchainImageResource",
+            .handle = null
+        };
+
+        renderer.swapchainImageResource.* = task.Resource{
+            .ty = task.ResourceType.Image,
+            .name = "SwapchainImageResource",
+            .handle = null 
+        };
+
+        trianglePass.addInput(renderer.swapchainImageResource, task.ResourceState{
+            .accessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE,
+            .stageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
+            .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        }) catch |err| {
+            std.debug.print("Failed to add input to triangle pass: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        graph.addPass(trianglePass) catch |err| {
+            std.debug.print("Failed to add triangle pass to graph: {s}\n", .{@errorName(err)});
+            return null;
+        };
+        graph.addPass(Pass.submit) catch |err| {
+            std.debug.print("Failed to add submit pass to graph: {s}\n", .{@errorName(err)});
+            return null;
+        };
+        graph.addPass(Pass.present) catch |err| {
+            std.debug.print("Failed to add present pass to graph: {s}\n", .{@errorName(err)});
+            return null;   
+        };
+
         renderer.instance = instance;
         renderer.physicalDevice = physicalDevice;
         renderer.device = device;
@@ -645,10 +725,11 @@ const Renderer = struct {
         renderer.swapchain = swapchain;
         renderer.command_buffer = command_buffer;
         renderer.command_pool = command_pool;
-        renderer.swapchainImageViews = swapchainImageViews;
+        renderer.swapchainImages = swapchainImages;
         renderer.in_flight_fence = in_flight_fence;
         renderer.image_available_semaphore = image_available_semaphore;
         renderer.render_finished_semaphore = render_finished_semaphore;
+        renderer.graph = graph;
 
         return renderer;
     }
@@ -710,16 +791,18 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         renderer.frame = Frame{
             .width = 800,
             .height = 600,
+            .index = 0,
+            .count = 0,
         };
     }
 
-    const frame = &renderer.frame.?;
+    const activeFrame = &renderer.frame.?;
 
     _ = vk.waitForFences(renderer.device, 1, &renderer.in_flight_fence, vk.TRUE, 100000000);
     _ = vk.resetFences(renderer.device, 1, &renderer.in_flight_fence);
 
-    var frameIndex: u32 = undefined;
-    const result = vk.acquireNextImageKHR(renderer.device, renderer.swapchain, 0, renderer.image_available_semaphore, null, &frameIndex);
+    const result = vk.acquireNextImageKHR(renderer.device, renderer.swapchain, 0, renderer.image_available_semaphore, null, &activeFrame.index);
+    renderer.swapchainImageResource.handle.?.image = renderer.swapchainImages[activeFrame.index];
     if (result == vk.OUT_OF_DATE) {
         // Get current surface capabilities to determine the proper swapchain size
         var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
@@ -735,12 +818,12 @@ pub export fn render(handle: ?*PlatformRenderer) void {
             std.debug.print("Failed to recreate swapchain: {s}\n", .{@errorName(err)});
             return;
         };
-        renderer.swapchainImageViews = Renderer.getSwapchainImageViews(renderer.device, renderer.swapchain) catch |err| {
+        renderer.swapchainImages = Renderer.getSwapchainImages(renderer.device, renderer.swapchain) catch |err| {
             std.debug.print("Failed to recreate swapchain image views: {s}\n", .{@errorName(err)});
             return;
         };
-        frame.*.width = width;
-        frame.*.height = height;
+        renderer.frame.?.width = width;
+        renderer.frame.?.height = height;
         std.debug.print("Swapchain recreated successfully.\n", .{});
         return;
     }
@@ -748,7 +831,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         std.debug.print("Failed to acquire next image\n", .{});
         return;
     }
-    std.debug.print("Acquired image index: {}\n", .{frameIndex});
+    std.debug.print("Acquired image index: {}\n", .{activeFrame.index});
 
     _ = vk.BeginCommandBuffer(renderer.command_buffer, &.{
         .sType = vk.sTy(vk.StructureType.CommandBufferBeginInfo),
@@ -756,61 +839,10 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         .pInheritanceInfo = null,
     });
 
-    const color_attachment = vk.RenderingAttachmentInfoKHR{
-        .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
-        .imageView = renderer.swapchainImageViews[frameIndex],
-        .imageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
-        .resolveImageView = null,
-        .resolveImageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = vk.RENDER_PASS_LOAD_OP_CLEAR,
-        .storeOp = vk.RENDER_PASS_STORE_OP_STORE,
-        .clearValue = vk.ClearValue{
-            .color = vk.ClearColorValue{
-                .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 },
-            },
-        },
-    };
-
-    const rendering_info = vk.RenderingInfoKHR{
-        .sType = vk.sTy(vk.StructureType.RenderingInfoKHR),
-        .renderArea = vk.Rect2D{
-            .offset = vk.Offset2D{ .x = 0, .y = 0 },
-            .extent = vk.Extent2D{ .width = frame.*.width, .height = frame.*.height },
-        },
-        .layerCount = 1,
-        .colorAttachmentCount = 1,
-        .pColorAttachments = &color_attachment,
-    };
-
-    vk.cmdBeginRenderingKHR(renderer.command_buffer, &rendering_info);
-    const pipeline = renderer.pipeline.getPipeline("triangle") catch |err| {
-        std.debug.print("Failed to get pipeline: {s}\n", .{@errorName(err)});
+    renderer.graph.execute(renderer.command_buffer, &renderer.frame.?) catch |err| {
+        std.debug.print("Failed to execute graph: {s}\n", .{@errorName(err)});
         return;
     };
-    vk.CmdBindPipeline(renderer.command_buffer, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
-
-    const viewport = vk.Viewport{
-        .x = 0.0,
-        .y = 0.0,
-        .width = @floatFromInt(frame.*.width),
-        .height = @floatFromInt(frame.*.height),
-        .minDepth = 0.0,
-        .maxDepth = 1.0,
-    };
-
-    vk.CmdSetViewport(renderer.command_buffer, 0, 1, &viewport);
-
-    const scissor = vk.Rect2D{
-        .offset = vk.Offset2D{ .x = 0, .y = 0 },
-        .extent = vk.Extent2D{ .width = frame.*.width, .height = frame.*.height },
-    };
-
-    vk.CmdSetScissor(renderer.command_buffer, 0, 1, &scissor);
-
-    vk.CmdDraw(renderer.command_buffer, 3, 1, 0, 0);
-
-    vk.cmdEndRenderingKHR(renderer.command_buffer);
 
     _ = vk.EndCommandBuffer(renderer.command_buffer);
 
@@ -837,11 +869,13 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         .pWaitSemaphores = &renderer.render_finished_semaphore,
         .swapchainCount = 1,
         .pSwapchains = &renderer.swapchain,
-        .pImageIndices = &frameIndex,
+        .pImageIndices = &activeFrame.index,
         .pResults = null,
     };
 
     _ = vk.queuePresent(renderer.queue, &present_info);
+
+    renderer.frame.?.count += 1;
 }
 
 pub export fn destroy() void {
