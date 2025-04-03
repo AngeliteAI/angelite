@@ -73,6 +73,8 @@ import MetalKit
       class KeyHandlingMTKView: MTKView {
         var onKeyDown: ((NSEvent) -> Void)?
         var onKeyUp: ((NSEvent) -> Void)?
+        // Added property for mouse movement
+        var onMouseMoved: ((NSEvent) -> Void)?
         
         override var acceptsFirstResponder: Bool { return true }
         
@@ -87,6 +89,13 @@ import MetalKit
           onKeyUp?(event)
           super.keyUp(with: event)
         }
+        
+        // Override mouseMoved to forward events
+        override func mouseMoved(with event: NSEvent) {
+          print("KeyHandlingMTKView: mouseMoved \(event.locationInWindow)")
+          onMouseMoved?(event)
+          super.mouseMoved(with: event)
+        }
       }
       
       // Create custom view
@@ -95,6 +104,13 @@ import MetalKit
       keyMetalView.autoresizingMask = oldMetalView.autoresizingMask
       keyMetalView.depthStencilPixelFormat = oldMetalView.depthStencilPixelFormat
       
+      // NEW: Add tracking area for mouse moved events
+      let trackingArea = NSTrackingArea(rect: keyMetalView.bounds,
+                                        options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+                                        owner: keyMetalView,
+                                        userInfo: nil)
+      keyMetalView.addTrackingArea(trackingArea)
+
       // Set key handlers
       keyMetalView.onKeyDown = { [weak self, weak inputHandler] event in
         print("Direct keyDown in MTKView: \(event.keyCode)")
@@ -106,6 +122,12 @@ import MetalKit
         print("Direct keyUp in MTKView: \(event.keyCode)")
         inputHandler?.handleKeyEvent(event)
       
+      }
+      
+      // Added mouse moved callback to forward mouse movement events
+      keyMetalView.onMouseMoved = { [weak self, weak inputHandler] event in
+        print("Direct mouseMoved in MTKView: \(event.locationInWindow)")
+        inputHandler?.handleMouseMovement(deltaX: Float(event.deltaX), deltaY: Float(event.deltaY))
       }
       
       // Replace the old view

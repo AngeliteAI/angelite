@@ -1,6 +1,8 @@
 import Cocoa
 import Metal
 import MetalKit
+import GameController  // NEW
+import Combine  // NEW
 
 enum Key: UInt16 {
   // Letter keys
@@ -63,13 +65,152 @@ class InputHandler {
 
   var keysPressed: Set<Key> = []
   
+  private var movementCancellable: AnyCancellable?  // NEW
+  // NEW: Store continuous gamepad right stick input
+  private var currentGamepadRightStick: (x: Float, y: Float) = (0, 0)
+
   init(viewController: NSViewController, metalView: MTKView) {
     self.viewController = viewController
     self.metalView = metalView
     setupInputHandling()
     print("InputHandler initialized - click in the window to capture mouse")
+    setupGameControllers()  // NEW: set up game controller support
   }
 
+  // NEW: Set up game controller notifications and configuration
+  private func setupGameControllers() {
+    NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] notification in
+      if let controller = notification.object as? GCController {
+        print("Game controller connected: \(controller.vendorName ?? "unknown")")
+        self?.configureGameController(controller)
+      }
+    }
+    // Configure already connected controllers
+    for controller in GCController.controllers() {
+      configureGameController(controller)
+    }
+  }
+  
+  // NEW: Configure each controller’s input
+  private func configureGameController(_ controller: GCController) {
+    if let gamepad = controller.extendedGamepad {
+      print("Configuring extendedGamepad for FPS controls: \(controller.vendorName ?? "unknown")")
+      
+      // Left thumbstick for WASD movement
+      gamepad.leftThumbstick.valueChangedHandler = { [weak self] (stick, xValue, yValue) in
+        guard let self = self else { return }
+        
+        // Horizontal axis (A/D)
+        if xValue > 0.2 {
+          self.keysPressed.insert(.d)
+          self.onKeyPress?(.d, true)
+        } else {
+          self.keysPressed.remove(.d)
+          self.onKeyPress?(.d, false)
+        }
+        
+        if xValue < -0.2 {
+          self.keysPressed.insert(.a)
+          self.onKeyPress?(.a, true)
+        } else {
+          self.keysPressed.remove(.a)
+          self.onKeyPress?(.a, false)
+        }
+        
+        // Vertical axis (W/S)
+        if yValue > 0.2 {
+          self.keysPressed.insert(.w)
+          self.onKeyPress?(.w, true)
+        } else {
+          self.keysPressed.remove(.w)
+          self.onKeyPress?(.w, false)
+        }
+        
+        if yValue < -0.2 {
+          self.keysPressed.insert(.s)
+          self.onKeyPress?(.s, true)
+        } else {
+          self.keysPressed.remove(.s)
+          self.onKeyPress?(.s, false)
+        }
+      }
+      
+      // Right thumbstick for camera/look controls
+      gamepad.rightThumbstick.valueChangedHandler = { [weak self] (stick, xValue, yValue) in
+        guard let self = self else { return }
+        let sensitivity: Float = 1.0
+        let deltaX = Float(xValue) * sensitivity
+        let deltaY = Float(-yValue) * sensitivity  // Invert Y for natural camera movement
+        // NEW: update the stored state continuously
+        self.currentGamepadRightStick = (deltaX, deltaY)
+        print("Updated gamepad right stick: \(self.currentGamepadRightStick)")
+      }
+      
+      // Jump with A button
+      gamepad.leftShoulder.pressedChangedHandler = { [weak self] (button, value, pressed) in
+        guard let self = self else { return }
+        if pressed {
+          self.keysPressed.insert(.space)
+          self.onKeyPress?(.space, true)
+        } else {
+          self.keysPressed.remove(.space)
+          self.onKeyPress?(.space, false)
+        }
+      }
+      
+      // Crouch with B button
+      gamepad.rightShoulder.pressedChangedHandler = { [weak self] (button, value, pressed) in
+        guard let self = self else { return }
+        if pressed {
+          self.keysPressed.insert(.c)
+          self.onKeyPress?(.c, true)
+        } else {
+          self.keysPressed.remove(.c)
+          self.onKeyPress?(.c, false)
+        }
+      }
+      
+     
+    } else if let gamepad = controller.microGamepad {
+      print("Configuring microGamepad (limited FPS controls): \(controller.vendorName ?? "unknown")")
+      // For micro gamepads (like Apple TV remote), just use the dpad for movement
+      gamepad.dpad.valueChangedHandler = { [weak self] (dpad, xValue, yValue) in
+        guard let self = self else { return }
+        // Basic WASD emulation
+        if xValue > 0.2 {
+          self.keysPressed.insert(.d)
+          self.onKeyPress?(.d, true)
+        } else {
+          self.keysPressed.remove(.d)
+          self.onKeyPress?(.d, false)
+        }
+        
+        if xValue < -0.2 {
+          self.keysPressed.insert(.a)
+          self.onKeyPress?(.a, true)
+        } else {
+          self.keysPressed.remove(.a)
+          self.onKeyPress?(.a, false)
+        }
+        
+        if yValue > 0.2 {
+          self.keysPressed.insert(.w)
+          self.onKeyPress?(.w, true)
+        } else {
+          self.keysPressed.remove(.w)
+          self.onKeyPress?(.w, false)
+        }
+        
+        if yValue < -0.2 {
+          self.keysPressed.insert(.s)
+          self.onKeyPress?(.s, true)
+        } else {
+          self.keysPressed.remove(.s)
+          self.onKeyPress?(.s, false)
+        }
+      }
+    }
+  }
   func setKeyPressCallback(_ callback: @escaping (Key, Bool) -> Void) {
     self.onKeyPress = callback
   }
@@ -328,13 +469,26 @@ class InputHandler {
         print("3. Add your application to the list and ensure it's checked")
         print("4. If running from Xcode, you may need to add Xcode too")
     }
+
+    // Start continuous movement update (60 Hz) with gamepad processing
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self else { return }
+      self.movementCancellable = Timer.publish(every: 1/60, on: .main, in: .common)
+        .autoconnect()
+        .sink { [weak self] _ in
+          self?.applyGamepadMovement()
+        }
+    }
   }
 
   func releaseMouse() {
     print("🔓 RELEASING MOUSE 🔓")
     isMouseCaptured = false
-    lastMouseLocation = nil
     movementBuffer.removeAll()
+    
+    // Cancel continuous movement update
+    movementCancellable?.cancel()
+    movementCancellable = nil
 
     // Show cursor
     NSCursor.unhide()
@@ -344,6 +498,9 @@ class InputHandler {
 
     // Restore normal mouse behavior
     CGAssociateMouseAndMouseCursorPosition(1)
+    
+    // NEW: Reset the continuous gamepad input state.
+    currentGamepadRightStick = (0, 0)
   }
 
   func cleanup() {
@@ -369,8 +526,62 @@ class InputHandler {
       self.globalMouseMonitor = nil
     }
 
+    if let movementCancellable = movementCancellable {
+      movementCancellable.cancel()
+      self.movementCancellable = nil
+    }
+
     if isMouseCaptured {
       releaseMouse()
+    }
+  }
+
+  // NEW: Continuously process buffered mouse movement.
+  private func applyMovement() {
+    guard isMouseCaptured, !movementBuffer.isEmpty else { return }
+    
+    var totalDx: Float = 0
+    var totalDy: Float = 0
+    for (dx, dy) in movementBuffer {
+      totalDx += dx
+      totalDy += dy
+    }
+    let count = Float(movementBuffer.count)
+    let avgDx = totalDx / count
+    let avgDy = totalDy / count
+    
+    // Apply sensitivity factors
+    let sensitivityX: Float = 0.003
+    let sensitivityY: Float = 0.0015
+    let smoothedX = avgDx * sensitivityX
+    let smoothedY = avgDy * sensitivityY
+    
+    onMouseMove?(smoothedX, smoothedY)
+    
+    // Center mouse if significant movement occurred
+    if abs(totalDx) + abs(totalDy) > 5 {
+      Task {
+        await self.centerMouseInWindow()
+      }
+    }
+    
+    movementBuffer.removeAll()
+  }
+  
+  // NEW: Continuously apply gamepad right stick input until it goes below threshold.
+  private func applyGamepadMovement() {
+    guard isMouseCaptured else { return }
+    let threshold: Float = 0.1
+    let stick = currentGamepadRightStick
+    if abs(stick.x) >= threshold || abs(stick.y) >= threshold {
+      let sens: Float = 5.0
+      let moveX = sens * stick.x
+      let moveY = sens * -stick.y
+      self.handleMouseMovement(deltaX: moveX, deltaY: moveY)
+      // if abs(stick.x) + abs(stick.y) > 5 { Task { await self.centerMouseInWindow() } }
+    } else {
+      // RESET when below threshold
+      currentGamepadRightStick = (0, 0)
     }
   }
 }

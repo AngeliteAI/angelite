@@ -153,7 +153,7 @@ captureScope?.label = "VoxelFaceCount"
                 name: "voxel_countFacesFromPalette",
                 functionName: "countFacesFromPalette"
             )
-_ = try self.pipelines.createComputePipeline(
+            _ = try self.pipelines.createComputePipeline(
                 name: "voxel_generateMeshFromPalette",
                 functionName: "generateMeshFromPalette"
             )
@@ -220,10 +220,6 @@ _ = try self.pipelines.createComputePipeline(
             dataPtr[i] = palette.data[i]
         }
         print("done")
-
-
-
-
     }
 
     public mutating func updateRenderTargetIfNeeded() {
@@ -313,8 +309,9 @@ public func render() {
         let deltaX = inputHandler?.mouseDeltaX ?? 0
         let deltaY = inputHandler?.mouseDeltaY ?? 0
         
+        print("Mouse delta: x=\(deltaX), y=\(deltaY)")
         // Apply rotations based on mouse movement
-        let sens: Float = 200.0
+        let sens: Float = 1.0
         let z = qRotY(angle: sens * deltaX)
         let x = qRotX(angle: sens * deltaY)
         let yawTemp = qMul(a: renderer?.camera?.yaw ?? qId(), b: z)
@@ -418,11 +415,12 @@ renderEncoder.setVertexBuffer(renderer?.metadataOffsetBuffer, offset: 0, index: 
 // Set renderer?.camera buffer
 let drawableSize = renderer?.surface.metalView.drawableSize ?? CGSize(width: 1.0, height: 1.0)
 let aspect = Float(drawableSize.width / drawableSize.height)
+renderer?.camera?.projection = m4Persp(fovy: Float.pi / 1.5, aspect: aspect, near: 0.1, far: 100.0)
 let transform: Mat4 = m4Mul(a: m4TransV3(v: renderer?.camera?.position ?? v3Splat(s: 0.0)), b: rotationMatrix)
 // Create a matrix that flips the z-axis (makes "below" appear "above")
 var xyzFlipMatrix = m4Id()
 m4Set(m: &xyzFlipMatrix, row: 2, col: 2, val: -1)  // Invert the z component
-let view: Mat4 = m4Inv(m: transform)
+let view: Mat4 = m4Inv(m: m4Mul(a: transform, b: m4RotX(angle: 3.14 / 2)));
 // Correct matrix multiplication order: view -> zFlip -> projection
 let projectionMatrix = renderer?.camera?.projection ?? m4Id()
 var viewProjection: Mat4 = m4Mul(a: projectionMatrix, b: m4Mul(a: xyzFlipMatrix, b: view))
