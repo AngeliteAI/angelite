@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let viewController = ViewController()
     window.contentViewController = viewController
     window.makeKeyAndOrderFront(nil)
+    window.acceptsMouseMovedEvents = true
   }
 }
 
@@ -23,6 +24,7 @@ class ViewController: NSViewController {
 
   override func viewDidLoad() {
     super.viewDidLoad()
+
 
     // Create the Metal view
     metalView = MTKView(frame: view.bounds)

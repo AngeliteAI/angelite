@@ -33,19 +33,60 @@ class PipelineManager {
     private var libraryURL: URL?
     private var lastModificationDate: Date?
     private var libraryWatcher: DispatchSourceFileSystemObject?
-    
+    let shaderSource: String
+    let library: MTLLibrary
     // File monitoring queue
     private let monitorQueue = DispatchQueue(label: "com.pipeline.monitor", qos: .utility)
     
     init(device: MTLDevice) {
         self.device = device
-        
+        do {
+            let path = URL(fileURLWithPath: "/Users/solmidnight/work/angelite/src/gfx/src/macos/Shaders.metal")
+            
+            // Check if file exists before attempting to load
+            guard FileManager.default.fileExists(atPath: path.path) else {
+                print("Metal library file not found at: \(path.path)")
+                throw PipelineError.libraryNotFound
+            }
+
+            // Load the library from the specified path
+            do {
+                shaderSource = try String(contentsOf: path, encoding: .utf8)
+            } catch {
+                print("Error loading Metal library source: \(error)")
+                throw PipelineError.libraryNotFound
+            }
+        /*
+        guard let buffer = device.makeBuffer(bytes: &amp;array64Bit, length: MemoryLayout&lt;UInt64>.stride * array64Bit.count) else {
+                    throw InitError.bufferIsNil
+        }
+        self.bufferResult = buffer
+        [...]
+        commandEncoder.setBuffer(bufferResult, offset: 0, index: 0)
+        [...]
+        let bufferResultPtr = bufferResult.contents().assumingMemoryBound(to: UInt64.self)
+        let bufferResultArray = UnsafeMutableBufferPointer(start: bufferResultPtr, count: array64Bit.count)
+        */ 
+            let compileOptions = MTLCompileOptions()
+            print("Compiling Metal shader with options: \(compileOptions)")
+            compileOptions.languageVersion = .version3_2;
+            
+            compileOptions.fastMathEnabled = false
+            compileOptions.mathMode = .relaxed
+            print("Updated compile options: \(compileOptions)")
+
+            library = try device.makeLibrary(source: shaderSource , options: compileOptions)
+            } catch {
+                fatalError("Failed to create Metal library: \(error)")
+        }       
         // Try to find the default library's URL for monitoring
         if let libraryPath = Bundle.main.path(forResource: "default", ofType: "metallib") {
             libraryURL = URL(fileURLWithPath: libraryPath)
             lastModificationDate = try? libraryURL?.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             setupLibraryWatcher()
         }
+
+
     }
     
     // Setup file monitoring for auto-reloading
@@ -132,16 +173,16 @@ class PipelineManager {
         return name // Fallback to using the full name
     }
     
+    func getFunction(name: String) throws -> MTLFunction {
+        guard let function = library.makeFunction(name: name) else {
+            throw PipelineError.functionNotFound(name: name)
+        }
+        return function
+    }
+
     // Create a compute pipeline with specified name and function
     func createComputePipeline(name: String, functionName: String) throws -> MTLComputePipelineState {
-        guard let library = device.makeDefaultLibrary() else {
-            throw PipelineError.libraryNotFound
-        }
-        
-        guard let function = library.makeFunction(name: functionName) else {
-            throw PipelineError.functionNotFound(name: functionName)
-        }
-        
+         let function = try getFunction(name: functionName)
         do {
             let pipelineState = try device.makeComputePipelineState(function: function)
             let anyPipeline = AnyPipelineState(name: name, object: pipelineState)
