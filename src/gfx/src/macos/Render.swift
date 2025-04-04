@@ -9,8 +9,37 @@ import MetalKit
 // like Scalar.swift, Vec.swift, Mat.swift, Quat.swift in the path "angelite/src/swift/math/src"
 // These @_silgen_name attributes are crucial for C interoperability.  They
 // prevent Swift from mangling the function names, making them callable from C.
+/*
+    uint32_t seed;
+    float amplitude;
+    float frequency;
+    float persistence;
+    float lacunarity;
+    uint32_t octaves;
+    float2 offset;
+*/
+@frozen public struct Noise {
+    var seed: UInt32
+    var amplitude: Float
+    var frequency: Float
+    var persistence: Float
+    var lacunarity: Float
+    var octaves: UInt32
+    var offset: Vec2
 
-
+    public init(seed: UInt32, amplitude: Float, frequency: Float, persistence: Float, lacunarity: Float, octaves: UInt32, offset: Vec2) {
+        self.seed = seed
+        self.amplitude = amplitude
+        self.frequency = frequency
+        self.persistence = persistence
+        self.lacunarity = lacunarity
+        self.octaves = octaves
+        self.offset = offset
+    }
+    public init(seed: UInt32) {
+        self.init(seed: seed, amplitude: 1.0, frequency: 1.0, persistence: 0.5, lacunarity: 2.0, octaves: 4, offset: Vec2(x: 0.0, y: 0.0))
+    }
+}
 
 @frozen public struct Camera {
     var projection: Mat4
@@ -125,6 +154,8 @@ public struct Renderer {
     var captureManager = MTLCaptureManager.shared()
     var captureScope : MTLCaptureScope?
 
+    var noiseTexture: MTLTexture?
+
     var camera : Camera? = Camera(projection: m4Persp(fovy: Float.pi / 1.5, aspect: 1.0, near: 0.1, far: 100.0))
 
     public init(surface: Surface.View) {
@@ -157,6 +188,10 @@ captureScope?.label = "VoxelFaceCount"
                 name: "voxel_generateMeshFromPalette",
                 functionName: "generateMeshFromPalette"
             )
+            try self.pipelines.createComputePipeline(
+                name: "test_generateNoiseTexture",
+                functionName: "generateNoiseTexture"
+            )
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = try pipelines.getFunction(name: "vertexFaceShader")
             descriptor.fragmentFunction = try pipelines.getFunction(name: "fragmentFaceShader")
@@ -169,6 +204,15 @@ captureScope?.label = "VoxelFaceCount"
             print("❌ Failed to create pipelines: \(error)")
             fatalError("Pipeline creation failed")
         }
+
+        self.noiseTexture = device.makeTexture(
+            descriptor: MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .rgba8Unorm,
+                width: 256,
+                height: 256,
+                mipmapped: false
+            )
+        )
 
         self.heapBuffer.label = "Heap Buffer"
 
@@ -433,8 +477,29 @@ renderEncoder.setVertexBytes(&viewProjection, length: MemoryLayout<Mat4>.size, i
     }
 
 renderEncoder.endEncoding()
+    let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+
+    computeEncoder.label = "Test noise generate texture"
+    // Set the compute pipeline
+    do {
+        if let pipeline = try renderer?.pipelines.getComputePipeline(name: "test_generateNoiseTexture") {
+            computeEncoder.setComputePipelineState(pipeline)
+        } else {
+            print("❌ Pipeline not found")
+        }
+    } catch {
+        print("❌ Failed to set compute pipeline state: \(error)")
+    }
+    // Set the texture to write to
+    computeEncoder.setTexture(renderer?.noiseTexture, index: 0)
+    // Set the noise params buffer
+    comp
+
+    computeEncoder.endEncoding()
 
     let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+
+
     // Set encoder state and buffers
     do {
         if let pipeline = try renderer?.pipelines.getComputePipeline(name: "voxel_countFacesFromPalette") {

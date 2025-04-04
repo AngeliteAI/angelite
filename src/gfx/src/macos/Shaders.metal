@@ -2,6 +2,7 @@
 #include <metal_atomic>
 using namespace metal;
 
+#define MAX_GEN 8 
 #define HEAP_BITS 32
 #define CHUNK_SIZE 8
 #define heap_t uint32_t
@@ -11,6 +12,7 @@ struct Camera {
 };
 
 struct Face {
+    bool valid;
     uint3 position;
     uint faceDir;
     uint blockID;
@@ -25,6 +27,24 @@ struct Metadata {
     atomic_uint countFaces;
     uint32_t meshValid;
     uint32_t padding;
+};
+
+struct Terrain {
+    float heightScale;
+    float heightOffset;
+    float squishingFactor;
+    uint32_t seed;
+    uint2 worldOffset;
+};
+
+struct Noise {
+    uint32_t seed;
+    float amplitude;
+    float frequency;
+    float persistence;
+    float lacunarity;
+    uint32_t octaves;
+    float2 offset;
 };
 
 uint32_t getPaletteValue(
@@ -142,6 +162,83 @@ void processVisibleFaces(
     }
 }
 
+// Perlin noise base function
+// Fast hash function for noise generation
+float hash21(float2 p, uint32_t seed) {
+    float3 p3 = fract(float3(p.xyx) * float3(0.1031, 0.103, 0.0973) + float(seed) * 0.001);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// 2D gradient from hash
+float2 hash22(float2 p, uint32_t seed) {
+    float h = hash21(p, seed);
+    float h2 = hash21(p + 1.2345, seed + 12345);
+    return float2(cos(h * 6.283185), sin(h2 * 6.283185));
+}
+
+// Perlin noise base function
+float perlinNoise(float2 p, uint32_t seed) {
+    float2 i = floor(p);
+    float2 f = fract(p);
+    
+    // Cubic Hermite interpolation
+    float2 u = f * f * (3.0 - 2.0 * f);
+    
+    // Four corner gradients
+    float a = dot(hash22(i, seed), f);
+    float b = dot(hash22(i + float2(1.0, 0.0), seed), f - float2(1.0, 0.0));
+    float c = dot(hash22(i + float2(0.0, 1.0), seed), f - float2(0.0, 1.0));
+    float d = dot(hash22(i + float2(1.0, 1.0), seed), f - float2(1.0, 1.0));
+    
+    // Bilinear interpolation with smoothing
+    float x1 = mix(a, b, u.x);
+    float x2 = mix(c, d, u.x);
+    return mix(x1, x2, u.y);
+}
+
+
+kernel void generateNoiseTexture(
+    array<texture3d<float, access::read_write>, MAX_GEN> noiseTextures [[texture(0)]],
+    device const Noise* noiseParams [[buffer(0)]],
+    uint3 threadPosition [[thread_position_in_grid]],
+    uint3 threadgroupPosition [[thread_position_in_threadgroup]],
+    uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
+    uint3 threadgroupSize [[threads_per_threadgroup]]
+) {
+    //Generate noise from noiseParams using noise functions, for each noiseTexture is 8x8x8 and so is the threadgroup. do the math
+    // to get the correct position in the texture. There are multiple noise params for each texture, one per texture with respective indices
+    uint textureIndex = threadgroupPosition.x + 
+        threadgroupsPerGrid.x * 
+        (threadgroupPosition.y + threadgroupPosition.z * threadgroupsPerGrid.y);
+    if (textureIndex >= MAX_GEN) {
+        return;
+    }
+    Noise noiseParam = noiseParams[textureIndex];
+    // Now we need to use the noise parameters to do fbm magic
+    float fbm = 0.0;
+    float amplitude = noiseParam.amplitude;
+    float frequency = noiseParam.frequency;
+    for (uint i = 0; i < noiseParam.octaves; i++) {
+        // Include all three dimensions in the noise calculation
+        float2 noisePos = float2(
+            threadPosition.x, 
+            threadPosition.y + threadPosition.z * threadgroupSize.y // Fold z into y
+        ) * frequency + noiseParam.offset;
+    
+        fbm += amplitude * perlinNoise(noisePos, noiseParam.seed + i); // Add i to seed for variation
+        amplitude *= noiseParam.persistence;
+        frequency *= noiseParam.lacunarity;
+    }
+
+    //Now we take the fbm value and we need to put it in the texture, one thread per cell (remember, 8x8x8)
+    // So we need to get the correct position in the texture
+    uint3 texturePosition = threadPosition % threadgroupSize;
+
+    // Now we store fbm in the texture
+    noiseTextures[textureIndex].write(float4(fbm, 0.0, 0.0, 0.0), texturePosition);
+}
+
 kernel void countFacesFromPalette(
     device const heap_t* heap  [[buffer(0), aligned(8)]],
     device const uint32_t* heapOffsets [[buffer(1)]],
@@ -218,6 +315,7 @@ const uint metadataIndex = threadgroupPosition.x +
             faces[faceIndex].position = position;
             faces[faceIndex].faceDir = faceDir;
             faces[faceIndex].blockID = blockID; 
+            faces[faceIndex].valid = true;
         }
     );
 }
@@ -271,6 +369,9 @@ vertex float4 vertexFaceShader(
     device Face* faces = (device Face*)(((device uint8_t*)heap) + 4 * metadata->offsetMesh);
 
      Face face = faces[faceIndex];
+     if (!face.valid) {
+        return float4(0, 0, 0, 42069);
+     }
     uint3 position = face.position;
     int3 normal = faceNormals[face.faceDir];
     uint faceDir = face.faceDir;
