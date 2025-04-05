@@ -21,10 +21,12 @@ struct Face {
 struct Metadata {
     uint32_t state;
     uint32_t offsetPalette;
-    uint32_t offsetData;
+    uint32_t offsetCompressed;
+    uint32_t offsetRaw;
     uint32_t offsetMesh;
     uint32_t countPalette;
     atomic_uint countFaces;
+    uint32_t sizeRawMaxBytes;
     uint32_t meshValid;
     uint32_t padding;
 };
@@ -38,14 +40,50 @@ struct Terrain {
 };
 
 struct Noise {
+    uint32_t dataHeapOffset;
     uint32_t seed;
+    uint32_t octaves;
     float amplitude;
     float frequency;
     float persistence;
     float lacunarity;
-    uint32_t octaves;
-    float2 offset;
+    float3 offset; // 3D offset
+    uint3 dimensions; // 3D dimensions
+    float padding; // Reduced padding to maintain alignment
 };
+
+uint hash( uint x ) {
+    x += ( x << 10u );
+    x ^= ( x >>  6u );
+    x += ( x <<  3u );
+    x ^= ( x >> 11u );
+    x += ( x << 15u );
+    return x;
+}
+
+uint hash( uint2 v ) { return hash( v.x ^ hash(v.y) ); }
+uint hash( uint3 v ) { return hash( v.x ^ hash(v.y) ^ hash(v.z) ); }
+uint hash( uint4 v ) { return hash( v.x ^ hash(v.y) ^ hash(v.z) ^ hash(v.w) ); }
+
+float3 hash(float3 p, uint32_t seed) {
+    uint3 q = uint3(p);
+    uint3 h = uint3(
+        hash(q.x ^ seed),
+        hash(q.y ^ seed),
+        hash(q.z ^ seed)
+    );
+    // Convert to floats in range [-1, 1]
+    // Reinterpret bits to create floats in [-1,1] range
+    // Create values in [1,2) range by setting exponent bits
+    uint3 floatBits = (h & 0x007FFFFF) | 0x3F800000;
+    // Convert bits to float and map from [1,2) to [-1,1)
+    return as_type<float3>(floatBits) * 2.0f - 3.0f;
+}
+
+// Add a hash function for uint3 with seed
+uint hashWithSeed(uint3 v, uint32_t seed) {
+    return hash(v.x ^ seed) ^ hash(v.y ^ seed) ^ hash(v.z ^ seed);
+}
 
 uint32_t getPaletteValue(
     device const heap_t* heap  [[aligned(8)]],
@@ -162,85 +200,400 @@ void processVisibleFaces(
     }
 }
 
-// Perlin noise base function
-// Fast hash function for noise generation
-float hash21(float2 p, uint32_t seed) {
-    float3 p3 = fract(float3(p.xyx) * float3(0.1031, 0.103, 0.0973) + float(seed) * 0.001);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+
+// Fade function for smooth interpolation
+float fade(float t) {
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
 }
 
-// 2D gradient from hash
-float2 hash22(float2 p, uint32_t seed) {
-    float h = hash21(p, seed);
-    float h2 = hash21(p + 1.2345, seed + 12345);
-    return float2(cos(h * 6.283185), sin(h2 * 6.283185));
+// Improved gradient function for Perlin noise
+float3 gradientVector(uint hash, float3 p) {
+    // Use a switch case to select one of 12 gradient directions
+    switch(hash & 15) {
+        case 0:  return float3(1, 1, 0);
+        case 1:  return float3(-1, 1, 0);
+        case 2:  return float3(1, -1, 0);
+        case 3:  return float3(-1, -1, 0);
+        case 4:  return float3(1, 0, 1);
+        case 5:  return float3(-1, 0, 1);
+        case 6:  return float3(1, 0, -1);
+        case 7:  return float3(-1, 0, -1);
+        case 8:  return float3(0, 1, 1);
+        case 9:  return float3(0, -1, 1);
+        case 10: return float3(0, 1, -1);
+        case 11: return float3(0, -1, -1);
+        case 12: return float3(1, 1, 0);
+        case 13: return float3(-1, 1, 0);
+        case 14: return float3(0, -1, 1);
+        case 15: return float3(0, -1, -1);
+    }
+    return float3(0); // Should never happen
 }
 
-// Perlin noise base function
-float perlinNoise(float2 p, uint32_t seed) {
-    float2 i = floor(p);
-    float2 f = fract(p);
+// Improved Perlin noise function
+float perlinNoise3D(float3 p, uint32_t seed) {
+    float3 i = floor(p);
+    float3 f = fract(p);
     
-    // Cubic Hermite interpolation
-    float2 u = f * f * (3.0 - 2.0 * f);
+    // Better fade function application
+    float3 u = float3(fade(f.x), fade(f.y), fade(f.z));
     
-    // Four corner gradients
-    float a = dot(hash22(i, seed), f);
-    float b = dot(hash22(i + float2(1.0, 0.0), seed), f - float2(1.0, 0.0));
-    float c = dot(hash22(i + float2(0.0, 1.0), seed), f - float2(0.0, 1.0));
-    float d = dot(hash22(i + float2(1.0, 1.0), seed), f - float2(1.0, 1.0));
+    // Get hash values for the 8 cube corners
+    uint h000 = hashWithSeed(uint3(i) + uint3(0,0,0), seed);
+    uint h100 = hashWithSeed(uint3(i) + uint3(1,0,0), seed);
+    uint h010 = hashWithSeed(uint3(i) + uint3(0,1,0), seed);
+    uint h110 = hashWithSeed(uint3(i) + uint3(1,1,0), seed);
+    uint h001 = hashWithSeed(uint3(i) + uint3(0,0,1), seed);
+    uint h101 = hashWithSeed(uint3(i) + uint3(1,0,1), seed);
+    uint h011 = hashWithSeed(uint3(i) + uint3(0,1,1), seed);
+    uint h111 = hashWithSeed(uint3(i) + uint3(1,1,1), seed);
     
-    // Bilinear interpolation with smoothing
-    float x1 = mix(a, b, u.x);
-    float x2 = mix(c, d, u.x);
-    return mix(x1, x2, u.y);
+    // Get gradient vectors and calculate dot products with distance vectors
+    float n000 = dot(gradientVector(h000, f - float3(0,0,0)), f - float3(0,0,0));
+    float n100 = dot(gradientVector(h100, f - float3(1,0,0)), f - float3(1,0,0));
+    float n010 = dot(gradientVector(h010, f - float3(0,1,0)), f - float3(0,1,0));
+    float n110 = dot(gradientVector(h110, f - float3(1,1,0)), f - float3(1,1,0));
+    float n001 = dot(gradientVector(h001, f - float3(0,0,1)), f - float3(0,0,1));
+    float n101 = dot(gradientVector(h101, f - float3(1,0,1)), f - float3(1,0,1));
+    float n011 = dot(gradientVector(h011, f - float3(0,1,1)), f - float3(0,1,1));
+    float n111 = dot(gradientVector(h111, f - float3(1,1,1)), f - float3(1,1,1));
+    
+    // Trilinear interpolation
+    float nx00 = mix(n000, n100, u.x);
+    float nx10 = mix(n010, n110, u.x);
+    float nx01 = mix(n001, n101, u.x);
+    float nx11 = mix(n011, n111, u.x);
+    
+    float nxy0 = mix(nx00, nx10, u.y);
+    float nxy1 = mix(nx01, nx11, u.y);
+    
+    // Final interpolation along z
+    return 0.5 * mix(nxy0, nxy1, u.z) + 0.5; // Scale to [0, 1] range
 }
-
 
 kernel void generateNoiseTexture(
-    array<texture3d<float, access::read_write>, MAX_GEN> noiseTextures [[texture(0)]],
-    device const Noise* noiseParams [[buffer(0)]],
-    uint3 threadPosition [[thread_position_in_grid]],
-    uint3 threadgroupPosition [[thread_position_in_threadgroup]],
+    device heap_t* heap [[buffer(0)]],
+    device const uint32_t* noiseHeapOffsets [[buffer(1)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
     uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
-    uint3 threadgroupSize [[threads_per_threadgroup]]
+    uint3 threadPosition [[thread_position_in_threadgroup]],
+    uint3 threads_per_threadgroup [[threads_per_threadgroup]]
 ) {
-    //Generate noise from noiseParams using noise functions, for each noiseTexture is 8x8x8 and so is the threadgroup. do the math
-    // to get the correct position in the texture. There are multiple noise params for each texture, one per texture with respective indices
-    uint textureIndex = threadgroupPosition.x + 
-        threadgroupsPerGrid.x * 
-        (threadgroupPosition.y + threadgroupPosition.z * threadgroupsPerGrid.y);
-    if (textureIndex >= MAX_GEN) {
-        return;
-    }
-    Noise noiseParam = noiseParams[textureIndex];
-    // Now we need to use the noise parameters to do fbm magic
-    float fbm = 0.0;
-    float amplitude = noiseParam.amplitude;
-    float frequency = noiseParam.frequency;
-    for (uint i = 0; i < noiseParam.octaves; i++) {
-        // Include all three dimensions in the noise calculation
-        float2 noisePos = float2(
-            threadPosition.x, 
-            threadPosition.y + threadPosition.z * threadgroupSize.y // Fold z into y
-        ) * frequency + noiseParam.offset;
+    const uint32_t noiseHeapOffset = noiseHeapOffsets[0];
+    device const Noise* noiseParam = (device const Noise*)(heap + noiseHeapOffset);
     
-        fbm += amplitude * perlinNoise(noisePos, noiseParam.seed + i); // Add i to seed for variation
-        amplitude *= noiseParam.persistence;
-        frequency *= noiseParam.lacunarity;
+    // Get dimensions from the noise parameters
+    uint3 textureDimensions = noiseParam->dimensions;
+    
+    // Calculate base position for this thread
+    uint3 basePos = threadgroupPosition * threads_per_threadgroup + threadPosition;
+    
+    // Calculate how many noise values each thread must process in each dimension
+    uint3 valuesPerThread = (textureDimensions + threadgroupsPerGrid * threads_per_threadgroup - 1) / 
+                           (threadgroupsPerGrid * threads_per_threadgroup);
+    
+    // Get destination in heap for noise data
+    device float* noiseData = (device float*)(heap + noiseParam->dataHeapOffset);
+    
+    for (uint i = 0; i < valuesPerThread.x; i++) {
+        for (uint j = 0; j < valuesPerThread.y; j++) {
+            for (uint k = 0; k < valuesPerThread.z; k++) {
+                uint3 localPos = basePos + uint3(i, j, k) * (threadgroupsPerGrid * threads_per_threadgroup);
+                
+                // Skip if outside dimensions
+                if (any(localPos >= textureDimensions)) {
+                    continue;
+                }
+                
+                // Calculate normalized coordinates
+                float3 normalizedPos = float3(localPos) / float3(textureDimensions);
+                
+                // Scale to appropriate frequency range
+                float3 noiseInput = normalizedPos * noiseParam->frequency;
+                
+                // Apply initial offset
+                noiseInput += noiseParam->offset;
+                
+                // Compute improved fbm noise
+                float fbm = 0.0;
+                float currentAmplitude = noiseParam->amplitude;
+                float currentFrequency = 1.0;
+                float normalizer = 0.0;
+                
+                for(uint octave = 0; octave < noiseParam->octaves; octave++) {
+                    float3 noisePos = noiseInput * currentFrequency;
+                    fbm += currentAmplitude * perlinNoise3D(noisePos, noiseParam->seed + octave);
+                    normalizer += currentAmplitude;
+                    currentAmplitude *= noiseParam->persistence;
+                    currentFrequency *= noiseParam->lacunarity;
+                }
+                
+                // Normalize the result
+                fbm /= normalizer;
+                
+                // Calculate 1D index from 3D position
+                uint index = localPos.x + textureDimensions.x * (localPos.y + textureDimensions.y * localPos.z);
+                
+                // Write to heap instead of texture
+                noiseData[index] = fbm;
+            }
+        }
     }
-
-    //Now we take the fbm value and we need to put it in the texture, one thread per cell (remember, 8x8x8)
-    // So we need to get the correct position in the texture
-    uint3 texturePosition = threadPosition % threadgroupSize;
-
-    // Now we store fbm in the texture
-    noiseTextures[textureIndex].write(float4(fbm, 0.0, 0.0, 0.0), texturePosition);
 }
 
+kernel void generateTerrainVoxelData(
+    device heap_t* heap [[buffer(0)]],
+    device const uint32_t* metadataHeapOffsets [[buffer(1)]],
+    device const uint32_t* noiseHeapOffsets [[buffer(2)]],
+    device const uint32_t* terrainHeapOffsets [[buffer(3)]],
+    uint3 threadgroupPosition [[threadgroup_position_in_grid]],
+    uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
+    uint3 threadPosition [[thread_position_in_threadgroup]],
+    uint3 threads_per_threadgroup [[threads_per_threadgroup]]
+) {
+    const uint32_t terrainHeapOffset = terrainHeapOffsets[0];
+    device const Terrain* terrainParam = (device const Terrain*)(heap + terrainHeapOffset);
+
+    const uint32_t noiseHeapOffset = noiseHeapOffsets[0];
+    device const Noise* noiseParam = (device const Noise*)(heap + noiseHeapOffset);
+
+    const uint32_t metadataHeapOffset = metadataHeapOffsets[0];
+    device const Metadata* metadata = (device const Metadata*)(heap + metadataHeapOffset);
+
+    // Calculate base position for this thread
+    uint3 basePos = threadgroupPosition * threads_per_threadgroup + threadPosition;
+    
+    // Get dimensions from the noise parameters
+    uint3 textureDimensions = noiseParam->dimensions;
+    
+    // Calculate how many noise values each thread must process in each dimension
+    uint3 valuesPerThread = (textureDimensions + threadgroupsPerGrid * threads_per_threadgroup - 1) / 
+                           (threadgroupsPerGrid * threads_per_threadgroup);
+
+    // Get access to the noise data
+    device const float* noiseData = (device const float*)(heap + noiseParam->dataHeapOffset);
+
+    // Process all assigned noise values
+    for (uint i = 0; i < valuesPerThread.x; i++) {
+        for (uint j = 0; j < valuesPerThread.y; j++) {
+            for (uint k = 0; k < valuesPerThread.z; k++) {
+                uint3 localPos = basePos + uint3(i, j, k) * (threadgroupsPerGrid * threads_per_threadgroup);
+                
+                // Skip if outside dimensions
+                if (any(localPos >= textureDimensions)) {
+                    continue;
+                }
+                
+                // Calculate normalized coordinates
+                float3 normalizedPos = float3(localPos) / float3(textureDimensions);
+                
+                // Calculate 1D index from 3D position to get the noise value from heap
+                uint index = localPos.x + textureDimensions.x * (localPos.y + textureDimensions.y * localPos.z);
+                float noiseValue = noiseData[index];
+                
+                // Calculate base terrain height
+                float terrainHeight = terrainParam->heightScale * noiseValue + terrainParam->heightOffset;
+                
+                // Apply squishing factor to Z coordinate to compress the terrain vertically
+                float squashedZ = float(localPos.z) * terrainParam->squishingFactor;
+                
+                // Voxel is solid if squashed Z is below terrain height
+                bool solid = squashedY < terrainHeight;
+
+                uint terrainValue = solid ? 1 : 0;
+
+                if(solid) {
+                    // Set the uncompressed terrain value, do not compress, that is done later
+                    uint32_t offsetRaw = metadata->offsetRaw;
+                    device uint32_t* rawData = (device uint32_t*)(heap + offsetRaw);
+                    uint rawIndex = localPos.x + CHUNK_SIZE * (localPos.y + CHUNK_SIZE * localPos.z);
+                    rawData[rawIndex] = terrainValue;
+                }
+            }
+        }
+    }
+}
+
+kernel void compressVoxelCreatePalette(
+    device heap_t* heap [[buffer(0)]],
+    device const uint32_t* metadataHeapOffsets [[buffer(1)]],
+    uint3 threadPosition [[thread_position_in_grid]]
+) {
+    const uint32_t metadataHeapOffset = metadataHeapOffsets[0];
+    device Metadata* metadata = (device Metadata*)(heap + metadataHeapOffset);
+    
+    // Initialize palette only in the first thread
+    if (all(threadPosition == uint3(0, 0, 0))) {
+        uint32_t offsetPalette = metadata->offsetPalette;
+        device uint32_t* palette = (device uint32_t*)(heap + offsetPalette);
+
+        // Initialize the first palette entry as air (0)
+        palette[0] = 0;
+        
+        // Reset palette count to 1 (air is always the first entry)
+        atomic_store_explicit(
+            (device atomic_uint*)&metadata->countPalette, 
+            1, 
+            memory_order_relaxed
+        );
+    }
+    
+    // Wait for initialization to complete
+    threadgroup_barrier(mem_flags::mem_device);
+    
+    // Calculate index for this thread
+    uint index = threadPosition.x + CHUNK_SIZE * (threadPosition.y + CHUNK_SIZE * threadPosition.z);
+    
+    // Skip if outside chunk bounds
+    if (any(threadPosition >= uint3(CHUNK_SIZE))) {
+        return;
+    }
+    
+    // Get the block ID from raw data for this position
+    uint32_t offsetRaw = metadata->offsetRaw;
+    device const uint32_t* rawData = (device const uint32_t*)(heap + offsetRaw);
+    uint32_t blockID = rawData[index];
+    
+    // Skip air blocks (already in palette at index 0)
+    if (blockID == 0) {
+        return;
+    }
+    
+    uint32_t offsetPalette = metadata->offsetPalette;
+    device uint32_t* palette = (device uint32_t*)(heap + offsetPalette);
+    
+    // Loop until we either find the block or add it to the palette
+    bool added = false;
+    while (!added) {
+        // Get current palette count
+        uint currentCount = atomic_load_explicit(
+            (device atomic_uint*)&metadata->countPalette, 
+            memory_order_acquire
+        );
+        
+        // Check if this blockID is already in the palette
+        bool found = false;
+        for (uint j = 0; j < currentCount; j++) {
+            if (palette[j] == blockID) {
+                found = true;
+                added = true;
+                break;
+            }
+        }
+        
+        // If not found, try to add it to the palette
+        if (!found) {
+            // First check if we have room
+            if (currentCount >= 256) { // Maximum palette size (arbitrary limit, adjust as needed)
+                // Palette is full, just stop
+                break;
+            }
+            
+            // Try to reserve the next spot in the palette
+            if (atomic_compare_exchange_weak_explicit(
+                (device atomic_uint*)&metadata->countPalette,
+                &currentCount,
+                currentCount + 1,
+                memory_order_relaxed,
+                memory_order_relaxed)) {
+                
+                // We successfully incremented the count, now set the value
+                palette[currentCount] = blockID;
+                added = true;
+            }
+            // If CAS failed, another thread modified the count - loop and try again
+        }
+    }
+}
+
+kernel void compressVoxelRawData(
+    device heap_t* heap [[buffer(0)]],
+    device const uint32_t* metadataHeapOffsets [[buffer(1)]],
+    uint3 threadPosition [[thread_position_in_grid]]
+) {
+    const uint32_t metadataHeapOffset = metadataHeapOffsets[0];
+    device Metadata* metadata = (device Metadata*)(heap + metadataHeapOffset);
+    
+    // Calculate index for this thread
+    uint index = threadPosition.x + CHUNK_SIZE * (threadPosition.y + CHUNK_SIZE * threadPosition.z);
+    
+    // Skip if outside chunk bounds
+    if (any(threadPosition >= uint3(CHUNK_SIZE))) {
+        return;
+    }
+    
+    // Get the block ID from raw data for this position
+    uint32_t offsetRaw = metadata->offsetRaw;
+    device const uint32_t* rawData = (device const uint32_t*)(heap + offsetRaw);
+    uint32_t blockID = rawData[index];
+    
+    // Skip air blocks (already in palette at index 0)
+    if (blockID == 0) {
+        return;
+    }
+    
+    // Get the palette value for this blockID
+    uint32_t offsetPalette = metadata->offsetPalette;
+    device const uint32_t* palette = (device const uint32_t*)(heap + offsetPalette);
+    
+    //Get the palette index for this blockID
+    uint32_t paletteIndex = 0;
+    for (uint j = 0; j < metadata->countPalette; j++) {
+        if (palette[j] == blockID) {
+            paletteIndex = j;
+            break;
+        }
+    }
+    // Write the palette index to the raw data, atomically with bit operations if needed
+    uint32_t offsetCompressed = metadata->offsetCompressed;
+    device uint32_t* compressedData = (device uint32_t*)(heap + offsetCompressed);
+    uint32_t compressedIndex = index / HEAP_BITS;
+    uint32_t compressedBitIndex = index % HEAP_BITS;
+    uint32_t mask = (1ULL << HEAP_BITS) - 1ULL;
+    uint32_t compressedValue = compressedData[compressedIndex];
+    //Use atomics  
+    while (true) {
+        uint32_t oldValue = atomic_load_explicit(
+            (device atomic_uint*)&compressedData[compressedIndex],
+            memory_order_acquire
+        );
+        uint32_t newValue = (oldValue & ~(mask << compressedBitIndex)) | 
+                            ((paletteIndex & mask) << compressedBitIndex);
+        uint32 bitsLeft = HEAP_BITS - compressedBitIndex;
+        if (bitsLeft < HEAP_BITS) {
+            newValue |= (compressedValue & ((1ULL << bitsLeft) - 1));
+
+            while (true) {
+                uint32_t oldValue2 = atomic_load_explicit(
+                    (device atomic_uint*)&compressedData[compressedIndex + 1],
+                    memory_order_acquire
+                );
+                uint32_t newValue2 = (oldValue2 & mask) | 
+                                     ((paletteIndex >> bitsLeft) & mask);
+                if (atomic_compare_exchange_weak_explicit(
+                    (device atomic_uint*)&compressedData[compressedIndex + 1],
+                    &oldValue2,
+                    newValue2,
+                    memory_order_release,
+                    memory_order_relaxed)) {
+                    break;
+                }
+            }
+        }
+        if (atomic_compare_exchange_weak_explicit(
+            (device atomic_uint*)&compressedData[compressedIndex],
+            &oldValue,
+            newValue,
+            memory_order_release,
+            memory_order_relaxed)) {
+            break;
+        }
+    }
+}
+)
+
 kernel void countFacesFromPalette(
-    device const heap_t* heap  [[buffer(0), aligned(8)]],
+    device const heap_t* heap [[buffer(0)]],
     device const uint32_t* heapOffsets [[buffer(1)]],
     uint3 threadgroupPosition [[thread_position_in_grid]],
     uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
@@ -275,7 +628,7 @@ kernel void generateMeshFromPalette(
     uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
     uint3 threadPosition [[thread_position_in_threadgroup]]
 ) {
-const uint metadataIndex = threadgroupPosition.x + 
+    const uint metadataIndex = threadgroupPosition.x + 
         threadgroupsPerGrid.x * 
         (threadgroupPosition.y + threadgroupPosition.z * threadgroupsPerGrid.y);
 

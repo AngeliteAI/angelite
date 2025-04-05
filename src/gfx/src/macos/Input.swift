@@ -1,8 +1,8 @@
 import Cocoa
+import Combine  // NEW
+import GameController  // NEW
 import Metal
 import MetalKit
-import GameController  // NEW
-import Combine  // NEW
 
 enum Key: UInt16 {
   // Letter keys
@@ -11,20 +11,19 @@ enum Key: UInt16 {
   case d = 2
   case w = 13
   case c = 8  // Adding the 'c' key
-  
+
   // Special keys
   case lShift = 56
   case rShift = 60
   case space = 49
   case escape = 53
-  
+
   // Arrow keys
   case leftArrow = 123
   case rightArrow = 124
   case downArrow = 125
   case upArrow = 126
 }
-
 
 class InputHandler {
   // Dictionary to map raw key codes to Key enum values
@@ -41,9 +40,9 @@ class InputHandler {
     123: .leftArrow,
     124: .rightArrow,
     125: .downArrow,
-    126: .upArrow
+    126: .upArrow,
   ]
-  
+
   private var lastMouseLocation: NSPoint?
   var isMouseCaptured = false
   private weak var metalView: MTKView?
@@ -64,7 +63,7 @@ class InputHandler {
   var mouseDeltaY: Float = 0
 
   var keysPressed: Set<Key> = []
-  
+
   private var movementCancellable: AnyCancellable?  // NEW
   // NEW: Store continuous gamepad right stick input
   private var currentGamepadRightStick: (x: Float, y: Float) = (0, 0)
@@ -79,7 +78,9 @@ class InputHandler {
 
   // NEW: Set up game controller notifications and configuration
   private func setupGameControllers() {
-    NotificationCenter.default.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] notification in
+    NotificationCenter.default.addObserver(
+      forName: .GCControllerDidConnect, object: nil, queue: .main
+    ) { [weak self] notification in
       if let controller = notification.object as? GCController {
         print("Game controller connected: \(controller.vendorName ?? "unknown")")
         self?.configureGameController(controller)
@@ -90,16 +91,16 @@ class InputHandler {
       configureGameController(controller)
     }
   }
-  
+
   // NEW: Configure each controller’s input
   private func configureGameController(_ controller: GCController) {
     if let gamepad = controller.extendedGamepad {
       print("Configuring extendedGamepad for FPS controls: \(controller.vendorName ?? "unknown")")
-      
+
       // Left thumbstick for WASD movement
       gamepad.leftThumbstick.valueChangedHandler = { [weak self] (stick, xValue, yValue) in
         guard let self = self else { return }
-        
+
         // Horizontal axis (A/D)
         if xValue > 0.2 {
           self.keysPressed.insert(.d)
@@ -108,7 +109,7 @@ class InputHandler {
           self.keysPressed.remove(.d)
           self.onKeyPress?(.d, false)
         }
-        
+
         if xValue < -0.2 {
           self.keysPressed.insert(.a)
           self.onKeyPress?(.a, true)
@@ -116,7 +117,7 @@ class InputHandler {
           self.keysPressed.remove(.a)
           self.onKeyPress?(.a, false)
         }
-        
+
         // Vertical axis (W/S)
         if yValue > 0.2 {
           self.keysPressed.insert(.w)
@@ -125,7 +126,7 @@ class InputHandler {
           self.keysPressed.remove(.w)
           self.onKeyPress?(.w, false)
         }
-        
+
         if yValue < -0.2 {
           self.keysPressed.insert(.s)
           self.onKeyPress?(.s, true)
@@ -134,7 +135,7 @@ class InputHandler {
           self.onKeyPress?(.s, false)
         }
       }
-      
+
       // Right thumbstick for camera/look controls
       gamepad.rightThumbstick.valueChangedHandler = { [weak self] (stick, xValue, yValue) in
         guard let self = self else { return }
@@ -145,7 +146,7 @@ class InputHandler {
         self.currentGamepadRightStick = (deltaX, deltaY)
         print("Updated gamepad right stick: \(self.currentGamepadRightStick)")
       }
-      
+
       // Jump with A button
       gamepad.leftShoulder.pressedChangedHandler = { [weak self] (button, value, pressed) in
         guard let self = self else { return }
@@ -157,7 +158,7 @@ class InputHandler {
           self.onKeyPress?(.space, false)
         }
       }
-      
+
       // Crouch with B button
       gamepad.rightShoulder.pressedChangedHandler = { [weak self] (button, value, pressed) in
         guard let self = self else { return }
@@ -169,10 +170,10 @@ class InputHandler {
           self.onKeyPress?(.c, false)
         }
       }
-      
-     
+
     } else if let gamepad = controller.microGamepad {
-      print("Configuring microGamepad (limited FPS controls): \(controller.vendorName ?? "unknown")")
+      print(
+        "Configuring microGamepad (limited FPS controls): \(controller.vendorName ?? "unknown")")
       // For micro gamepads (like Apple TV remote), just use the dpad for movement
       gamepad.dpad.valueChangedHandler = { [weak self] (dpad, xValue, yValue) in
         guard let self = self else { return }
@@ -184,7 +185,7 @@ class InputHandler {
           self.keysPressed.remove(.d)
           self.onKeyPress?(.d, false)
         }
-        
+
         if xValue < -0.2 {
           self.keysPressed.insert(.a)
           self.onKeyPress?(.a, true)
@@ -192,7 +193,7 @@ class InputHandler {
           self.keysPressed.remove(.a)
           self.onKeyPress?(.a, false)
         }
-        
+
         if yValue > 0.2 {
           self.keysPressed.insert(.w)
           self.onKeyPress?(.w, true)
@@ -200,7 +201,7 @@ class InputHandler {
           self.keysPressed.remove(.w)
           self.onKeyPress?(.w, false)
         }
-        
+
         if yValue < -0.2 {
           self.keysPressed.insert(.s)
           self.onKeyPress?(.s, true)
@@ -219,71 +220,70 @@ class InputHandler {
     self.onMouseMove = callback
   }
 
+  // Public method for handling mouse clicks
+  public func handleMouseClick(at point: NSPoint) {
+    if !isMouseCaptured {
 
-    // Public method for handling mouse clicks
-    public func handleMouseClick(at point: NSPoint) {
-      if !isMouseCaptured {
-       
-            print("Mouse click detected in game area - capturing mouse")
-            Task {
-              await self.captureMouse()
-            }
+      print("Mouse click detected in game area - capturing mouse")
+      Task {
+        await self.captureMouse()
       }
     }
+  }
 
-    // Public method for handling mouse movement
-    public func handleMouseMovement(deltaX: Float, deltaY: Float) {
-      if isMouseCaptured {
-        // Get raw delta values
-        let dx = deltaX
-        let dy = deltaY
+  // Public method for handling mouse movement
+  public func handleMouseMovement(deltaX: Float, deltaY: Float) {
+    if isMouseCaptured {
+      // Get raw delta values
+      let dx = deltaX
+      let dy = deltaY
 
-        // Apply different sensitivity for X and Y axis
-        let maxDeltaX: Float = 20.0
-        let maxDeltaY: Float = 15.0  // More restrictive for Y-axis
-        let clampedDx = max(-maxDeltaX, min(dx, maxDeltaX))
-        let clampedDy = max(-maxDeltaY, min(dy, maxDeltaY))
+      // Apply different sensitivity for X and Y axis
+      let maxDeltaX: Float = 20.0
+      let maxDeltaY: Float = 15.0  // More restrictive for Y-axis
+      let clampedDx = max(-maxDeltaX, min(dx, maxDeltaX))
+      let clampedDy = max(-maxDeltaY, min(dy, maxDeltaY))
 
-        // Add to movement buffer for smoothing
-        self.movementBuffer.append((clampedDx, clampedDy))
-        if self.movementBuffer.count > self.bufferSize {
-          self.movementBuffer.removeFirst()
-        }
+      // Add to movement buffer for smoothing
+      self.movementBuffer.append((clampedDx, clampedDy))
+      if self.movementBuffer.count > self.bufferSize {
+        self.movementBuffer.removeFirst()
+      }
 
-        // Calculate smoothed movement
-        var totalDx: Float = 0
-        var totalDy: Float = 0
+      // Calculate smoothed movement
+      var totalDx: Float = 0
+      var totalDy: Float = 0
 
-        for (dx, dy) in self.movementBuffer {
-          totalDx += dx
-          totalDy += dy
-        }
+      for (dx, dy) in self.movementBuffer {
+        totalDx += dx
+        totalDy += dy
+      }
 
-        // Calculate average
-        let avgDx = totalDx / Float(self.movementBuffer.count)
-        let avgDy = totalDy / Float(self.movementBuffer.count)
+      // Calculate average
+      let avgDx = totalDx / Float(self.movementBuffer.count)
+      let avgDy = totalDy / Float(self.movementBuffer.count)
 
-        // Apply different sensitivity for X and Y
-        let sensitivityX: Float = 0.003
-        let sensitivityY: Float = 0.0015
-        self.mouseDeltaX = avgDx * sensitivityX
-        self.mouseDeltaY = avgDy * sensitivityY
+      // Apply different sensitivity for X and Y
+      let sensitivityX: Float = 0.003
+      let sensitivityY: Float = 0.0015
+      self.mouseDeltaX = avgDx * sensitivityX
+      self.mouseDeltaY = avgDy * sensitivityY
 
-        // Notify about mouse movement
-        self.onMouseMove?(self.mouseDeltaX, self.mouseDeltaY)
+      // Notify about mouse movement
+      self.onMouseMove?(self.mouseDeltaX, self.mouseDeltaY)
 
-        // Center the mouse
-        if abs(totalDx) + abs(totalDy) > 5 {
-          Task {
-            await self.centerMouseInWindow()
-          }
+      // Center the mouse
+      if abs(totalDx) + abs(totalDy) > 5 {
+        Task {
+          await self.centerMouseInWindow()
         }
       }
     }
+  }
 
   private func setupInputHandling() {
     print("Setting up input handling - SIMPLIFIED VERSION")
-    
+
     // Make sure we're the first responder
     metalView?.window?.makeFirstResponder(metalView)
     // Keep keyboard event monitor but replace mouse monitors with public methods
@@ -293,20 +293,19 @@ class InputHandler {
     localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) {
       [weak self] event in
       guard let self = self else { return event }
-      
+
       // Handle Escape key specially for exiting mouse capture mode
       if event.type == .keyDown && event.keyCode == Key.escape.rawValue && self.isMouseCaptured {
-          print("Escape pressed while mouse captured - releasing mouse")
-          self.releaseMouse()
+        print("Escape pressed while mouse captured - releasing mouse")
+        self.releaseMouse()
       }
-      
+
       self.handleKeyEvent(event)
       return event
     }
 
-    
     // Remove global mouse monitoring completely
-    
+
     print("Input handlers set up successfully")
   }
 
@@ -314,22 +313,22 @@ class InputHandler {
   func registerViewForKeyEvents() {
     // Instead of swapping views (which causes crashes), let's use event monitor approach
     print("Setting up key event handling using event monitors only")
-    
+
     // Make sure the metalView is the first responder
     DispatchQueue.main.async { [weak self] in
       guard let self = self, let metalView = self.metalView else { return }
-      
+
       // Make the view or window first responder
       if let window = metalView.window {
         print("Setting metal view as first responder")
         window.makeFirstResponder(metalView)
-        
+
         // Add app-level handlers for keys for redundancy
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
           self?.handleKeyEvent(event)
           return event
         }
-        
+
         print("Added app-level key event monitor")
       } else {
         print("Warning: Metal view has no window, can't set first responder")
@@ -340,49 +339,49 @@ class InputHandler {
   public func handleKeyEvent(_ event: NSEvent) {
     // Direct key handling approach like in the old code
     let isKeyDown = event.type == .keyDown
-    
+
     // Use a direct approach for the common keys we care about
-    
-      if let key = keyMapping[event.keyCode] ?? Key(rawValue: event.keyCode) {
-        // Update the keysPressed set based on key state
-        if isKeyDown {
-          keysPressed.insert(key)
-        } else {
-          keysPressed.remove(key)
-        }
-        
-        onKeyPress?(key, isKeyDown)
+
+    if let key = keyMapping[event.keyCode] ?? Key(rawValue: event.keyCode) {
+      // Update the keysPressed set based on key state
+      if isKeyDown {
+        keysPressed.insert(key)
       } else {
-        // Handle other keys if needed
-        print("Unhandled key event: \(event.keyCode) - \(isKeyDown ? "down" : "up")")
+        keysPressed.remove(key)
       }
-      
+
+      onKeyPress?(key, isKeyDown)
+    } else {
+      // Handle other keys if needed
+      print("Unhandled key event: \(event.keyCode) - \(isKeyDown ? "down" : "up")")
     }
+
+  }
 
   // Add a dedicated method for handling mouse movement
   private func handleMouseMovement(_ event: NSEvent) {
     // Get raw delta values directly from the event
     let dx = Float(event.deltaX)
     let dy = Float(event.deltaY)
-    
+
     // Skip tiny movements that might be noise
     if abs(dx) < 0.1 && abs(dy) < 0.1 {
-        return
+      return
     }
-    
+
     print("Mouse movement: dx=\(dx), dy=\(dy)")
-    
+
     // Apply directly to the delta values without the complex buffering
     // Set a much higher sensitivity since we'll apply a smaller one in the renderer
     let sensitivity: Float = 5.0
     mouseDeltaX += dx * sensitivity
     mouseDeltaY += dy * sensitivity
-    
+
     print("Updated deltas: x=\(mouseDeltaX), y=\(mouseDeltaY)")
-    
+
     // Center the mouse more aggressively to prevent hitting screen edges
     Task {
-        await self.centerMouseInWindow()
+      await self.centerMouseInWindow()
     }
   }
 
@@ -406,26 +405,29 @@ class InputHandler {
       }
     )
 
-    // Convert window coordinates to screen coordinates 
+    // Convert window coordinates to screen coordinates
     let centerInScreen = await window.convertPoint(toScreen: centerInWindow)
 
     // Warp cursor position - this requires accessibility permissions!
-    let success = CGWarpMouseCursorPosition(CGPoint(x: centerInScreen.x, y: centerInScreen.y)) == .success
+    let success =
+      CGWarpMouseCursorPosition(CGPoint(x: centerInScreen.x, y: centerInScreen.y)) == .success
     if !success {
-        print("⚠️ Failed to warp cursor position - check permissions!")
+      print("⚠️ Failed to warp cursor position - check permissions!")
     }
   }
 
   func captureMouse() async {
     print("⚠️ CAPTURING MOUSE ⚠️")
-    
+
     // Check for accessibility permissions - this may be required for mouse capture
     let checkOptionsPrompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
     let options = [checkOptionsPrompt: true] as CFDictionary
     let accessibilityEnabled = AXIsProcessTrustedWithOptions(options)
-    
-    print("Accessibility permissions status: \(accessibilityEnabled ? "Granted" : "Not granted - mouse capture may not work")")
-    
+
+    print(
+      "Accessibility permissions status: \(accessibilityEnabled ? "Granted" : "Not granted - mouse capture may not work")"
+    )
+
     isMouseCaptured = true
     lastMouseLocation = nil
     movementBuffer.removeAll()
@@ -441,7 +443,7 @@ class InputHandler {
 
       // Only make the window key, no forced activation
       metalView?.window?.makeFirstResponder(metalView)
-      
+
       // Try to give our window focus if we have permissions
       metalView?.window?.makeKey()
     }
@@ -452,28 +454,28 @@ class InputHandler {
     // This requires accessibility permissions to work properly
     let success = CGAssociateMouseAndMouseCursorPosition(0) == .success
     if !success {
-        print("⚠️ Failed to dissociate cursor from mouse - check permissions!")
+      print("⚠️ Failed to dissociate cursor from mouse - check permissions!")
     }
-    
+
     // Try multiple centers to ensure proper capture
     for i in 0...2 {
-        usleep(5000) // 5ms delay
-        await centerMouseInWindow()
+      usleep(5000)  // 5ms delay
+      await centerMouseInWindow()
     }
-    
+
     // Print permission troubleshooting info
     if !accessibilityEnabled {
-        print("PERMISSION TROUBLESHOOTING:")
-        print("1. Make sure your app has Accessibility permissions")
-        print("2. Go to System Preferences > Security & Privacy > Privacy > Accessibility")
-        print("3. Add your application to the list and ensure it's checked")
-        print("4. If running from Xcode, you may need to add Xcode too")
+      print("PERMISSION TROUBLESHOOTING:")
+      print("1. Make sure your app has Accessibility permissions")
+      print("2. Go to System Preferences > Security & Privacy > Privacy > Accessibility")
+      print("3. Add your application to the list and ensure it's checked")
+      print("4. If running from Xcode, you may need to add Xcode too")
     }
 
     // Start continuous movement update (60 Hz) with gamepad processing
     DispatchQueue.main.async { [weak self] in
       guard let self = self else { return }
-      self.movementCancellable = Timer.publish(every: 1/60, on: .main, in: .common)
+      self.movementCancellable = Timer.publish(every: 1 / 60, on: .main, in: .common)
         .autoconnect()
         .sink { [weak self] _ in
           self?.applyGamepadMovement()
@@ -485,7 +487,7 @@ class InputHandler {
     print("🔓 RELEASING MOUSE 🔓")
     isMouseCaptured = false
     movementBuffer.removeAll()
-    
+
     // Cancel continuous movement update
     movementCancellable?.cancel()
     movementCancellable = nil
@@ -498,7 +500,7 @@ class InputHandler {
 
     // Restore normal mouse behavior
     CGAssociateMouseAndMouseCursorPosition(1)
-    
+
     // NEW: Reset the continuous gamepad input state.
     currentGamepadRightStick = (0, 0)
   }
@@ -519,7 +521,7 @@ class InputHandler {
       NSEvent.removeMonitor(localMouseMonitor)
       self.localMouseMonitor = nil
     }
-    
+
     // Also clean up global monitor if present
     if let globalMouseMonitor = globalMouseMonitor {
       NSEvent.removeMonitor(globalMouseMonitor)
@@ -539,7 +541,7 @@ class InputHandler {
   // NEW: Continuously process buffered mouse movement.
   private func applyMovement() {
     guard isMouseCaptured, !movementBuffer.isEmpty else { return }
-    
+
     var totalDx: Float = 0
     var totalDy: Float = 0
     for (dx, dy) in movementBuffer {
@@ -549,25 +551,25 @@ class InputHandler {
     let count = Float(movementBuffer.count)
     let avgDx = totalDx / count
     let avgDy = totalDy / count
-    
+
     // Apply sensitivity factors
     let sensitivityX: Float = 0.003
     let sensitivityY: Float = 0.0015
     let smoothedX = avgDx * sensitivityX
     let smoothedY = avgDy * sensitivityY
-    
+
     onMouseMove?(smoothedX, smoothedY)
-    
+
     // Center mouse if significant movement occurred
     if abs(totalDx) + abs(totalDy) > 5 {
       Task {
         await self.centerMouseInWindow()
       }
     }
-    
+
     movementBuffer.removeAll()
   }
-  
+
   // NEW: Continuously apply gamepad right stick input until it goes below threshold.
   private func applyGamepadMovement() {
     guard isMouseCaptured else { return }
@@ -585,4 +587,3 @@ class InputHandler {
     }
   }
 }
-
