@@ -1,1 +1,0 @@
-Seriously. You can. All you need is a computer, some basic programming experience, a game engine, and a few tools. All you need to do, is do it.

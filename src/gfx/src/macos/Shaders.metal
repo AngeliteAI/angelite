@@ -86,18 +86,16 @@ uint hashWithSeed(uint3 v, uint32_t seed) {
 }
 
 uint32_t getPaletteValue(
-    device const heap_t* heap  [[aligned(8)]],
-    device const Metadata* metadata  [[aligned(8)]],
+    device const heap_t* heap,
+    device const Metadata* metadata,
     uint32_t indexPalette
 ) {
     uint32_t offsetPalette = metadata->offsetPalette;
     uint32_t countPalette = metadata->countPalette;
-    uint32_t offsetData = metadata->offsetData;
+    uint32_t offsetCompressed = metadata->offsetCompressed;
 
     device const uint32_t* palette = heap + offsetPalette;
-    device const uint32_t* data = heap + offsetData;
-
-    
+    device const uint32_t* data = heap + offsetCompressed;
 
     if (countPalette == 0) {
         return 0;
@@ -108,8 +106,6 @@ uint32_t getPaletteValue(
     }
 
     uint32_t bits = max(1u, uint32_t(ceil(log2(float(countPalette)))));
-
-    
 
     uint32_t bitCursor = indexPalette * bits;
 
@@ -358,7 +354,7 @@ kernel void generateTerrainVoxelData(
     device const Noise* noiseParam = (device const Noise*)(heap + noiseHeapOffset);
 
     const uint32_t metadataHeapOffset = metadataHeapOffsets[0];
-    device const Metadata* metadata = (device const Metadata*)(heap + metadataHeapOffset);
+    device Metadata* metadata = (device Metadata*)(heap + metadataHeapOffset);
 
     // Calculate base position for this thread
     uint3 basePos = threadgroupPosition * threads_per_threadgroup + threadPosition;
@@ -397,8 +393,8 @@ kernel void generateTerrainVoxelData(
                 // Apply squishing factor to Z coordinate to compress the terrain vertically
                 float squashedZ = float(localPos.z) * terrainParam->squishingFactor;
                 
-                // Voxel is solid if squashed Z is below terrain height
-                bool solid = squashedY < terrainHeight;
+                // FIXED: Use the actual terrain height calculation instead of hardcoded value
+                bool solid = squashedZ < terrainHeight;
 
                 uint terrainValue = solid ? 1 : 0;
 
@@ -468,7 +464,7 @@ kernel void compressVoxelCreatePalette(
         // Get current palette count
         uint currentCount = atomic_load_explicit(
             (device atomic_uint*)&metadata->countPalette, 
-            memory_order_acquire
+            memory_order_relaxed
         );
         
         // Check if this blockID is already in the palette
@@ -555,18 +551,18 @@ kernel void compressVoxelRawData(
     while (true) {
         uint32_t oldValue = atomic_load_explicit(
             (device atomic_uint*)&compressedData[compressedIndex],
-            memory_order_acquire
+            memory_order_relaxed
         );
         uint32_t newValue = (oldValue & ~(mask << compressedBitIndex)) | 
                             ((paletteIndex & mask) << compressedBitIndex);
-        uint32 bitsLeft = HEAP_BITS - compressedBitIndex;
+        uint32_t bitsLeft = HEAP_BITS - compressedBitIndex;
         if (bitsLeft < HEAP_BITS) {
             newValue |= (compressedValue & ((1ULL << bitsLeft) - 1));
 
             while (true) {
                 uint32_t oldValue2 = atomic_load_explicit(
                     (device atomic_uint*)&compressedData[compressedIndex + 1],
-                    memory_order_acquire
+                    memory_order_relaxed
                 );
                 uint32_t newValue2 = (oldValue2 & mask) | 
                                      ((paletteIndex >> bitsLeft) & mask);
@@ -574,7 +570,7 @@ kernel void compressVoxelRawData(
                     (device atomic_uint*)&compressedData[compressedIndex + 1],
                     &oldValue2,
                     newValue2,
-                    memory_order_release,
+                    memory_order_relaxed,
                     memory_order_relaxed)) {
                     break;
                 }
@@ -584,29 +580,24 @@ kernel void compressVoxelRawData(
             (device atomic_uint*)&compressedData[compressedIndex],
             &oldValue,
             newValue,
-            memory_order_release,
+            memory_order_relaxed,
             memory_order_relaxed)) {
             break;
         }
     }
 }
-)
 
 kernel void countFacesFromPalette(
     device const heap_t* heap [[buffer(0)]],
-    device const uint32_t* heapOffsets [[buffer(1)]],
+    device const uint32_t* metadataHeapOffsets [[buffer(1)]],
     uint3 threadgroupPosition [[thread_position_in_grid]],
     uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
     uint3 threadPosition [[thread_position_in_threadgroup]]
 ) {
-    const uint metadataIndex = threadgroupPosition.x + 
-        threadgroupsPerGrid.x * 
-        (threadgroupPosition.y + threadgroupPosition.z * threadgroupsPerGrid.y);
-
-    const uint32_t heapOffsetMetadata = heapOffsets[metadataIndex];
+    const uint32_t metadataHeapOffset = metadataHeapOffsets[0];
 
     device  Metadata* metadata = 
-        (device  Metadata*)(heap + heapOffsetMetadata);
+        (device  Metadata*)(heap + metadataHeapOffset);
     processVisibleFaces(
         heap,
         metadata,
@@ -628,14 +619,10 @@ kernel void generateMeshFromPalette(
     uint3 threadgroupsPerGrid [[threadgroups_per_grid]],
     uint3 threadPosition [[thread_position_in_threadgroup]]
 ) {
-    const uint metadataIndex = threadgroupPosition.x + 
-        threadgroupsPerGrid.x * 
-        (threadgroupPosition.y + threadgroupPosition.z * threadgroupsPerGrid.y);
-
-    const uint32_t heapOffsetMetadata = metadataHeapOffsets[metadataIndex];
+    const uint32_t metadataHeapOffset = metadataHeapOffsets[0];
 
     device  Metadata* metadata = 
-        (device  Metadata*)(heap + heapOffsetMetadata);
+        (device  Metadata*)(heap + metadataHeapOffset);
 
     if(metadata->offsetMesh == 0) {
         return;
@@ -714,10 +701,10 @@ vertex float4 vertexFaceShader(
     uint faceVertex = vertexID % 6;
 
     uint32_t chunkIndex = 0;
-    uint32_t heapOffsetMetadata = metadataHeapOffsets[chunkIndex];
+    uint32_t metadataHeapOffset = metadataHeapOffsets[chunkIndex];
 
     device  Metadata* metadata = 
-        (device  Metadata*)(heap + heapOffsetMetadata);
+        (device  Metadata*)(heap + metadataHeapOffset);
 
     device Face* faces = (device Face*)(((device uint8_t*)heap) + 4 * metadata->offsetMesh);
 

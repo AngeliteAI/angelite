@@ -51,6 +51,20 @@ import MetalKit
   }
 }
 
+struct Terrain {
+  var heightScale: Float
+  var heightOffset: Float
+  var squishingFactor: Float
+  var padding: Float
+  
+  init(heightScale: Float, heightOffset: Float, squishingFactor: Float) {
+    self.heightScale = heightScale
+    self.heightOffset = heightOffset
+    self.squishingFactor = squishingFactor
+    self.padding = 0.0
+  }
+}
+
 @frozen public struct Camera {
   var projection: Mat4
   var position: Vec3
@@ -122,22 +136,26 @@ struct Face {
 }
 
 /*
-  uint32_t state;
+     uint32_t state;
     uint32_t offsetPalette;
-    uint32_t offsetData;
+    uint32_t offsetCompressed;
+    uint32_t offsetRaw;
     uint32_t offsetMesh;
     uint32_t countPalette;
     atomic_uint countFaces;
+    uint32_t sizeRawMaxBytes;
     uint32_t meshValid;
     uint32_t padding;
 */
 struct ChunkMetadata {
   var state: UInt32 = 0
   var offsetPalette: UInt32
-  var offsetData: UInt32
+  var offsetCompressed: UInt32
+  var offsetRaw: UInt32
   var offsetMesh: UInt32
   var countPalette: UInt32
   var countFaces: UInt32 = 0
+  var sizeRawMaxBytes: UInt32 = 0
   var meshValid: UInt32 = 0
   var padding: UInt32 = 0
 }
@@ -172,6 +190,19 @@ public struct Renderer {
   var camera: Camera? = Camera(
     projection: m4Persp(fovy: Float.pi / 1.5, aspect: 1.0, near: 0.1, far: 100.0))
 
+  // New properties for chunk generation
+  var chunkRegenTimer: Float = 0.0
+  var chunkOffset: IVec3 = iv3Splat(s: 0)
+  var regenerateChunk: Bool = true
+  var metadataHeapOffset: UInt32 = 0
+  var noiseHeapOffset: UInt32 = 1337
+  var terrainHeapOffset: UInt32 = 2674
+    
+  // Remove multiple chunk properties
+  // var chunkMetadataOffsets: [UInt32] = []
+  // var numChunks: Int = 1 // For now, just one chunk
+    
+
   public init(surface: Surface.View) {
     self.device = surface.device
     self.surface = surface
@@ -187,10 +218,22 @@ public struct Renderer {
       length: 10_000_000,
       options: .storageModeShared
     )!
+      
+    // Allocate space for metadata for all chunks
+    // let metadataSize = MemoryLayout<ChunkMetadata>.size
+    // let totalMetadataSize = metadataSize * numChunks
+    
+    // Initialize metadata offsets
+    // for i in 0..<numChunks {
+    //    chunkMetadataOffsets.append(UInt32(i * metadataSize))
+    // }
+      
+    // Create metadata offset buffer
     self.metadataOffsetBuffer = device.makeBuffer(
-      bytes: [0],
-      length: MemoryLayout<UInt32>.size,
-      options: .storageModeShared)!
+        bytes: [metadataHeapOffset],
+        length: MemoryLayout<UInt32>.size,
+        options: .storageModeShared
+    )!
     captureScope = try? captureManager.makeCaptureScope(commandQueue: self.commandQueue)
     captureScope?.label = "VoxelFaceCount"
     do {
@@ -207,6 +250,19 @@ public struct Renderer {
         name: "test_generateNoiseTexture",
         functionName: "generateNoiseTexture"
       )
+       try self.pipelines.createComputePipeline(
+        name: "voxel_compressVoxelCreatePalette",
+        functionName: "compressVoxelCreatePalette"
+      )
+      try self.pipelines.createComputePipeline(
+        name: "voxel_compressVoxelRawData",
+        functionName: "compressVoxelRawData"
+      )
+      try self.pipelines.createComputePipeline(
+        name: "voxel_generateTerrainVoxelData",
+        functionName: "generateTerrainVoxelData"
+      )
+
       let descriptor = MTLRenderPipelineDescriptor()
       descriptor.vertexFunction = try pipelines.getFunction(name: "vertexFaceShader")
       descriptor.fragmentFunction = try pipelines.getFunction(name: "fragmentFaceShader")
@@ -253,7 +309,8 @@ public struct Renderer {
 
     var metadata = ChunkMetadata(
       offsetPalette: 100,
-      offsetData: 500,
+      offsetCompressed: 500,
+      offsetRaw: 2000,
       offsetMesh: 1000,
       countPalette: UInt32(palette.palette.count),
       countFaces: 0,
@@ -266,12 +323,14 @@ public struct Renderer {
 
     let palettePtr = (heapContents + 4 * Int(metadata.offsetPalette)).bindMemory(
       to: UInt32.self, capacity: Int(metadata.countPalette))
-    let noisePtr = (heapContents + 4 * Int(1337)).bindMemory(
+    let noisePtr = (heapContents + 4 * Int(noiseHeapOffset)).bindMemory(
       to: Noise.self, capacity: palette.data.count)
-    let dataPtr = (heapContents + 4 * Int(metadata.offsetData)).bindMemory(
+    let terrainPtr = (heapContents + 4 * Int(terrainHeapOffset)).bindMemory(
+      to: Terrain.self, capacity: palette.data.count)
+    let dataPtr = (heapContents + 4 * Int(metadata.offsetCompressed)).bindMemory(
       to: UInt32.self, capacity: palette.data.count)
 
-    let metadataPtr = (heapContents).bindMemory(to: ChunkMetadata.self, capacity: 1)
+    let metadataPtr = (heapContents + 4 * Int(metadataHeapOffset)).bindMemory(to: ChunkMetadata.self, capacity: 1)
 
     metadataPtr.pointee = metadata
     print("palette")
@@ -283,8 +342,21 @@ public struct Renderer {
       dataPtr[i] = palette.data[i]
     }
     noisePtr.pointee = Noise(
-      seed: 1337, amplitude: 1.0, frequency: 1.0, persistence: 0.5, lacunarity: 2.0,
-      octaves: 4, offset: Vec3(x: 0.0, y: 0.0, z: 0.0), dimensions: UVec3(x: 32, y: 32, z: 32))
+      seed: 1337, 
+      amplitude: 1.0, 
+      frequency: 2.0,  // Increase frequency for more variation
+      persistence: 0.5, 
+      lacunarity: 2.0,
+      octaves: 3,  // Fewer octaves for smoother terrain
+      offset: Vec3(x: 0.0, y: 0.0, z: 0.0), 
+      dimensions: UVec3(x: 32, y: 32, z: 32))
+    
+    // More appropriate terrain parameters for 8x8x8 chunk
+    terrainPtr.pointee = Terrain(
+      heightScale: 0.8,     // Scale between 0-1 is good for height as percentage of chunk
+      heightOffset: 0.2,    // Small offset to ensure some terrain at the bottom
+      squishingFactor: 1.0  // No squishing needed for small chunks
+    )
     print("done")
   }
 
@@ -510,11 +582,14 @@ let projectionMatrix = renderer?.camera?.projection ?? m4Id()
 var viewProjection: Mat4 = m4Mul(a: projectionMatrix, b: m4Mul(a: xyzFlipMatrix, b: view))
 renderEncoder.setVertexBytes(&viewProjection, length: MemoryLayout<Mat4>.size, index: 3)
 
-// Draw call - assuming you know the face count from your metadata
-    let faceCount = 100 
-    if faceCount > 0 {
-        renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Int(faceCount) * 6)
-    }
+// Draw call - get metadata pointer using the correct offset
+let heapContents = renderer?.heapBuffer.contents()
+let metadataPtr = (heapContents? + 4 * Int(renderer?.metadataHeapOffset ?? 0)).bindMemory(to: ChunkMetadata.self, capacity: 1)
+let faceCount = metadataPtr?.pointee.countFaces ?? 0
+print("Draw call with faceCount: \(faceCount)")
+if faceCount > 0 {
+    renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Int(faceCount) * 6)
+}
 
 renderEncoder.endEncoding()
 do {
@@ -531,9 +606,8 @@ do {
   } catch {
     print("❌ Failed to set compute pipeline state: \(error)")
   }
-  computeEncoder.setTexture(renderer?.noiseTexture, index: 0)
   computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
-  var noiseOffset = 1337;
+  var noiseOffset = renderer?.noiseHeapOffset ?? 1337;
   computeEncoder.setBytes(
     &noiseOffset, length: MemoryLayout<UInt32>.size, index: 1)
   let threadgroupSize1 = MTLSizeMake(8, 8, 8)
@@ -542,7 +616,6 @@ do {
   computeEncoder.dispatchThreadgroups(gridSize1, threadsPerThreadgroup: threadgroupSize1)
   computeEncoder.endEncoding()
 }
-  // === Render pass encoder (unchanged)
 
   // === Face count/mesh generation compute passes (unchanged)
   do {
@@ -589,17 +662,22 @@ do {
   commandBuffer.addCompletedHandler { _ in
     // Check results - meshFaces should be updated in the metadata
     if let heapContents = renderer?.heapBuffer.contents() {
-      let metadataPtr = heapContents.bindMemory(to: ChunkMetadata.self, capacity: 1)
+      // Use the correct offset to access metadata
+      let metadataPtr = (heapContents + 4 * Int(renderer?.metadataHeapOffset ?? 0)).bindMemory(to: ChunkMetadata.self, capacity: 1)
       let faceCount = metadataPtr.pointee.countFaces
       print("Detected \(faceCount) faces")
-
+      
+      // Debug the metadata structure
+      print("Metadata: palette offset=\(metadataPtr.pointee.offsetPalette), mesh offset=\(metadataPtr.pointee.offsetMesh)")
+      print("Metadata: raw offset=\(metadataPtr.pointee.offsetRaw), compressed offset=\(metadataPtr.pointee.offsetCompressed)")
+      
       // The expected face count would be 6 * 16 = 96 faces
       let expectedFaceCount: UInt32 = 6 * 2
       print("Expected: \(expectedFaceCount) faces?")
-        
-        renderer?.frame += 1
-        
-        print("Frame \(renderer?.frame)")
+      
+      renderer?.frame += 1
+      
+      print("Frame \(renderer?.frame)")
     }
   }
   print("camera position: \(renderer?.camera?.position)")
@@ -607,5 +685,154 @@ do {
   
   if(renderer?.frame ?? 0) % 100 == 0 {
     renderer?.captureScope?.end()
+  }
+    
+  // Chunk regeneration logic
+  renderer?.chunkRegenTimer += deltaTime
+  if renderer?.chunkRegenTimer ?? 0.0 >= 1.0 {
+    renderer?.chunkRegenTimer = 0.0
+    renderer?.regenerateChunk = true
+  }
+
+  if renderer?.regenerateChunk ?? false {
+    renderer?.regenerateChunk = false
+
+    guard let commandBuffer = renderer?.commandQueue.makeCommandBuffer() else {
+      print("Failed to create command buffer")
+      return
+    }
+    commandBuffer.label = "Chunk Generation Command Buffer"
+      
+    // Update metadata offset buffer with the correct offset for the current chunk
+    let metadataOffset = renderer?.metadataHeapOffset ?? 0
+    renderer?.metadataOffsetBuffer.contents().storeBytes(of: metadataOffset, as: UInt32.self)
+    
+    print("Regenerating chunk with metadata offset: \(metadataOffset)")
+
+    // Reset face count in metadata before generating new mesh
+    if let heapContents = renderer?.heapBuffer.contents() {
+      let metadataPtr = (heapContents + 4 * Int(metadataOffset)).bindMemory(to: ChunkMetadata.self, capacity: 1)
+      metadataPtr.pointee.countFaces = 0
+      print("Reset face count to 0")
+    }
+
+    // === Generate Noise Texture
+    do {
+      let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+      computeEncoder.label = "Generate Noise Texture"
+      if let pipeline = try? renderer?.pipelines.getComputePipeline(name: "test_generateNoiseTexture") {
+        computeEncoder.setComputePipelineState(pipeline)
+      } else {
+        print("❌ Pipeline not found")
+      }
+      computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
+      var noiseOffset = renderer?.noiseHeapOffset ?? 1337
+      computeEncoder.setBytes(&noiseOffset, length: MemoryLayout<UInt32>.size, index: 1)
+      let threadgroupSize = MTLSizeMake(8, 8, 8)
+      let gridSize = MTLSizeMake(4, 4, 4)
+      computeEncoder.dispatchThreadgroups(gridSize, threadsPerThreadgroup: threadgroupSize)
+      computeEncoder.endEncoding()
+    }
+
+    // === Generate Terrain Voxel Data
+    do {
+      let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+      computeEncoder.label = "Generate Terrain Voxel Data"
+      if let pipeline = try? renderer?.pipelines.getComputePipeline(name: "voxel_generateTerrainVoxelData") {
+        computeEncoder.setComputePipelineState(pipeline)
+      } else {
+        print("❌ Pipeline not found")
+      }
+      computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
+      var metadataOffset = renderer?.metadataHeapOffset ?? 0
+      var noiseOffset = renderer?.noiseHeapOffset ?? 1337
+      var terrainOffset = renderer?.terrainHeapOffset ?? 2674
+      computeEncoder.setBytes(&metadataOffset, length: MemoryLayout<UInt32>.size, index: 1)
+      computeEncoder.setBytes(&noiseOffset, length: MemoryLayout<UInt32>.size, index: 2)
+      computeEncoder.setBytes(&terrainOffset, length: MemoryLayout<UInt32>.size, index: 3)
+      let threadgroupSize = MTLSizeMake(8, 8, 8)
+      let gridSize = MTLSizeMake(1, 1, 1)
+      computeEncoder.dispatchThreadgroups(gridSize, threadsPerThreadgroup: threadgroupSize)
+      computeEncoder.endEncoding()
+    }
+
+    // === Compress Voxel Data - Create Palette
+    do {
+      let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+      computeEncoder.label = "Compress Voxel Data - Create Palette"
+      if let pipeline = try? renderer?.pipelines.getComputePipeline(name: "voxel_compressVoxelCreatePalette") {
+        computeEncoder.setComputePipelineState(pipeline)
+      } else {
+        print("❌ Pipeline not found")
+      }
+      computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
+      var metadataOffset = renderer?.metadataHeapOffset ?? 0
+      computeEncoder.setBytes(&metadataOffset, length: MemoryLayout<UInt32>.size, index: 1)
+      let threadgroupSize = MTLSizeMake(8, 8, 8)
+      let gridSize = MTLSizeMake(1, 1, 1)
+      computeEncoder.dispatchThreadgroups(gridSize, threadsPerThreadgroup: threadgroupSize)
+      computeEncoder.endEncoding()
+    }
+
+    // === Compress Voxel Data - Raw Data
+    do {
+      let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+      computeEncoder.label = "Compress Voxel Data - Raw Data"
+      if let pipeline = try? renderer?.pipelines.getComputePipeline(name: "voxel_compressVoxelRawData") {
+        computeEncoder.setComputePipelineState(pipeline)
+      } else {
+        print("❌ Pipeline not found")
+      }
+      computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
+      var metadataOffset = renderer?.metadataHeapOffset ?? 0
+      computeEncoder.setBytes(&metadataOffset, length: MemoryLayout<UInt32>.size, index: 1)
+      let threadgroupSize = MTLSizeMake(8, 8, 8)
+      let gridSize = MTLSizeMake(1, 1, 1)
+      computeEncoder.dispatchThreadgroups(gridSize, threadsPerThreadgroup: threadgroupSize)
+      computeEncoder.endEncoding()
+    }
+
+    // === Count Faces From Palette
+    do {
+      let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+      computeEncoder.label = "Count Faces From Palette"
+      if let pipeline = try? renderer?.pipelines.getComputePipeline(name: "voxel_countFacesFromPalette") {
+        computeEncoder.setComputePipelineState(pipeline)
+      } else {
+        print("❌ Pipeline not found")
+      }
+      computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
+      computeEncoder.setBuffer(renderer?.metadataOffsetBuffer, offset: 0, index: 1)
+      let threadgroupSize = MTLSizeMake(1, 1, 1)
+      let gridSize = MTLSizeMake(8, 8, 8)
+      computeEncoder.dispatchThreadgroups(gridSize, threadsPerThreadgroup: threadgroupSize)
+      computeEncoder.endEncoding()
+    }
+
+    // === Generate Mesh From Palette
+    do {
+      let computeEncoder = commandBuffer.makeComputeCommandEncoder()!
+      computeEncoder.label = "Generate Mesh From Palette"
+      if let pipeline = try? renderer?.pipelines.getComputePipeline(name: "voxel_generateMeshFromPalette") {
+        computeEncoder.setComputePipelineState(pipeline)
+      } else {
+        print("❌ Pipeline not found")
+      }
+      computeEncoder.setBuffer(renderer?.heapBuffer, offset: 0, index: 0)
+      computeEncoder.setBuffer(renderer?.metadataOffsetBuffer, offset: 0, index: 1)
+      let threadgroupSize = MTLSizeMake(8, 8, 8)
+      let gridSize = MTLSizeMake(1, 1, 1)
+      computeEncoder.dispatchThreadgroups(gridSize, threadsPerThreadgroup: threadgroupSize)
+      computeEncoder.endEncoding()
+    }
+
+    commandBuffer.commit()
+    
+    // Wait for face generation to complete and debug the result
+    commandBuffer.waitUntilCompleted()
+    if let heapContents = renderer?.heapBuffer.contents() {
+      let metadataPtr = (heapContents + 4 * Int(metadataOffset)).bindMemory(to: ChunkMetadata.self, capacity: 1)
+      print("After generation, detected \(metadataPtr.pointee.countFaces) faces")
+    }
   }
 }
