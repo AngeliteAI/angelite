@@ -6,6 +6,8 @@ pub const PI: f32 = 3.14159265358979323846;
 pub const PI_OVER_180: f32 = PI / 180.0;
 pub const _180_OVER_PI: f32 = 180.0 / PI;
 
+const NaN = @as(f32, @bitCast( @as(u32, 0x7FC00000))); // Quiet NaN
+
 /// Convert degrees to radians
 pub export fn rad(degree: f32) f32 {
     return degree * PI_OVER_180;
@@ -99,14 +101,14 @@ pub export fn pow(x: f32, y: f32) f32 {
             const result = pow(-x, y);
             return if (@mod(int_y, 2) == 0) result else -result;
         } else {
-            return 0.0 / 0.0; // NaN for negative base with non-integer exponent
+            return NaN; // NaN for negative base with non-integer exponent
         }
     }
 }
 
 /// Square root function
 pub export fn sqrt(x: f32) f32 {
-    if (x < 0.0) return 0.0 / 0.0; // NaN
+    if (x < 0.0) return NaN; // NaN
     if (x == 0.0) return 0.0;
 
     // Hardware implementation using assembly if available
@@ -135,7 +137,7 @@ pub export fn tan(x: f32) f32 {
 /// Arcsine function
 pub export fn asin(x: f32) f32 {
     // Approximation using Taylor series
-    if (x < -1.0 or x > 1.0) return 0.0 / 0.0; // NaN
+    if (x < -1.0 or x > 1.0) return NaN; // NaN
 
     // asin(x) ≈ x + (x³/6) + (3x⁵/40) + (5x⁷/112) + ...
     const x2 = x * x;

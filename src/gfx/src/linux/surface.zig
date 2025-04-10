@@ -1,5 +1,5 @@
 const xcb = @import("xcb.zig");
-const surface = @import("include/surface.zig");
+const surface = @import("include").surface;
 const std = @import("std");
 
 pub const Surface = surface.Surface;
@@ -16,7 +16,7 @@ var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 var xcb_surface_allocator: std.mem.Allocator = undefined;
 pub var xcb_surfaces: std.AutoHashMap(Id, XcbSurface) = undefined;
 var init: bool = false;
-pub export fn create() ?*Surface {
+pub export fn createSurface() ?*Surface {
     if (!init) {
         init = true;
         gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -127,12 +127,23 @@ pub export fn create() ?*Surface {
     return @as(*Surface, @ptrCast(memory));
 }
 
-pub fn poll() void {
+pub export fn destroySurface(s: ?*Surface) void {
+    if (s) |activeSurface| {
+        const surface_id = Id{ .id = activeSurface.id };
+        if (xcb_surfaces.getEntry(surface_id)) |entry| {
+            const xcb_surface = entry.value_ptr.*;
+            _ = xcb.destroy_window(xcb_surface.connection, xcb_surface.window);
+            xcb.disconnect(xcb_surface.connection);
+            _ = xcb_surfaces.remove(surface_id);
+        }
+    }
+}
+
+pub export fn pollSurface() void {
     var it = xcb_surfaces.iterator();
     while (it.next()) |entry| {
         const event = xcb.poll_for_event(entry.value_ptr.*.connection);
         if (event == null) break;
         std.debug.print("Event\n", .{});
-    } // Explicitly set window position to override window manager
-
+    }
 }

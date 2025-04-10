@@ -3,7 +3,7 @@
 
 const scalar = @import("scalar.zig");
 const vec = @import("vec.zig");
-const mat = @import("../include/mat.zig");
+const mat = @import("include").mat;
 
 pub const Mat2 = mat.Mat2;
 pub const Mat3 = mat.Mat3;

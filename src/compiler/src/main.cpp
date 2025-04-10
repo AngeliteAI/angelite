@@ -3,6 +3,8 @@
 #include <vector>
 #include <sstream>
 #include <fstream>
+#include <fcntl.h>
+#include <io.h>
 #include <shaderc/shaderc.hpp>
 
 // Helper function to determine shader kind from given type string
@@ -16,6 +18,10 @@ shaderc_shader_kind getShaderKind(const std::string& type) {
     return shaderc_glsl_infer_from_source;
 }
 int main(int argc, char* argv[]) {
+    #ifdef _WIN32
+    	_setmode(_fileno(stdout), _O_BINARY);
+    #endif
+    
     // Default to inferring shader type from source
     shaderc_shader_kind shaderKind = shaderc_glsl_infer_from_source;
     bool optimize = false;

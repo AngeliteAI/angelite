@@ -4,7 +4,7 @@
 const scalar = @import("scalar.zig");
 const vec = @import("vec.zig");
 const mat = @import("mat.zig");
-const quaternion = @import("../include/quat.zig");
+const quaternion = @import("include").quat;
 
 pub const Quat = quaternion.Quat;
 

@@ -1,5 +1,5 @@
 const scalar = @import("scalar.zig");
-const vec = @import("../include/vec.zig");
+const vec = @import("include").vec;
 
 pub const Vec2 = vec.Vec2;
 pub const Vec3 = vec.Vec3;
