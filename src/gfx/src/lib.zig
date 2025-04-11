@@ -2,14 +2,8 @@ const std = @import("std");
 
 pub const include = @import("include");
 
-const builtin = @import("builtin");
-
-// Import platform-specific surface module
-pub usingnamespace switch (builtin.os.tag) {
-    .windows => @import("windows/surface.zig"),
-    .linux => @import("linux/surface.zig"),
-    else => @compileError("Unsupported platform"),
-};
+// Import surface module as a dependency
+pub const surface = @import("surface");
 
 pub usingnamespace @import("vk/render.zig");
 

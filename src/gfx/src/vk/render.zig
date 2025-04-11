@@ -1,13 +1,8 @@
 const inc = @import("include").render;
 
 const vk = @import("vk.zig");
-const sf = blk: {
-    if (@import("builtin").os.tag == .windows) {
-        break :blk @import("../windows/surface.zig");
-    } else {
-        break :blk @import("../linux/surface.zig");
-    }
-};
+// Import surface as a dependency
+const sf = @import("surface");
 const std = @import("std");
 const pipelines = @import("pipeline.zig");
 const task = @import("task.zig");

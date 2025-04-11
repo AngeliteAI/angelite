@@ -1,6 +1,7 @@
 const math = @import("math");
 const vol = @import("vol.zig");
-const surface = @import("surface.zig");
+// Import surface from the dependency instead of a local file
+const surface = @import("surface").include.surface;
 
 const Surface = surface.Surface;
 const Volume = vol.Volume;

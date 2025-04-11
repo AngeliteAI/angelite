@@ -21,12 +21,22 @@ pub fn build(b: *std.Build) void {
     std.debug.print("Building for target OS: {s}\n", .{@tagName(target.result.os.tag)});
     std.debug.print("Using source file: {s}\n", .{root_source_path});
 
+    // Get the surface dependency
+    const surface_dep = b.dependency("surface", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const surface_module = surface_dep.module("surface");
+
     // Create a module that can be imported by other build scripts
     const gfx_module = b.addModule("gfx", .{
         .root_source_file = b.path(root_source_path),
         .target = target,
         .optimize = optimize,
     });
+    
+    // Add surface module as a dependency
+    gfx_module.addImport("surface", surface_module);
     
     // Create a submodule for include files
     const include_module = b.addModule("include", .{
@@ -63,6 +73,9 @@ pub fn build(b: *std.Build) void {
     
     // Make sure the library also has access to the include module
     lib.root_module.addImport("include", include_module);
+    
+    // Add the surface module to the library
+    lib.root_module.addImport("surface", surface_module);
     
     // Add Vulkan SDK include path to the library as well
     if (is_windows) {

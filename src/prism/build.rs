@@ -92,6 +92,19 @@ fn build_macos(project_root: &str) {
     run_command("zig", &["build", "-Doptimize=Debug"]);
     env::set_current_dir(current_dir).unwrap();
 
+    // Build Zig surface library with debug symbols
+    println!("Building Zig surface library with debug symbols...");
+    let surface_src_dir = format!("{}/src/surface", root_dir);
+    let current_dir = env::current_dir().unwrap();
+    env::set_current_dir(&surface_src_dir).unwrap();
+    run_command("zig", &["build", "-Doptimize=Debug"]);
+    env::set_current_dir(current_dir).unwrap();
+    
+    let zig_surface_lib_path = format!("{}/zig-out/lib/libsurface.a", surface_src_dir);
+    if !Path::new(&zig_surface_lib_path).exists() {
+        panic!("Error: Zig surface static library build failed or not found.");
+    }
+
     let zig_math_lib_path = format!("{}/zig-out/lib/libmath.a", math_src_dir);
     if !Path::new(&zig_math_lib_path).exists() {
         panic!("Error: Zig math static library build failed or not found.");

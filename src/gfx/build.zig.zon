@@ -5,6 +5,9 @@
         .math = .{
             .path = "../math",
         },
+        .surface = .{
+            .path = "../surface",
+        },
     },
 
     .paths = .{
