@@ -69,6 +69,7 @@ pub const createVkSurface = blk: {
 };
 
 pub const GENERIC_SURFACE_EXTENSION_NAME = "VK_KHR_surface";
+pub const ImageAspectFlags = c.VkImageAspectFlags;
 
 pub const PLATFORM_SURFACE_EXTENSION_NAME = blk: {
     if (@import("builtin").os.tag == .windows) {
@@ -94,11 +95,13 @@ pub const StructureType = enum(c_uint) {
     InstanceInfo = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
     DeviceQueueCreateInfo = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
     DeviceCreateInfo = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+    BufferCreateInfo = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
     CommandPoolCreateInfo = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     CommandBufferAllocateInfo = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
     CommandBufferBeginInfo = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     SubmitInfo = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
     ShaderModuleCreateInfo = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+    BufferDeviceAddressInfo = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_EXT,
     PipelineLayoutCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
     SwapchainCreateInfoKHR = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
     PresentInfoKHR = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -134,11 +137,13 @@ pub const StructureType = enum(c_uint) {
     // Add these for pipeline rendering and descriptors
     PhysicalDeviceDynamicRenderingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
     PhysicalDeviceDescriptorIndexingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT,
+    PhysicalDeviceBufferDeviceAddressFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
 
     // Synchronization-related structure types
     FenceCreateInfo = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     SemaphoreCreateInfo = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     PipelineRenderingCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    MemoryAllocateInfo = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 };
 
 pub const NULL = c.VK_NULL_HANDLE;
@@ -169,7 +174,13 @@ pub const Device = c.VkDevice;
 pub const Pipeline = c.VkPipeline;
 pub const PipelineLayout = c.VkPipelineLayout;
 pub const ShaderModule = c.VkShaderModule;
+pub const ACCESS_TRANSFER_READ_BIT = c.VK_ACCESS_TRANSFER_READ_BIT;
+pub const ACCESS_TRANSFER_WRITE_BIT = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+pub const PIPELINE_STAGE_VERTEX_SHADER_BIT = c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+pub const PIPELINE_STAGE_FRAGMENT_SHADER_BIT = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 
+pub const PIPELINE_STAGE_TRANSFER_BIT = c.VK_PIPELINE_STAGE_TRANSFER_BIT;
+pub const ACCESS_SHADER_READ_BIT = c.VK_ACCESS_SHADER_READ_BIT;
 pub const MEMORY_HEAP_DEVICE_LOCAL_BIT = c.VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
 pub const SUCCESS = c.VK_SUCCESS;
 
@@ -467,6 +478,13 @@ pub const EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME = c.VK_EXT_DESCRIPTOR_INDEXING_
 // Structure types for StructureType enum
 pub const PhysicalDeviceDynamicRenderingFeatures = c.VkPhysicalDeviceDynamicRenderingFeaturesKHR;
 pub const PhysicalDeviceDescriptorIndexingFeatures = c.VkPhysicalDeviceDescriptorIndexingFeaturesEXT;
+pub const PhysicalDeviceBufferDeviceAddressFeatures = extern struct {
+    sType: c.VkStructureType,
+    pNext: ?*const anyopaque,
+    bufferDeviceAddress: c.VkBool32,
+    bufferDeviceAddressCaptureReplay: c.VkBool32,
+    bufferDeviceAddressMultiDevice: c.VkBool32,
+};
 
 // Queue family properties
 pub const QueueFamilyProperties = c.VkQueueFamilyProperties;
@@ -502,6 +520,7 @@ pub const GetPhysicalDeviceSurfaceCapabilitiesKHR = c.vkGetPhysicalDeviceSurface
 pub const GetPhysicalDeviceSurfaceFormatsKHR = c.vkGetPhysicalDeviceSurfaceFormatsKHR;
 pub const GetPhysicalDeviceSurfacePresentModesKHR = c.vkGetPhysicalDeviceSurfacePresentModesKHR;
 pub const CreateSwapchainKHR = c.vkCreateSwapchainKHR;
+pub const destroySurfaceKHR = c.vkDestroySurfaceKHR;
 
 // Image/view-related types
 pub const Image = c.VkImage;
@@ -679,6 +698,11 @@ pub const SHADER_STAGE_VERTEX = c.VK_SHADER_STAGE_VERTEX_BIT;
 pub const SHADER_STAGE_FRAGMENT = c.VK_SHADER_STAGE_FRAGMENT_BIT;
 pub const SHADER_STAGE_COMPUTE = c.VK_SHADER_STAGE_COMPUTE_BIT;
 
+// Shader stages as bit flags for push constants and other operations
+pub const SHADER_STAGE_VERTEX_BIT = c.VK_SHADER_STAGE_VERTEX_BIT;
+pub const SHADER_STAGE_FRAGMENT_BIT = c.VK_SHADER_STAGE_FRAGMENT_BIT;
+pub const SHADER_STAGE_COMPUTE_BIT = c.VK_SHADER_STAGE_COMPUTE_BIT;
+
 // ...existing code...
 
 // Add missing pipeline-related types
@@ -761,6 +785,55 @@ pub const IMAGE_LAYOUT_PRESENT_SRC_KHR = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 pub const REMAINING_ARRAY_LAYERS = c.VK_REMAINING_ARRAY_LAYERS;
 pub const REMAINING_MIP_LEVELS = c.VK_REMAINING_MIP_LEVELS;
 pub const WHOLE_SIZE = c.VK_WHOLE_SIZE;
+
+// Memory and buffer related constants and functions
+pub const BufferCreateInfo = c.VkBufferCreateInfo;
+pub const MemoryAllocateInfo = c.VkMemoryAllocateInfo;
+pub const MappedMemoryRange = c.VkMappedMemoryRange;
+pub const DeviceMemory = c.VkDeviceMemory;
+pub const MemoryPropertyFlags = c.VkMemoryPropertyFlags;
+pub const BufferUsageFlags = c.VkBufferUsageFlags;
+pub const MemoryRequirements = c.VkMemoryRequirements;
+pub const BufferCopy = c.VkBufferCopy;
+pub const BufferImageCopy = c.VkBufferImageCopy;
+
+// Memory related constants
+pub const MEMORY_PROPERTY_HOST_VISIBLE_BIT = c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+pub const MEMORY_PROPERTY_HOST_COHERENT_BIT = c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+pub const MEMORY_PROPERTY_DEVICE_LOCAL_BIT = c.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+// Buffer usage flags
+pub const BUFFER_USAGE_TRANSFER_SRC_BIT = c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+pub const BUFFER_USAGE_TRANSFER_DST_BIT = c.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+pub const BUFFER_USAGE_UNIFORM_BUFFER_BIT = c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+pub const BUFFER_USAGE_STORAGE_BUFFER_BIT = c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+pub const BUFFER_USAGE_INDEX_BUFFER_BIT = c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+pub const BUFFER_USAGE_VERTEX_BUFFER_BIT = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+pub const BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT = c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+// Buffer creation flags
+pub const BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT = c.VK_BUFFER_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT;
+
+// Device address info structure
+pub const BufferDeviceAddressInfo = c.VkBufferDeviceAddressInfo;
+
+// Memory and buffer functions
+pub const createBuffer = c.vkCreateBuffer;
+pub const destroyBuffer = c.vkDestroyBuffer;
+pub const getBufferMemoryRequirements = c.vkGetBufferMemoryRequirements;
+pub const allocateMemory = c.vkAllocateMemory;
+pub const freeMemory = c.vkFreeMemory;
+pub const bindBufferMemory = c.vkBindBufferMemory;
+pub const mapMemory = c.vkMapMemory;
+pub const unmapMemory = c.vkUnmapMemory;
+pub const flushMappedMemoryRanges = c.vkFlushMappedMemoryRanges;
+pub const invalidateMappedMemoryRanges = c.vkInvalidateMappedMemoryRanges;
+pub const getBufferDeviceAddress = c.vkGetBufferDeviceAddress;
+
+// Command buffer functions for buffer operations
+pub const CmdCopyBuffer = c.vkCmdCopyBuffer;
+pub const CmdCopyBufferToImage = c.vkCmdCopyBufferToImage;
+pub const CmdPushConstants = c.vkCmdPushConstants;
 
 // Add Windows-specific surface type definitions
 pub const Win32SurfaceCreateInfoKHR = c.VkWin32SurfaceCreateInfoKHR;

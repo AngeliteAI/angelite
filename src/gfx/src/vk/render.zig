@@ -33,12 +33,22 @@ const GpuCamera = struct {
     viewProjection: Mat4,
 };
 
+const camera_sys = @import("camera.zig");
+const RendererCamera = camera_sys.RendererCamera;
+const heap_mod = @import("heap.zig");
+const stage_mod = @import("stage.zig");
+
+// Constants for buffer sizes
+const RENDERER_STAGING_BUFFER_SIZE = 1024 * 1024 * 8; // 8MB
+const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 1024; // 1GB
+
 const Renderer = struct {
     const MAX_FRAMES_IN_FLIGHT = 3;
     instance: vk.Instance,
     physicalDevice: vk.PhysicalDevice,
     device: vk.Device,
     queue: vk.Queue,
+    queue_family_index: u32,
     surface: ?vk.Surface,
     swapchain: vk.Swapchain,
     swapchainImages: []vk.Image,
@@ -55,7 +65,12 @@ const Renderer = struct {
 
     frame: Frame,
 
-    camera: Camera,
+    // Large heap and stage buffers for the renderer
+    renderer_heap: ?*heap_mod.Heap,
+    renderer_stage: ?*stage_mod.Stage,
+
+    camera: ?*RendererCamera,
+    camera_pass: ?*task.Pass,
 
     const InstanceExtensions = [_][*:0]const u8{ vk.GENERIC_SURFACE_EXTENSION_NAME, vk.PLATFORM_SURFACE_EXTENSION_NAME };
 
@@ -117,7 +132,7 @@ const Renderer = struct {
             }
 
             if (!found) {
-                std.debug.print("Required extension not supported: {s}\n", .{req_name});
+                // // std.debug.print("Required extension not supported: {s}\n", .{req_name});
                 return false;
             }
         }
@@ -358,9 +373,19 @@ const Renderer = struct {
     }
 
     fn createLogicalDevice(physical_device: vk.PhysicalDevice, qfi: u32) vk.Device {
+        // Enable buffer device address feature
+        var buffer_device_address_features = vk.PhysicalDeviceBufferDeviceAddressFeatures{
+            .sType = vk.sTy(vk.StructureType.PhysicalDeviceBufferDeviceAddressFeatures),
+            .pNext = null,
+            .bufferDeviceAddress = vk.TRUE,
+            .bufferDeviceAddressCaptureReplay = vk.TRUE,
+            .bufferDeviceAddressMultiDevice = vk.FALSE,
+        };
+
         // Use device extensions
         var dynamic_rendering_features = vk.PhysicalDeviceDynamicRenderingFeatures{
             .sType = vk.sTy(vk.StructureType.PhysicalDeviceDynamicRenderingFeatures),
+            .pNext = &buffer_device_address_features,
             .dynamicRendering = vk.TRUE,
         };
 
@@ -630,6 +655,36 @@ const Renderer = struct {
         // In your Renderer.init function:
         std.debug.print("Creating synchronization primitives for multiple frames in flight...\n", .{});
 
+        // Create large heap buffer for the renderer
+        std.debug.print("Creating large renderer heap buffer (1GB)...\n", .{});
+        const renderer_heap = heap_mod.Heap.create(
+            device,
+            physicalDevice,
+            RENDERER_HEAP_BUFFER_SIZE,
+            vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+            vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            renderAllocator,
+        ) catch |err| {
+            std.debug.print("ERROR: Failed to create renderer heap: {s}\n", .{@errorName(err)});
+            return null;
+        };
+
+        // Create large staging buffer for the renderer
+        std.debug.print("Creating large renderer staging buffer (8MB)...\n", .{});
+        const renderer_stage = stage_mod.Stage.createWithBufferTarget(
+            device,
+            physicalDevice,
+            qfi,
+            RENDERER_STAGING_BUFFER_SIZE,
+            renderer_heap.getBuffer(),
+            0, // Target offset 0
+            renderAllocator,
+        ) catch |err| {
+            std.debug.print("ERROR: Failed to create renderer stage: {s}\n", .{@errorName(err)});
+            renderer_heap.destroy(device, renderAllocator);
+            return null;
+        };
+
         // Allocate arrays
         const command_buffers = try renderAllocator.alloc(vk.CommandBuffer, Renderer.MAX_FRAMES_IN_FLIGHT);
         const image_available_semaphores = try renderAllocator.alloc(vk.Semaphore, Renderer.MAX_FRAMES_IN_FLIGHT);
@@ -668,6 +723,25 @@ const Renderer = struct {
             return null;
         };
         std.debug.print("Triangle graphics pipeline created successfully\n", .{});
+
+        std.debug.print("Creating bindless triangle graphics pipeline...\n", .{});
+        _ = pipelineCompiler.createGraphicsPipeline("bindless_triangle", .{
+            .vertex_shader = .{
+                .path = "src/gfx/src/vk/bindless_triangle.glsl",
+                .shader_type = .Vertex
+            },
+            .fragment_shader = .{
+                .path = "src/gfx/src/vk/bindless_trianglef.glsl",
+                .shader_type = .Fragment
+            },
+            .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Srgb},
+            // Add push constant range for the camera device address and model matrix
+            .push_constant_size = @sizeOf(camera_sys.CameraPushConstants),
+        }) catch |err| {
+            std.debug.print("ERROR: Failed to create bindless graphics pipeline: {s}\n", .{@errorName(err)});
+            return null;
+        };
+        std.debug.print("Bindless triangle graphics pipeline created successfully\n", .{});
 
         std.debug.print("Creating synchronization primitives...\n", .{});
         const image_available_semaphore = Renderer.createSemaphore(device) catch |err| {
@@ -711,6 +785,19 @@ const Renderer = struct {
                     std.debug.print("ERROR: No inputs for triangle pass\n", .{});
                     return;
                 }
+
+                // Get heap device address for bindless access
+                const heapAddress = taskRenderer.renderer_heap.?.getDeviceAddress() catch |err| {
+                    std.debug.print("ERROR: Failed to get heap device address: {s}\n", .{@errorName(err)});
+                    return;
+                };
+
+                // Create push constant data with the heap address
+                const pushConstants = camera_sys.CameraPushConstants{
+                    .heap_address = heapAddress,
+                    .model_matrix = math.m4Id(),
+                };
+
                 std.debug.print("Setting up color attachment for frame {}x{}\n", .{ ctx.frame.*.width, ctx.frame.*.height });
                 const color_attachment = vk.RenderingAttachmentInfoKHR{
                     .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
@@ -723,7 +810,7 @@ const Renderer = struct {
                     .storeOp = vk.RENDER_PASS_STORE_OP_STORE,
                     .clearValue = vk.ClearValue{
                         .color = vk.ClearColorValue{
-                            .float32 = [_]f32{ 1.0, 0.0, 1.0, 1.0 },
+                            .float32 = [_]f32{ 0.1, 0.1, 0.1, 1.0 },
                         },
                     },
                 };
@@ -742,10 +829,13 @@ const Renderer = struct {
                 std.debug.print("Beginning dynamic rendering\n", .{});
                 vk.cmdBeginRenderingKHR(ctx.cmd, &rendering_info);
                 std.debug.print("Color attachment: {any}\n", .{rendering_info});
-                const pipeline = taskRenderer.pipeline.getPipeline("triangle") catch |err| {
-                    std.debug.print("ERROR: Failed to get pipeline: {s}\n", .{@errorName(err)});
+
+                // Use the bindless pipeline instead of the regular triangle pipeline
+                const pipeline = taskRenderer.pipeline.getPipeline("bindless_triangle") catch |err| {
+                    std.debug.print("ERROR: Failed to get bindless pipeline: {s}\n", .{@errorName(err)});
                     return;
                 };
+
                 std.debug.print("Binding pipeline\n", .{});
                 vk.CmdBindPipeline(ctx.cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
 
@@ -768,6 +858,15 @@ const Renderer = struct {
 
                 std.debug.print("Setting scissor: {}x{}\n", .{ scissor.extent.width, scissor.extent.height });
                 vk.CmdSetScissor(ctx.cmd, 0, 1, &scissor);
+
+                // Push the constants to the shader
+                std.debug.print("Pushing constants with heap address: {x}\n", .{heapAddress});
+                vk.CmdPushConstants(ctx.cmd,
+                    pipeline.asGraphics().?.base.layout,
+                    vk.SHADER_STAGE_VERTEX_BIT,
+                    0,
+                    @sizeOf(camera_sys.CameraPushConstants),
+                    &pushConstants);
 
                 std.debug.print("Drawing triangle (3 vertices)\n", .{});
                 vk.CmdDraw(ctx.cmd, 3, 1, 0, 0);
@@ -816,7 +915,7 @@ const Renderer = struct {
         };
         std.debug.print("Triangle pass added to graph\n", .{});
 
-        graph.addPass(&task.pass_submit) catch |err| {
+        graph.addPass(task.getPassSubmit()) catch |err| {
             std.debug.print("ERROR: Failed to add submit pass to graph: {s}\n", .{@errorName(err)});
             return null;
         };
@@ -839,6 +938,7 @@ const Renderer = struct {
         renderer.physicalDevice = physicalDevice;
         renderer.device = device;
         renderer.queue = queue;
+        renderer.queue_family_index = qfi;
         renderer.surface = activeVkSurface;
         renderer.pipeline = pipelineCompiler;
         renderer.swapchain = swapchain;
@@ -851,6 +951,55 @@ const Renderer = struct {
         renderer.command_pool = command_pool;
         renderer.swapchainImages = swapchainImages;
         renderer.graph = graph;
+        renderer.renderer_heap = renderer_heap;
+        renderer.renderer_stage = renderer_stage;
+
+        // Initialize camera system using renderer's heap and stage
+        std.debug.print("Initializing camera system with renderer's heap and stage...\n", .{});
+        renderer.camera = RendererCamera.create(
+            device,
+            renderer_heap,
+            renderer_stage,
+            renderAllocator
+        ) catch |err| {
+            std.debug.print("ERROR: Failed to initialize camera system: {s}\n", .{@errorName(err)});
+            renderer.camera = null;
+            renderer.camera_pass = null;
+            return renderer;
+        };
+
+        // Create camera pass and add it to the graph
+        std.debug.print("Creating camera update pass...\n", .{});
+        renderer.camera_pass = renderer.camera.?.createCameraPass("CameraUpdate") catch |err| {
+            std.debug.print("ERROR: Failed to create camera pass: {s}\n", .{@errorName(err)});
+            renderer.camera_pass = null;
+            return renderer;
+        };
+
+        // Add camera pass to the graph (before triangle pass)
+        std.debug.print("Adding camera pass to render graph...\n", .{});
+        graph.addPass(renderer.camera_pass.?) catch |err| {
+            std.debug.print("ERROR: Failed to add camera pass to graph: {s}\n", .{@errorName(err)});
+            return renderer;
+        };
+
+        // Set initial camera at position 0
+        const initial_position = math.v3Zero();
+        const initial_view = math.m4LookAt(
+            initial_position,
+            math.v3Add(initial_position, math.v3Y()),
+            math.v3Z()
+        );
+        const initial_projection = math.m4Persp(
+            math.rad(45.0),
+            @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)),
+            0.1,
+            1000.0
+        );
+
+        _ = renderer.camera.?.update(initial_position, initial_view, initial_projection) catch |err| {
+            std.debug.print("WARNING: Failed to set initial camera: {s}\n", .{@errorName(err)});
+        };
 
         std.debug.print("Renderer initialization complete. Returning renderer: {*}\n", .{renderer});
         return renderer;
@@ -900,11 +1049,78 @@ pub export fn init(surface: ?*Surface) ?*PlatformRenderer {
     return platform_renderer;
 }
 
-pub export fn destroy() void {
-    // Cleanup code herepub export fn destroy() void {
+pub export fn destroy(handle: ?*PlatformRenderer) void {
+    if (handle == null) return;
 
-    defer std.debug.print("Vulkan instance destroyed.\n", .{}); // Cleanup code here
-    defer std.debug.print("Vulkan instance destroyed.\n", .{});
+    var renderer = platformRenderers.get(handle.?.*) orelse {
+        return;
+    };
+
+    // Cleanup camera resources if they exist
+    if (renderer.camera != null) {
+        renderer.camera.?.destroy();
+        renderer.camera = null;
+        renderer.camera_pass = null;
+    }
+
+    // Cleanup renderer stage and heap
+    if (renderer.renderer_stage != null) {
+        renderer.renderer_stage.?.destroy();
+        renderer.renderer_stage = null;
+    }
+
+    if (renderer.renderer_heap != null) {
+        renderer.renderer_heap.?.destroy(renderer.device, renderAllocator);
+        renderer.renderer_heap = null;
+    }
+
+    // Wait for the device to be idle before destroying resources
+    _ = vk.deviceWaitIdle(renderer.device);
+
+    // Clean up task graph resources
+    renderer.graph.deinit();
+
+    // Clean up synchronization objects
+    for (0..Renderer.MAX_FRAMES_IN_FLIGHT) |i| {
+        vk.destroySemaphore(renderer.device, renderer.image_available_semaphores[i], null);
+        vk.destroySemaphore(renderer.device, renderer.render_finished_semaphores[i], null);
+        vk.destroyFence(renderer.device, renderer.in_flight_fences[i], null);
+    }
+
+    // Free allocated memory
+    renderAllocator.free(renderer.image_available_semaphores);
+    renderAllocator.free(renderer.render_finished_semaphores);
+    renderAllocator.free(renderer.in_flight_fences);
+    renderAllocator.free(renderer.images_in_flight);
+    renderAllocator.free(renderer.command_buffers);
+
+    // Destroy Vulkan objects
+    vk.destroyCommandPool(renderer.device, renderer.command_pool);
+    vk.destroySwapchainKHR(renderer.device, renderer.swapchain, null);
+    vk.destroyDevice(renderer.device, null);
+
+    if (renderer.surface != null) {
+        vk.destroySurfaceKHR(renderer.instance, renderer.surface.?, null);
+    }
+
+    vk.destroyInstance(renderer.instance, null);
+
+    // Remove from maps
+    _ = platformRenderers.remove(handle.?.*);
+    
+    // Find and remove from surfaceRenderers by value
+    var sr_it = surfaceRenderers.iterator();
+    while (sr_it.next()) |entry| {
+        if (std.meta.eql(entry.value_ptr.*, handle.?.*)) {
+            _ = surfaceRenderers.remove(entry.key_ptr.*);
+            break;
+        }
+    }
+
+    renderAllocator.destroy(renderer);
+    renderAllocator.destroy(handle.?);
+
+    std.debug.print("Vulkan renderer destroyed.\n", .{});
 }
 pub export fn render(handle: ?*PlatformRenderer) void {
     // Get renderer...
@@ -991,7 +1207,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         .userData = renderer,
     };
     renderer.graph.execute(renderer.command_buffers[frameIndex], // Use frame-specific command buffer
-        &renderer.frame, passContext // Pass frame index to the execute function
+        passContext // Pass context to the execute function
     ) catch |err| {
         std.debug.print("Failed to execute render graph: {s}\n", .{@errorName(err)});
         return;
@@ -999,6 +1215,12 @@ pub export fn render(handle: ?*PlatformRenderer) void {
     // Advance to next frame
 }
 
-pub export fn setCamera(renderer: *Renderer, camera: *Camera) void {
-    renderer.camera = camera;
-};
+pub export fn setCamera(renderer: *Renderer, position: *math.Vec3, view: *math.Mat4, projection: *math.Mat4) void {
+    // If the camera system is available, update it
+    if (renderer.camera != null) {
+        _ = renderer.camera.?.update(position.*, view.*, projection.*) catch |err| {
+            std.log.err("Failed to update camera in setCamera: {s}", .{@errorName(err)});
+            return;
+        };
+    }
+}

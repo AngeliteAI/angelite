@@ -1,6 +1,23 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::fs;
+
+/// Recursively walks a directory and registers all files for cargo to rerun the build script if they change
+fn watch_dir_for_changes(dir: &str) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let path_str = path.to_str().unwrap_or_default();
+            
+            if path.is_file() {
+                println!("cargo:rerun-if-changed={}", path_str);
+            } else if path.is_dir() {
+                watch_dir_for_changes(path_str);
+            }
+        }
+    }
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -11,6 +28,20 @@ fn main() {
     project_root.pop();
     let project_root = project_root.to_str().unwrap();
     println!("cargo:warning=Project root: {}", project_root);
+    
+    // Watch Zig dependencies for changes
+    let math_dir = format!("{}/src/math", project_root);
+    let gfx_dir = format!("{}/src/gfx", project_root);
+    let surface_dir = format!("{}/src/surface", project_root);
+    
+    println!("cargo:warning=Watching for changes in: {}", math_dir);
+    watch_dir_for_changes(&math_dir);
+    
+    println!("cargo:warning=Watching for changes in: {}", gfx_dir);
+    watch_dir_for_changes(&gfx_dir);
+    
+    println!("cargo:warning=Watching for changes in: {}", surface_dir);
+    watch_dir_for_changes(&surface_dir);
 
     // Get and print target information for debugging
     let target = env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());

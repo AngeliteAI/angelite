@@ -27,6 +27,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const surface_module = surface_dep.module("surface");
+    
+    // Get the math dependency
+    const math_dep = b.dependency("math", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    // The math module is exported as the root module of the library
+    const math_module = math_dep.artifact("math").root_module;
 
     // Create a module that can be imported by other build scripts
     const gfx_module = b.addModule("gfx", .{
@@ -37,6 +45,9 @@ pub fn build(b: *std.Build) void {
     
     // Add surface module as a dependency
     gfx_module.addImport("surface", surface_module);
+    
+    // Add math module as a dependency
+    gfx_module.addImport("math", math_module);
     
     // Create a submodule for include files
     const include_module = b.addModule("include", .{
@@ -76,6 +87,9 @@ pub fn build(b: *std.Build) void {
     
     // Add the surface module to the library
     lib.root_module.addImport("surface", surface_module);
+    
+    // Add the math module to the library
+    lib.root_module.addImport("math", math_module);
     
     // Add Vulkan SDK include path to the library as well
     if (is_windows) {

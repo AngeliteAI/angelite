@@ -1,5 +1,6 @@
+#![no_std]
 use crate::ffi::gfx::{render, surface};
-use std::{f32::consts::PI, ptr};
+use core::{f32::consts::PI, ptr};
 
 mod ffi;
 
@@ -11,8 +12,6 @@ fn main() {
     }
 
     // Initialize the renderer with our surface
-    // // Get a reference to the renderer (assuming init creates it internally)
-    // // In a real implementation, you might get this from the init function
     let renderer_ptr = unsafe { render::init(surface_ptr) };
     let camera = render::Camera::new();
     dbg!(renderer_ptr);
