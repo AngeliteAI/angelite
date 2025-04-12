@@ -1,5 +1,5 @@
 use crate::ffi::gfx::{render, surface};
-use std::ptr;
+use std::{f32::consts::PI, ptr};
 
 mod ffi;
 
@@ -14,6 +14,7 @@ fn main() {
     // // Get a reference to the renderer (assuming init creates it internally)
     // // In a real implementation, you might get this from the init function
     let renderer_ptr = unsafe { render::init(surface_ptr) };
+    let camera = render::Camera::new();
     dbg!(renderer_ptr);
     if renderer_ptr.is_null() {
         unsafe {
@@ -27,6 +28,12 @@ fn main() {
     loop {
         // Poll for window events
         unsafe { surface::pollSurface() };
+
+        camera.projection = m4Persp(PI / 2.0, 1.0, 0.1, 100.0);
+
+        unsafe {
+            render::update_camera(renderer_ptr, &camera);
+        }
 
         // Render the frame
         unsafe { render::render(renderer_ptr) };

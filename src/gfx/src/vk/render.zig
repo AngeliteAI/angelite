@@ -7,7 +7,9 @@ const std = @import("std");
 const pipelines = @import("pipeline.zig");
 const task = @import("task.zig");
 const frame = @import("frame.zig");
+const math = @import("math");
 
+const Mat4 = math.Mat4;
 const SurfaceId = sf.Id;
 const Surface = sf.Surface;
 const PlatformRenderer = inc.Renderer;
@@ -25,6 +27,10 @@ var platformRenderers = std.AutoHashMap(PlatformRenderer, *Renderer).init(gpa.al
 var surfaceRenderers = std.AutoHashMap(Surface, PlatformRenderer).init(gpa.allocator());
 var platformRendererActive = PlatformRenderer{
     .id = 0,
+};
+
+const GpuCamera = struct {
+    viewProjection: Mat4,
 };
 
 const Renderer = struct {
@@ -48,6 +54,8 @@ const Renderer = struct {
     pipeline: *PipelineCompiler,
 
     frame: Frame,
+
+    camera: Camera,
 
     const InstanceExtensions = [_][*:0]const u8{ vk.GENERIC_SURFACE_EXTENSION_NAME, vk.PLATFORM_SURFACE_EXTENSION_NAME };
 
@@ -990,3 +998,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
     };
     // Advance to next frame
 }
+
+pub export fn setCamera(renderer: *Renderer, camera: *Camera) void {
+    renderer.camera = camera;
+};
