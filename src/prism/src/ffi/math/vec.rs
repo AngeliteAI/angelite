@@ -71,7 +71,7 @@ pub struct UVec4 {
 }
 
 // Core vector constructors
-extern "C" {
+unsafe extern "C" {
     pub fn v2(x: f32, y: f32) -> Vec2;
     pub fn v3(x: f32, y: f32, z: f32) -> Vec3;
     pub fn v4(x: f32, y: f32, z: f32, w: f32) -> Vec4;

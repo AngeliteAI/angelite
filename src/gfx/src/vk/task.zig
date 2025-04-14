@@ -1,5 +1,6 @@
 pub const vk = @import("vk.zig");
 pub const std = @import("std");
+const logger = @import("../logger.zig");
 pub const frame = @import("frame.zig");
 
 // Type imports
@@ -127,7 +128,27 @@ pub const Resource = struct {
 };
 
 fn pass_submit_execute(ctx: PassContext) void {
-    //Submit the queue
+    std.debug.print("[TASK] === SUBMIT PASS - CRITICAL SYNC POINT ===\n", .{});
+    std.debug.print("[TASK] Command buffer: {any}\n", .{ctx.cmd});
+    std.debug.print("[TASK] Queue: {any}\n", .{ctx.queue});
+    std.debug.print("[TASK] In-flight fence: {any}\n", .{ctx.in_flight_fence});
+    std.debug.print("[TASK] Image available semaphore: {any}\n", .{ctx.image_available_semaphore});
+    std.debug.print("[TASK] Render finished semaphore: {any}\n", .{ctx.render_finished_semaphore});
+
+    // Check if any handles are null
+    if (ctx.cmd == null) {
+        std.debug.print("[TASK] ERROR: Command buffer is null!\n", .{});
+        return;
+    }
+    if (ctx.queue == null) {
+        std.debug.print("[TASK] ERROR: Queue is null!\n", .{});
+        return;
+    }
+    if (ctx.in_flight_fence == null) {
+        std.debug.print("[TASK] ERROR: In-flight fence is null!\n", .{});
+    }
+
+    // Submit the queue
     const waitStage: u32 = @intCast(vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
     const submitInfo = vk.SubmitInfo{
         .sType = vk.sTy(vk.StructureType.SubmitInfo),
@@ -141,13 +162,31 @@ fn pass_submit_execute(ctx: PassContext) void {
         .pSignalSemaphores = &ctx.render_finished_semaphore,
     };
 
-    _ = vk.queueSubmit(ctx.queue, 1, &submitInfo, ctx.in_flight_fence);
+    std.debug.print("[TASK] SUBMITTING COMMAND BUFFER - Waiting on semaphore {any}, signaling semaphore {any}\n",
+                 .{ctx.image_available_semaphore, ctx.render_finished_semaphore});
+
+    const result = vk.queueSubmit(ctx.queue, 1, &submitInfo, ctx.in_flight_fence);
+    if (result != vk.SUCCESS) {
+        std.debug.print("[TASK] ERROR: Queue submission failed with result: {any}\n", .{result});
+
+        // Try to get more info about the error
+        if (result == vk.ERROR_DEVICE_LOST) {
+            std.debug.print("[TASK] CRITICAL ERROR: Device lost during submission!\n", .{});
+        } else if (result == vk.ERROR_OUT_OF_HOST_MEMORY) {
+            std.debug.print("[TASK] ERROR: Out of host memory\n", .{});
+        } else if (result == vk.ERROR_OUT_OF_DEVICE_MEMORY) {
+            std.debug.print("[TASK] ERROR: Out of device memory\n", .{});
+        }
+    } else {
+        std.debug.print("[TASK] Queue submission SUCCESSFUL - command buffer {any} submitted with fence {any}\n",
+                     .{ctx.cmd, ctx.in_flight_fence});
+    }
 }
 
 pub var pass_submit: Pass = undefined;
 
 // Initialize pass_submit at runtime
-pub fn getPassSubmit() *Pass {
+pub fn getPassSubmit(renderer: *anyopaque) *Pass {
     if (pass_submit.name.len == 0) {
         pass_submit = Pass{
             .name = "submit",
@@ -157,10 +196,14 @@ pub fn getPassSubmit() *Pass {
             .cmd = false,
         };
     }
+    pass_submit.userData = renderer;
+
     return &pass_submit;
 }
 
 fn pass_present_execute(ctx: PassContext) void {
+    logger.info("[TASK] Executing present pass with image index {}", .{ctx.frame.index});
+
     //present the queue
     const presentInfo = vk.PresentInfoKHR{
         .sType = vk.sTy(vk.StructureType.PresentInfoKHR),
@@ -173,10 +216,13 @@ fn pass_present_execute(ctx: PassContext) void {
         .pResults = null,
     };
 
+    logger.info("[TASK] Presenting swapchain image to display", .{});
     const result = vk.queuePresentKHR(ctx.queue, &presentInfo);
 
     if (result != vk.SUCCESS) {
-        unreachable;
+        logger.err("Failed to present queue: {any}", .{result});
+    } else {
+        logger.info("[TASK] Queue presentation successful", .{});
     }
 }
 
@@ -306,10 +352,13 @@ pub const Graph = struct {
     }
 
     pub fn execute(self: *Graph, cmd: vk.CommandBuffer, passContext: PassContext) !void {
+        logger.info("[TASK] Starting graph execution with {d} passes", .{self.passes.items.len});
         var activePassContext = passContext;
 
+        logger.info("[TASK] Building execution order", .{});
         const executionOrder = try self.buildExecutionOrder();
         defer self.allocator.free(executionOrder);
+        logger.info("[TASK] Built execution order with {d} passes", .{executionOrder.len});
 
         const DeferNonCmd = struct {
             passContext: PassContext,
@@ -318,8 +367,10 @@ pub const Graph = struct {
 
         var nonCmds = std.AutoHashMap(u64, DeferNonCmd).init(self.allocator); // Using StringHashMap instead
 
+        logger.info("[TASK] Initializing resource states for all passes", .{});
         for (executionOrder) |pass| {
             const activePass = self.passes.items[pass];
+            logger.debug("[TASK] Initializing state for pass: {s}", .{activePass.name});
             //loop through all resources in pass
             for (activePass.inputs.items) |usage| {
                 usage.resource.currentState.firstUseInFrame = true;
@@ -328,13 +379,21 @@ pub const Graph = struct {
                 usage.resource.currentState.firstUseInFrame = true;
             }
         }
+
+        logger.info("[TASK] Beginning command buffer recording", .{});
         _ = vk.BeginCommandBuffer(cmd, &.{
             .sType = vk.sTy(vk.StructureType.CommandBufferBeginInfo),
             .flags = vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
             .pInheritanceInfo = null,
         });
+
+        logger.info("[TASK] Executing {d} passes in sequence", .{executionOrder.len});
         for (executionOrder, 0..) |pass, i| {
             const activePass = self.passes.items[pass];
+            logger.info("[TASK] Executing pass {d}/{d}: '{s}'", .{i + 1, executionOrder.len, activePass.name});
+
+            // Reset first-use flags for this pass
+            logger.debug("[TASK] Resetting first-use flags for {s}", .{activePass.name});
             for (activePass.inputs.items) |usage| {
                 usage.resource.currentState.firstUseInPass = true;
             }
@@ -344,31 +403,69 @@ pub const Graph = struct {
 
             const activeExecute = activePass.execute;
 
+            logger.debug("[TASK] Inserting barriers for pass {s}", .{activePass.name});
             try self.insertBarriers(cmd, activePass);
 
             activePassContext.pass = activePass;
+
+            // CRITICAL FIX: Use each pass's own userData instead of the shared context userData
+            // This ensures each pass gets its correct userData pointer
+            activePassContext.userData = activePass.userData;
+
             if (activePass.cmd) {
+                std.debug.print("[TASK] ==== STARTING PASS EXECUTION: {s} ====\n", .{activePass.name});
+                std.debug.print("[TASK] Command buffer: {any}\n", .{activePassContext.cmd});
+                std.debug.print("[TASK] Using pass-specific userData: {any}\n", .{activePassContext.userData});
+
+                if (std.mem.eql(u8, activePass.name, "CameraUpdate")) {
+                    std.debug.print("[TASK] CAMERA PASS EXECUTION - detailed debugging\n", .{});
+                    std.debug.print("[TASK] Camera pass inputs: {d}, outputs: {d}\n", .{
+                        activePass.inputs.items.len, activePass.outputs.items.len});
+
+                    if (activePass.userData != null) {
+                        std.debug.print("[TASK] Camera pass userData is {any}\n", .{activePass.userData});
+                    } else {
+                        std.debug.print("[TASK] WARNING: Camera pass userData is NULL!\n", .{});
+                    }
+                }
+
+                logger.debug("[TASK] Executing command-based pass: {s}", .{activePass.name});
                 activeExecute(activePassContext);
+                std.debug.print("[TASK] ==== COMPLETED PASS EXECUTION: {s} ====\n", .{activePass.name});
             } else {
-                const nextNonCmd = DeferNonCmd{ .execute = activeExecute, .passContext = activePassContext };
+                logger.debug("[TASK] Deferring non-command pass: {s}", .{activePass.name});
+
+                // CRITICAL FIX: Ensure the deferred pass also uses its own userData
+                var deferredPassContext = activePassContext;
+                deferredPassContext.userData = activePass.userData;
+
+                const nextNonCmd = DeferNonCmd{ .execute = activeExecute, .passContext = deferredPassContext };
                 nonCmds.put(i, nextNonCmd) catch |err| {
+                    logger.err("[TASK] Failed to queue deferred pass: {s}, error: {any}", .{activePass.name, err});
                     return err;
                 };
             }
+            logger.info("[TASK] Completed pass: {s}", .{activePass.name});
         }
 
+        logger.info("[TASK] Ending command buffer recording", .{});
         _ = vk.EndCommandBuffer(cmd);
 
+        logger.info("[TASK] Executing {d} deferred non-command passes", .{nonCmds.count()});
         //loop through nonitems AutoHashMap and execute them from low to high
         var nonCmds_it = nonCmds.iterator();
         while (nonCmds_it.next()) |entry| {
+            const passIndex = entry.key_ptr.*;
             const pc = entry.value_ptr.*;
+            logger.info("[TASK] Executing deferred pass {d}: {s}", .{passIndex, pc.passContext.pass.name});
             pc.execute(pc.passContext);
         }
 
+        logger.info("[TASK] Graph execution completed successfully", .{});
     }
 
     fn buildExecutionOrder(self: *Graph) ![]usize {
+        logger.debug("[TASK] Building execution order for {d} passes", .{self.passes.items.len});
 
         // For simplicity, just use the order passes were added
         // A more sophisticated implementation would analyze dependencies
@@ -376,13 +473,18 @@ pub const Graph = struct {
         var result = try self.allocator.alloc(usize, self.passes.items.len);
         for (0..self.passes.items.len) |i| {
             result[i] = i;
+            logger.debug("[TASK] Added pass {d} to execution order: {s}", .{i, self.passes.items[i].name});
         }
 
+        logger.debug("[TASK] Execution order built successfully", .{});
         return result;
     }
     fn insertBarriers(self: *Graph, commandBuffer: vk.CommandBuffer, pass: *Pass) !void {
+        logger.debug("[TASK] Inserting barriers for pass '{s}' (resources: {d} inputs, {d} outputs)",
+                    .{pass.name, pass.inputs.items.len, pass.outputs.items.len});
 
         if (self.use_sync2) {
+            logger.debug("[TASK] Using Synchronization 2 API for barriers", .{});
             // Use Synchronization 2 (existing implementation)
             var imageBarriers = std.ArrayList(vk.ImageMemoryBarrier2KHR).init(self.allocator);
             defer imageBarriers.deinit();
@@ -391,18 +493,24 @@ pub const Graph = struct {
             defer bufferBarriers.deinit();
 
             // Process inputs
-            for (pass.inputs.items) |input| {
+            logger.debug("[TASK] Processing {d} input barriers for pass '{s}'", .{pass.inputs.items.len, pass.name});
+            for (pass.inputs.items, 0..) |input, i| {
+                logger.debug("[TASK] Processing input {d}/{d}: {s}", .{i+1, pass.inputs.items.len, input.resource.name});
                 try Graph.addBarrierIfNeededSync2(&imageBarriers, input);
             }
 
             // Process outputs
-            for (pass.outputs.items) |output| {
+            logger.debug("[TASK] Processing {d} output barriers for pass '{s}'", .{pass.outputs.items.len, pass.name});
+            for (pass.outputs.items, 0..) |output, i| {
+                logger.debug("[TASK] Processing output {d}/{d}: {s}", .{i+1, pass.outputs.items.len, output.resource.name});
                 try Graph.addBarrierIfNeededSync2(&imageBarriers, output);
             }
 
             // If we have any barriers, insert them
-
             if (imageBarriers.items.len > 0 or bufferBarriers.items.len > 0) {
+                logger.info("[TASK] Inserting {d} image barriers and {d} buffer barriers",
+                            .{imageBarriers.items.len, bufferBarriers.items.len});
+
                 const dependencyInfo = vk.DependencyInfoKHR{
                     .sType = vk.sTy(vk.StructureType.DependencyInfoKHR),
                     .dependencyFlags = 0,
@@ -415,9 +523,12 @@ pub const Graph = struct {
                 };
 
                 vk.cmdPipelineBarrier2KHR(commandBuffer, &dependencyInfo);
+                logger.debug("[TASK] Pipeline barriers inserted successfully", .{});
             } else {
+                logger.debug("[TASK] No barriers needed for pass '{s}'", .{pass.name});
             }
         } else {
+            logger.debug("[TASK] Using Synchronization 1 API (fallback) for barriers", .{});
             // Use Synchronization 1 (fallback)
             var imageBarriers = std.ArrayList(vk.ImageMemoryBarrier).init(self.allocator);
             defer imageBarriers.deinit();
@@ -430,25 +541,34 @@ pub const Graph = struct {
             var dstStageMask: vk.PipelineStageFlags = vk.PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 
             // Process inputs
-            for (pass.inputs.items) |input| {
+            logger.debug("[TASK] Processing {d} input barriers for pass '{s}'", .{pass.inputs.items.len, pass.name});
+            for (pass.inputs.items, 0..) |input, i| {
+                logger.debug("[TASK] Processing input {d}/{d}: {s}", .{i+1, pass.inputs.items.len, input.resource.name});
                 try Graph.addBarrierIfNeededSync1(&imageBarriers, &bufferBarriers, input, &srcStageMask, &dstStageMask);
             }
 
             // Process outputs
-            for (pass.outputs.items) |output| {
+            logger.debug("[TASK] Processing {d} output barriers for pass '{s}'", .{pass.outputs.items.len, pass.name});
+            for (pass.outputs.items, 0..) |output, i| {
+                logger.debug("[TASK] Processing output {d}/{d}: {s}", .{i+1, pass.outputs.items.len, output.resource.name});
                 try Graph.addBarrierIfNeededSync1(&imageBarriers, &bufferBarriers, output, &srcStageMask, &dstStageMask);
             }
 
             // If we have any barriers, insert them
-
             if (imageBarriers.items.len > 0 or bufferBarriers.items.len > 0) {
+                logger.info("[TASK] Inserting {d} image barriers and {d} buffer barriers with stage masks: src=0x{x}, dst=0x{x}",
+                             .{imageBarriers.items.len, bufferBarriers.items.len, srcStageMask, dstStageMask});
+
                 vk.cmdPipelineBarrier(commandBuffer, srcStageMask, dstStageMask, 0, // No dependency flags
                     0, null, // No memory barriers
-                    @intCast(bufferBarriers.items.len), if (bufferBarriers.items.len > 0) bufferBarriers.items.ptr else null, @intCast(imageBarriers.items.len), if (imageBarriers.items.len > 0) imageBarriers.items.ptr else null);
+                    @intCast(bufferBarriers.items.len), if (bufferBarriers.items.len > 0) bufferBarriers.items.ptr else null,
+                    @intCast(imageBarriers.items.len), if (imageBarriers.items.len > 0) imageBarriers.items.ptr else null);
+
+                logger.debug("[TASK] Pipeline barriers inserted successfully", .{});
             } else {
+                logger.debug("[TASK] No barriers needed for pass '{s}'", .{pass.name});
             }
         }
-
     }
 
     fn addBarrierIfNeededSync2(imageBarriers: *std.ArrayList(vk.ImageMemoryBarrier2KHR), usage: ResourceUsage) !void {
@@ -456,12 +576,12 @@ pub const Graph = struct {
 
         // Skip if resource has no handle
         if (resource.handle == null) {
+            logger.debug("[BARRIER] Skipping barrier for resource '{s}': no handle", .{resource.name});
             return;
         }
 
         const current = resource.currentState;
         const required = usage.requiredState;
-
 
         // Always create barrier for image layout transitions
         // or when access/stage masks change
@@ -473,29 +593,40 @@ pub const Graph = struct {
         // Force barrier creation for first use in a pass
         const forceBarrier = (resource.ty == .Image and resource.currentState.firstUseInPass);
 
+        logger.debug("[BARRIER] Resource '{s}': needsBarrier={}, forceBarrier={}",
+                    .{resource.name, needsBarrier, forceBarrier});
 
         if (!needsBarrier and !forceBarrier) {
+            logger.debug("[BARRIER] No barrier needed for resource '{s}'", .{resource.name});
             return;
         }
-
 
         switch (resource.ty) {
             .Image => {
                 if (resource.handle == null) {
+                    logger.err("[BARRIER] Invalid resource handle for '{s}'", .{resource.name});
                     return error.InvalidResourceHandle;
                 }
+
+                logger.debug("[BARRIER] Creating image barrier for '{s}'", .{resource.name});
+                logger.debug("[BARRIER] Current state: access=0x{x}, stage=0x{x}, layout={any}",
+                             .{current.accessMask, current.stageMask, current.layout});
+                logger.debug("[BARRIER] Required state: access=0x{x}, stage=0x{x}, layout={any}",
+                             .{required.accessMask, required.stageMask, required.layout});
 
                 // Determine the actual source layout
                 const srcLayout = blk: {
                     if (current.layout == vk.IMAGE_LAYOUT_UNDEFINED) {
                         // Only use UNDEFINED if the current layout is already undefined
+                        logger.debug("[BARRIER] Using UNDEFINED as source layout for '{s}'", .{resource.name});
                         break :blk vk.IMAGE_LAYOUT_UNDEFINED;
                     } else {
                         // Otherwise preserve the actual current layout
+                        logger.debug("[BARRIER] Using current layout as source layout for '{s}': {any}",
+                                    .{resource.name, current.layout});
                         break :blk current.layout;
                     }
                 };
-
 
                 // Determine source stage and access masks based on the layout
                 const srcStageMask = if (srcLayout == vk.IMAGE_LAYOUT_UNDEFINED)
@@ -507,6 +638,11 @@ pub const Graph = struct {
                     @as(vk.AccessFlags2KHR, 0) // Explicitly cast to AccessFlags2KHR
                 else
                     current.accessMask;
+
+                logger.debug("[BARRIER] Final barrier params for '{s}': srcStage=0x{x}, srcAccess=0x{x}, dstStage=0x{x}, dstAccess=0x{x}, oldLayout={any}, newLayout={any}",
+                             .{resource.name, srcStageMask, srcAccessMask,
+                               required.stageMask, required.accessMask,
+                               srcLayout, required.layout});
 
                 // Create image memory barrier with proper initial layout
                 const imageBarrier = vk.ImageMemoryBarrier2KHR{
@@ -529,25 +665,29 @@ pub const Graph = struct {
                     },
                 };
 
-
                 try imageBarriers.append(imageBarrier);
+                logger.debug("[BARRIER] Added image barrier for '{s}'", .{resource.name});
 
                 // Mark that this resource has been used
                 resource.currentState.firstUseInPass = false;
                 resource.currentState.firstUseInFrame = false;
+
+                // Update the current state to match the required state
+                resource.currentState = required;
+                logger.debug("[BARRIER] Updated current state for '{s}'", .{resource.name});
             },
             .Buffer => {
                 // Similar changes for buffer barriers...
-                // ...existing buffer barrier code...
+                logger.debug("[BARRIER] Buffer barriers not yet implemented for '{s}'", .{resource.name});
             },
         }
-
     }
     fn addBarrierIfNeededSync1(imageBarriers: *std.ArrayList(vk.ImageMemoryBarrier), bufferBarriers: *std.ArrayList(vk.BufferMemoryBarrier), usage: ResourceUsage, srcStageMask: *vk.PipelineStageFlags, dstStageMask: *vk.PipelineStageFlags) !void {
         const resource = usage.resource;
 
         // Skip if resource has no handle
         if (resource.handle == null) {
+            logger.debug("[BARRIER-SYNC1] Skipping barrier for resource '{s}': no handle", .{resource.name});
             return;
         }
 
@@ -563,21 +703,31 @@ pub const Graph = struct {
         // Force barrier creation for first use of an image in a pass
         const forceBarrier = (resource.ty == .Image and resource.currentState.firstUseInPass);
 
+        logger.debug("[BARRIER-SYNC1] Resource '{s}': needsBarrier={}, forceBarrier={}",
+                    .{resource.name, needsBarrier, forceBarrier});
+
         if (!needsBarrier and !forceBarrier) {
+            logger.debug("[BARRIER-SYNC1] No barrier needed for resource '{s}'", .{resource.name});
             return;
         }
-
 
         switch (resource.ty) {
             .Image => {
                 if (resource.handle == null) {
+                    logger.err("[BARRIER-SYNC1] Invalid resource handle for '{s}'", .{resource.name});
                     return error.InvalidResourceHandle;
                 }
+
+                logger.debug("[BARRIER-SYNC1] Creating image barrier for '{s}'", .{resource.name});
+                logger.debug("[BARRIER-SYNC1] Current state: access=0x{x}, stage=0x{x}, layout={any}",
+                             .{current.accessMask, current.stageMask, current.layout});
+                logger.debug("[BARRIER-SYNC1] Required state: access=0x{x}, stage=0x{x}, layout={any}",
+                             .{required.accessMask, required.stageMask, required.layout});
 
                 // For first use in a frame, set source layout to UNDEFINED
                 const oldLayout = if (resource.currentState.firstUseInFrame)
                     vk.IMAGE_LAYOUT_UNDEFINED
-                else
+                    else
                     current.layout;
 
                 // Set stage masks - use TOP_OF_PIPE for first use and ensure stage masks are never zero
@@ -597,11 +747,20 @@ pub const Graph = struct {
                 srcStageMask.* |= @truncate(useSrcStageMask);
                 dstStageMask.* |= @truncate(useDstStageMask);
 
+                logger.debug("[BARRIER-SYNC1] Stage masks for '{s}': src=0x{x}, dst=0x{x}",
+                             .{resource.name, useSrcStageMask, useDstStageMask});
+
+                // Source access mask may be 0 for first use in frame
+                const srcAccess = if (resource.currentState.firstUseInFrame) 0 else @as(u32, @truncate(current.accessMask));
+
+                logger.debug("[BARRIER-SYNC1] Final barrier params for '{s}': srcAccess=0x{x}, dstAccess=0x{x}, oldLayout={any}, newLayout={any}",
+                             .{resource.name, srcAccess, @as(u32, @truncate(required.accessMask)), oldLayout, required.layout});
+
                 // Create image memory barrier for Sync 1
                 const imageBarrier = vk.ImageMemoryBarrier{
                     .sType = vk.sTy(vk.StructureType.ImageMemoryBarrier),
                     .pNext = null,
-                    .srcAccessMask = if (resource.currentState.firstUseInFrame) 0 else @truncate(current.accessMask),
+                    .srcAccessMask = srcAccess,
                     .dstAccessMask = @truncate(required.accessMask),
                     .oldLayout = oldLayout,
                     .newLayout = required.layout,
@@ -618,15 +777,27 @@ pub const Graph = struct {
                 };
 
                 try imageBarriers.append(imageBarrier);
+                logger.debug("[BARRIER-SYNC1] Added image barrier for '{s}'", .{resource.name});
 
                 // Mark that this resource has been used
                 resource.currentState.firstUseInPass = false;
                 resource.currentState.firstUseInFrame = false;
+
+                // Update the current state to match the required state
+                resource.currentState = required;
+                logger.debug("[BARRIER-SYNC1] Updated current state for '{s}'", .{resource.name});
             },
             .Buffer => {
                 if (resource.handle == null) {
+                    logger.err("[BARRIER-SYNC1] Invalid resource handle for buffer '{s}'", .{resource.name});
                     return error.InvalidResourceHandle;
                 }
+
+                logger.debug("[BARRIER-SYNC1] Creating buffer barrier for '{s}'", .{resource.name});
+                logger.debug("[BARRIER-SYNC1] Current state: access=0x{x}, stage=0x{x}",
+                             .{current.accessMask, current.stageMask});
+                logger.debug("[BARRIER-SYNC1] Required state: access=0x{x}, stage=0x{x}",
+                             .{required.accessMask, required.stageMask});
 
                 // Similar logic for buffers - stage masks need proper handling
                 const useSrcStageMask = if (resource.currentState.firstUseInFrame)
@@ -645,11 +816,20 @@ pub const Graph = struct {
                 srcStageMask.* |= @truncate(useSrcStageMask);
                 dstStageMask.* |= @truncate(useDstStageMask);
 
+                logger.debug("[BARRIER-SYNC1] Stage masks for '{s}': src=0x{x}, dst=0x{x}",
+                             .{resource.name, useSrcStageMask, useDstStageMask});
+
+                // Source access mask may be 0 for first use in frame
+                const srcAccess = if (resource.currentState.firstUseInFrame) 0 else @as(u32, @truncate(current.accessMask));
+
+                logger.debug("[BARRIER-SYNC1] Final barrier params for buffer '{s}': srcAccess=0x{x}, dstAccess=0x{x}",
+                             .{resource.name, srcAccess, @as(u32, @truncate(required.accessMask))});
+
                 // Create buffer memory barrier for Sync 1
                 const bufferBarrier = vk.BufferMemoryBarrier{
                     .sType = vk.sTy(vk.StructureType.BufferMemoryBarrier),
                     .pNext = null,
-                    .srcAccessMask = if (resource.currentState.firstUseInFrame) 0 else @truncate(current.accessMask),
+                    .srcAccessMask = srcAccess,
                     .dstAccessMask = @truncate(required.accessMask),
                     .srcQueueFamilyIndex = current.queueFamilyIndex,
                     .dstQueueFamilyIndex = required.queueFamilyIndex,
@@ -659,10 +839,15 @@ pub const Graph = struct {
                 };
 
                 try bufferBarriers.append(bufferBarrier);
+                logger.debug("[BARRIER-SYNC1] Added buffer barrier for '{s}'", .{resource.name});
 
                 // Mark that this resource has been used
                 resource.currentState.firstUseInPass = false;
                 resource.currentState.firstUseInFrame = false;
+
+                // Update the current state to match the required state
+                resource.currentState = required;
+                logger.debug("[BARRIER-SYNC1] Updated current state for '{s}'", .{resource.name});
             },
         }
     }

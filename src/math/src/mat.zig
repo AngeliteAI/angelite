@@ -1,6 +1,7 @@
 // Matrix math library implementation based on scalar and vector functions
 // No std dependency, using hardware acceleration where possible
 
+const std = @import("std");
 const scalar = @import("scalar.zig");
 const vec = @import("vec.zig");
 const mat = @import("include").mat;
@@ -685,23 +686,87 @@ pub export fn m4TransV3(v: vec.Vec3) Mat4 {
 
 // View and projection matrices
 pub export fn m4LookAt(eye: vec.Vec3, target: vec.Vec3, up: vec.Vec3) Mat4 {
-    const f = vec.v3Norm(vec.v3Sub(target, eye)); // Forward
-    const r = vec.v3Norm(vec.v3Cross(f, up)); // Right
-    const u = vec.v3Cross(r, f); // Up
-
+    std.debug.print("m4LookAt: eye=({d},{d},{d}) target=({d},{d},{d}) up=({d},{d},{d})\n", 
+                  .{eye.x, eye.y, eye.z, target.x, target.y, target.z, up.x, up.y, up.z});
+    
+    // Calculate direction vector from eye to target
+    const dir = vec.v3Sub(target, eye);
+    const dir_len = vec.v3Len(dir);
+    
+    // Check if direction vector is zero (eye == target)
+    if (dir_len < 0.0001) {
+        std.debug.print("WARNING: Eye and target positions are too close - using default view\n", .{});
+        return m4Id(); // Return identity if eye and target are effectively the same point
+    }
+    
+    // Normalize direction for forward vector
+    const f = vec.Vec3{
+        .x = dir.x / dir_len,
+        .y = dir.y / dir_len,
+        .z = dir.z / dir_len,
+    };
+    
+    // Special handling for Z-up when looking along Z axis
+    // Calculate whether the up vector is parallel to the view direction
+    const upDotF = vec.v3Dot(up, f);
+    const parallel = scalar.abs(upDotF) > 0.9999;
+    
+    // Choose appropriate right and up vectors based on the situation
+    var r: vec.Vec3 = undefined;
+    var u: vec.Vec3 = undefined;
+    
+    if (parallel) {
+        // For Z-up when looking along Z: use X as right and derive up from that
+        if (scalar.abs(f.x) < 0.9) {
+            // If not looking along X, use X axis for right
+            r = vec.v3Norm(vec.v3Cross(vec.v3(1, 0, 0), f));
+        } else {
+            // If looking along X, use Y axis for right
+            r = vec.v3Norm(vec.v3Cross(vec.v3(0, 1, 0), f));
+        }
+        
+        // Recalculate up from right and forward for proper orthogonality
+        u = vec.v3Cross(r, f);
+        std.debug.print("Using alternate basis for Z-up\n", .{});
+    } else {
+        // Normal case - calculate right from forward and up
+        r = vec.v3Norm(vec.v3Cross(f, up));
+        // Calculate orthogonal up
+        u = vec.v3Cross(r, f);
+    }
+    
+    // Construct the view matrix
     var result = m4Id();
+    
+    // Row 0 - right vector
     result.data[0] = r.x;
     result.data[1] = u.x;
-    result.data[2] = -f.x;
+    result.data[2] = f.x;  // Removed negative sign
+    
+    // Row 1 - up vector
     result.data[4] = r.y;
     result.data[5] = u.y;
-    result.data[6] = -f.y;
+    result.data[6] = f.y;  // Removed negative sign
+    
+    // Row 2 - forward vector (removed negation)
     result.data[8] = r.z;
     result.data[9] = u.z;
-    result.data[10] = -f.z;
+    result.data[10] = f.z;  // Removed negative sign
+    
+    // Row 3 - translation
     result.data[12] = -vec.v3Dot(r, eye);
     result.data[13] = -vec.v3Dot(u, eye);
-    result.data[14] = vec.v3Dot(f, eye);
+    result.data[14] = -vec.v3Dot(f, eye);  // Added negative sign to match forward vector change
+    
+    std.debug.print("View matrix with Z-up:\n", .{});
+    std.debug.print("[{d:6.3} {d:6.3} {d:6.3} {d:6.3}]\n", 
+                   .{result.data[0], result.data[1], result.data[2], result.data[3]});
+    std.debug.print("[{d:6.3} {d:6.3} {d:6.3} {d:6.3}]\n", 
+                   .{result.data[4], result.data[5], result.data[6], result.data[7]});
+    std.debug.print("[{d:6.3} {d:6.3} {d:6.3} {d:6.3}]\n", 
+                   .{result.data[8], result.data[9], result.data[10], result.data[11]});
+    std.debug.print("[{d:6.3} {d:6.3} {d:6.3} {d:6.3}]\n", 
+                   .{result.data[12], result.data[13], result.data[14], result.data[15]});
 
     return result;
 }
@@ -709,13 +774,25 @@ pub export fn m4LookAt(eye: vec.Vec3, target: vec.Vec3, up: vec.Vec3) Mat4 {
 pub export fn m4Persp(fovy: f32, aspect: f32, near: f32, far: f32) Mat4 {
     const tanHalfFovy = scalar.tan(fovy / 2.0);
     const oneOverTanHalfFovy = 1.0 / tanHalfFovy;
+    const math_constants = @import("math.zig");
 
     var result = m4Zero();
     result.data[0] = oneOverTanHalfFovy / aspect;
     result.data[5] = oneOverTanHalfFovy;
-    result.data[10] = far / (far - near); //  Removes the negative.  Maps z to [0, 1]
-    result.data[11] = 1.0; // Sets the W
-    result.data[14] = -(far * near) / (far - near); //Removes the 2* constant, maps z to [0,1]
+    
+    if (math_constants.CURRENT_RENDER_API == math_constants.RENDER_API_VULKAN) {
+        // Vulkan/DirectX style with [0,1] Z-range
+        result.data[10] = far / (far - near);
+        result.data[11] = 1.0;
+        result.data[14] = -(far * near) / (far - near);
+        std.debug.print("Created Vulkan-style projection matrix ([0,1] Z-range)\n", .{});
+    } else {
+        // Metal/OpenGL style with [-1,1] Z-range
+        result.data[10] = (far + near) / (far - near);
+        result.data[11] = 1.0;
+        result.data[14] = -(2.0 * far * near) / (far - near);
+        std.debug.print("Created Metal/OpenGL-style projection matrix ([-1,1] Z-range)\n", .{});
+    }
     //result[15] is 0.0, which is what m4Zero initialized it to
 
     return result;

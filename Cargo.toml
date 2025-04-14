@@ -1,2 +1,8 @@
 [workspace]
 members = [ "src/prism"]
+
+[profile.release]
+panic = 'abort'
+
+[profile.dev]
+panic = 'abort'

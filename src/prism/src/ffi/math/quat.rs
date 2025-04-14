@@ -10,7 +10,7 @@ pub struct Quat {
     pub w: f32,
 }
 
-extern "C" {
+unsafe extern "C" {
     // Quaternion constructors
     pub fn q(x: f32, y: f32, z: f32, w: f32) -> Quat;
     pub fn qFromVec(v: Vec3, w: f32) -> Quat;

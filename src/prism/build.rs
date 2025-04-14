@@ -1,7 +1,7 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
 
 /// Recursively walks a directory and registers all files for cargo to rerun the build script if they change
 fn watch_dir_for_changes(dir: &str) {
@@ -9,7 +9,7 @@ fn watch_dir_for_changes(dir: &str) {
         for entry in entries.flatten() {
             let path = entry.path();
             let path_str = path.to_str().unwrap_or_default();
-            
+
             if path.is_file() {
                 println!("cargo:rerun-if-changed={}", path_str);
             } else if path.is_dir() {
@@ -28,18 +28,21 @@ fn main() {
     project_root.pop();
     let project_root = project_root.to_str().unwrap();
     println!("cargo:warning=Project root: {}", project_root);
-    
+
+    // Direct linking to Zig functions - no wrapper needed
+    println!("cargo:warning=Using direct linking to Zig functions");
+
     // Watch Zig dependencies for changes
     let math_dir = format!("{}/src/math", project_root);
     let gfx_dir = format!("{}/src/gfx", project_root);
     let surface_dir = format!("{}/src/surface", project_root);
-    
+
     println!("cargo:warning=Watching for changes in: {}", math_dir);
     watch_dir_for_changes(&math_dir);
-    
+
     println!("cargo:warning=Watching for changes in: {}", gfx_dir);
     watch_dir_for_changes(&gfx_dir);
-    
+
     println!("cargo:warning=Watching for changes in: {}", surface_dir);
     watch_dir_for_changes(&surface_dir);
 
@@ -70,6 +73,7 @@ fn build_macos(project_root: &str) {
     let gfx_src_dir = format!("{}/src/gfx/src/macos", root_dir);
     let gfx_dir = format!("{}/src/gfx", root_dir);
     let math_src_dir = format!("{}/src/math/src", root_dir);
+    let input_dir = format!("{}/src/input", root_dir);
     let build_dir = format!("{}/build", root_dir);
 
     // Create build directory if it doesn't exist
@@ -130,7 +134,7 @@ fn build_macos(project_root: &str) {
     env::set_current_dir(&surface_src_dir).unwrap();
     run_command("zig", &["build", "-Doptimize=Debug"]);
     env::set_current_dir(current_dir).unwrap();
-    
+
     let zig_surface_lib_path = format!("{}/zig-out/lib/libsurface.a", surface_src_dir);
     if !Path::new(&zig_surface_lib_path).exists() {
         panic!("Error: Zig surface static library build failed or not found.");
@@ -141,9 +145,15 @@ fn build_macos(project_root: &str) {
         panic!("Error: Zig math static library build failed or not found.");
     }
 
+    // Now we expect dylib (.dylib) files instead of static libraries (.a)
+    let zig_math_lib_path = format!("{}/zig-out/lib/libmath.dylib", math_src_dir);
+    if !Path::new(&zig_math_lib_path).exists() {
+        panic!("Error: Zig math shared library not found at {}", zig_math_lib_path);
+    }
+
     // Copy the math library to the target directory
     let out_dir = env::var("OUT_DIR").unwrap();
-    let dest_path = Path::new(&out_dir).join("libmath.a");
+    let dest_path = Path::new(&out_dir).join("libmath.dylib");
     let lib_dest_path = dest_path.to_str().unwrap();
     std::fs::copy(&zig_math_lib_path, lib_dest_path).unwrap();
 
@@ -157,21 +167,38 @@ fn build_macos(project_root: &str) {
     );
     env::set_current_dir(current_dir).unwrap();
 
-    let zig_gfx_lib_path = format!("{}/zig-out/lib/libgfx.a", gfx_dir);
+    let zig_gfx_lib_path = format!("{}/zig-out/lib/libgfx.dylib", gfx_dir);
     if !Path::new(&zig_gfx_lib_path).exists() {
-        panic!("Error: Zig gfx static library build failed or not found.");
+        panic!("Error: Zig gfx shared library build failed or not found.");
     }
 
     // Copy the gfx library to the target directory
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let dest_path = Path::new(&out_dir).join("libgfx.a");
+    let dest_path = Path::new(&out_dir).join("libgfx.dylib");
     let gfx_dest_path = dest_path.to_str().unwrap();
     std::fs::copy(&zig_gfx_lib_path, gfx_dest_path).unwrap();
 
-    // Set up linking for both libraries
+    // Build Zig input library with debug symbols
+    println!("Building Zig input library with debug symbols...");
+    let current_dir = env::current_dir().unwrap();
+    env::set_current_dir(&input_dir).unwrap();
+    run_command("zig", &["build", "-Doptimize=Debug"]);
+    env::set_current_dir(current_dir).unwrap();
+
+    let zig_input_lib_path = format!("{}/zig-out/lib/libinput.dylib", input_dir);
+    if !Path::new(&zig_input_lib_path).exists() {
+        panic!("Error: Zig input shared library build failed or not found.");
+    }
+
+    // Copy the input library to the target directory
+    let dest_path = Path::new(&out_dir).join("libinput.dylib");
+    let input_dest_path = dest_path.to_str().unwrap();
+    std::fs::copy(&zig_input_lib_path, input_dest_path).unwrap();
+
+    // Set up linking for all libraries - now using dylib instead of static
     println!("cargo:rustc-link-search=native={}", out_dir);
-    println!("cargo:rustc-link-lib=static=math");
-    println!("cargo:rustc-link-lib=static=gfx");
+    println!("cargo:rustc-link-lib=dylib=math");
+    println!("cargo:rustc-link-lib=dylib=gfx");
+    println!("cargo:rustc-link-lib=dylib=input");
 
     // Link to macOS frameworks
     println!(
@@ -194,6 +221,7 @@ fn build_linux(project_root: &str) {
     let root_dir = project_root;
     let math_src_dir = format!("{}/src/math/", root_dir);
     let gfx_dir = format!("{}/src/gfx", root_dir);
+    let input_dir = format!("{}/src/input", root_dir);
     let build_dir = format!("{}/build", root_dir);
 
     // Create build directory if it doesn't exist
@@ -206,16 +234,19 @@ fn build_linux(project_root: &str) {
     run_command("zig", &["build", "-Doptimize=Debug"]);
     env::set_current_dir(current_dir).unwrap();
 
-    let zig_math_lib_path = format!("{}/zig-out/lib/libmath.a", math_src_dir);
+    let zig_math_lib_path = format!("{}/zig-out/lib/libmath.so", math_src_dir);
+    if !Path::new(&zig_math_lib_path).exists() {
+        panic!("Error: Zig math shared library not found at {}", zig_math_lib_path);
+    }
 
     // Copy the math library to the target directory
     let out_dir = project_root.to_owned() + "/target/debug";
-    let dest_path = Path::new(&out_dir).join("libmath.a");
+    let dest_path = Path::new(&out_dir).join("libmath.so");
     let lib_dest_path = dest_path.to_str().unwrap();
     std::fs::copy(&zig_math_lib_path, lib_dest_path).unwrap();
 
     if !Path::new(&lib_dest_path).exists() {
-        panic!("Error: Zig math static library build failed or not found.");
+        panic!("Error: Zig math shared library build failed or not found.");
     }
 
     // Build Zig gfx library with debug symbols
@@ -225,14 +256,17 @@ fn build_linux(project_root: &str) {
     run_command("zig", &["build", "-Doptimize=Debug"]);
     env::set_current_dir(current_dir).unwrap();
 
-    let zig_gfx_lib_path = format!("{}/zig-out/lib/libgfx.a", gfx_dir);
+    let zig_gfx_lib_path = format!("{}/zig-out/lib/libgfx.so", gfx_dir);
+    if !Path::new(&zig_gfx_lib_path).exists() {
+        panic!("Error: Zig gfx shared library not found at {}", zig_gfx_lib_path);
+    }
 
     // Copy the gfx library to the target directory
-    let dest_path = Path::new(&out_dir).join("libgfx.a");
+    let dest_path = Path::new(&out_dir).join("libgfx.so");
     let gfx_dest_path = dest_path.to_str().unwrap();
     std::fs::copy(&zig_gfx_lib_path, gfx_dest_path).unwrap();
     if !Path::new(&gfx_dest_path).exists() {
-        panic!("Error: Zig gfx static library build failed or not found.");
+        panic!("Error: Zig gfx shared library build failed or not found.");
     }
 
     // Set up linking for both libraries
@@ -242,8 +276,34 @@ fn build_linux(project_root: &str) {
 
     // Tell cargo where to find the libraries
     println!("cargo:rustc-link-search=native={}", out_dir);
-    println!("cargo:rustc-link-lib=static=math");
-    println!("cargo:rustc-link-lib=static=gfx");
+    println!("cargo:rustc-link-lib=dylib=math");
+    println!("cargo:rustc-link-lib=dylib=gfx");
+
+    // Build Zig input library with debug symbols
+    println!("Building Zig input library with debug symbols...");
+    let current_dir = env::current_dir().unwrap();
+    env::set_current_dir(&input_dir).unwrap();
+    run_command("zig", &["build", "-Doptimize=Debug"]);
+    env::set_current_dir(current_dir).unwrap();
+
+    let zig_input_lib_path = format!("{}/zig-out/lib/libinput.so", input_dir);
+    if !Path::new(&zig_input_lib_path).exists() {
+        panic!("Error: Zig input shared library not found at {}", zig_input_lib_path);
+    }
+
+    // Copy the input library to the target directory
+    let dest_path = Path::new(&out_dir).join("libinput.so");
+    let input_dest_path = dest_path.to_str().unwrap();
+    std::fs::copy(&zig_input_lib_path, input_dest_path).unwrap();
+    if !Path::new(&input_dest_path).exists() {
+        panic!("Error: Zig input shared library build failed or not found.");
+    }
+
+    // Add input library to link list
+    println!("cargo:rustc-link-lib=dylib=input");
+    
+    // Set LD_LIBRARY_PATH so the shared libraries can be found at runtime
+    println!("cargo:rustc-env=LD_LIBRARY_PATH={}", out_dir);
 
     // Additional Linux-specific libraries
     // Link to Vulkan
@@ -271,6 +331,7 @@ fn build_windows(project_root: &str) {
     let root_dir = project_root;
     let math_src_dir = format!("{}/src/math", root_dir);
     let gfx_dir = format!("{}/src/gfx", root_dir);
+    let input_dir = format!("{}/src/input", root_dir);
     let build_dir = format!("{}/target/debug", root_dir);
 
     // Build Zig math library
@@ -307,7 +368,7 @@ fn build_windows(project_root: &str) {
         );
     }
 
-    println!("Running zig build command for static library...");
+    println!("Running zig build command for shared library...");
     // Run standard zig build command with explicit MSVC target
     let build_result = Command::new("zig")
         .args(&[
@@ -344,24 +405,39 @@ fn build_windows(project_root: &str) {
     env::set_current_dir(current_dir).unwrap();
 
     // Windows paths with backslashes need to be handled carefully
-    let math_lib_path = format!("{}\\zig-out\\lib\\math.lib", math_src_dir); // CHANGED to .lib
-    println!("Math lib path: {}", math_lib_path); // ADDED
+    // For shared libraries on Windows, we need both the DLL and its import lib
+    let math_dll_path = format!("{}\\zig-out\\bin\\math.dll", math_src_dir);
+    let math_lib_path = format!("{}\\zig-out\\lib\\math.lib", math_src_dir); // Import lib
+    println!("Math DLL path: {}", math_dll_path);
+    println!("Math import lib path: {}", math_lib_path);
+
+    if !Path::new(&math_dll_path).exists() {
+        panic!(
+            "Error: Math shared library (DLL) not found at {}. Check Zig build configuration.",
+            &math_dll_path
+        );
+    }
 
     if !Path::new(&math_lib_path).exists() {
         panic!(
-            "Error: Math static library not found at {}. Check Zig build configuration.",
+            "Error: Math import library not found at {}. Check Zig build configuration.",
             &math_lib_path
         );
     }
 
     // Get the target directory
     let out_dir = build_dir.clone();
-    let dest_path = Path::new(&out_dir).join("math.lib"); // CHANGED to .lib
-    let lib_dest_path = dest_path.to_str().unwrap();
-
-    // Copy the static library to the build directory
-    std::fs::copy(&math_lib_path, lib_dest_path).unwrap(); // CHANGED to .lib
-    println!("Copied math static library to: {}", lib_dest_path);
+    
+    // Copy both DLL and import library to the build directory
+    let dll_dest_path = Path::new(&out_dir).join("math.dll");
+    let dll_dest_path_str = dll_dest_path.to_str().unwrap();
+    std::fs::copy(&math_dll_path, dll_dest_path_str).unwrap();
+    println!("Copied math DLL to: {}", dll_dest_path_str);
+    
+    let lib_dest_path = Path::new(&out_dir).join("math.lib");
+    let lib_dest_path_str = lib_dest_path.to_str().unwrap();
+    std::fs::copy(&math_lib_path, lib_dest_path_str).unwrap();
+    println!("Copied math import library to: {}", lib_dest_path_str);
 
     // Build Zig gfx library
     println!("Building Zig gfx library...");
@@ -377,7 +453,7 @@ fn build_windows(project_root: &str) {
         );
     }
 
-    println!("Running zig build command for gfx static library...");
+    println!("Running zig build command for gfx shared library...");
     let build_result = Command::new("zig")
         .args(&[
             "build",
@@ -413,51 +489,183 @@ fn build_windows(project_root: &str) {
     env::set_current_dir(current_dir).unwrap();
 
     // Windows paths with backslashes need to be handled carefully
-    let gfx_lib_path = format!("{}\\zig-out\\lib\\gfx.lib", gfx_dir); // CHANGED to .lib
-    println!("Gfx lib path: {}", gfx_lib_path); // ADDED
+    // For shared libraries on Windows, we need both the DLL and its import lib
+    let gfx_dll_path = format!("{}\\zig-out\\bin\\gfx.dll", gfx_dir);
+    let gfx_lib_path = format!("{}\\zig-out\\lib\\gfx.lib", gfx_dir); // Import lib
+    println!("GFX DLL path: {}", gfx_dll_path);
+    println!("GFX import lib path: {}", gfx_lib_path);
+
+    if !Path::new(&gfx_dll_path).exists() {
+        panic!(
+            "Error: GFX shared library (DLL) not found at {}. Check Zig build configuration.",
+            &gfx_dll_path
+        );
+    }
 
     if !Path::new(&gfx_lib_path).exists() {
         panic!(
-            "Error: Gfx static library not found at {}. Check Zig build configuration.",
+            "Error: GFX import library not found at {}. Check Zig build configuration.",
             &gfx_lib_path
         );
     }
 
     // Get the target directory
     let out_dir = build_dir.clone();
-    let dest_path = Path::new(&out_dir).join("gfx.lib"); // CHANGED to .lib
-    let gfx_dest_path = dest_path.to_str().unwrap();
-
-    // Copy the gfx static library to the build directory
-    std::fs::copy(&gfx_lib_path, gfx_dest_path).unwrap(); // CHANGED to .lib
-    println!("Copied gfx static library to: {}", gfx_dest_path);
+    
+    // Copy both DLL and import library to the build directory
+    let dll_dest_path = Path::new(&out_dir).join("gfx.dll");
+    let dll_dest_path_str = dll_dest_path.to_str().unwrap();
+    std::fs::copy(&gfx_dll_path, dll_dest_path_str).unwrap();
+    println!("Copied gfx DLL to: {}", dll_dest_path_str);
+    
+    let lib_dest_path = Path::new(&out_dir).join("gfx.lib");
+    let gfx_dest_path = lib_dest_path.to_str().unwrap();
+    std::fs::copy(&gfx_lib_path, gfx_dest_path).unwrap();
+    println!("Copied gfx import library to: {}", gfx_dest_path);
 
     println!(
-        "Checking if gfx.lib exists at build directory: {}",
+        "Checking if gfx.dll and gfx.lib exist at build directory: {}",
         build_dir
     );
-    if Path::new(&format!("{}\\gfx.lib", build_dir)).exists() {
-        // CHANGED to .lib
-        println!("✓ gfx.lib found in build directory");
+    if Path::new(&format!("{}\\gfx.dll", build_dir)).exists() {
+        println!("✓ gfx.dll found in build directory");
     } else {
-        println!("✗ gfx.lib NOT found in build directory");
+        println!("✗ gfx.dll NOT found in build directory");
+    }
+    
+    if Path::new(&format!("{}\\gfx.lib", build_dir)).exists() {
+        println!("✓ gfx.lib (import library) found in build directory");
+    } else {
+        println!("✗ gfx.lib (import library) NOT found in build directory");
     }
 
-    // Add a check to confirm that gfx.lib is in the OUT_DIR
-    let out_dir_gfx_lib = Path::new(&out_dir).join("gfx.lib"); // CHANGED to .lib
-    if out_dir_gfx_lib.exists() {
-        println!("✓ gfx.lib found in OUT_DIR: {}", out_dir);
+    // Add a check to confirm that gfx.dll and gfx.lib are in the OUT_DIR
+    let out_dir_gfx_dll = Path::new(&out_dir).join("gfx.dll");
+    let out_dir_gfx_lib = Path::new(&out_dir).join("gfx.lib");
+    if out_dir_gfx_dll.exists() {
+        println!("✓ gfx.dll found in OUT_DIR: {}", out_dir);
     } else {
-        println!("✗ gfx.lib NOT found in OUT_DIR: {}", out_dir);
+        println!("✗ gfx.dll NOT found in OUT_DIR: {}", out_dir);
     }
+    if out_dir_gfx_lib.exists() {
+        println!("✓ gfx.lib (import library) found in OUT_DIR: {}", out_dir);
+    } else {
+        println!("✗ gfx.lib (import library) NOT found in OUT_DIR: {}", out_dir);
+    }
+
+    // Build Zig input library
+    println!("Building Zig input library...");
+    let current_dir = env::current_dir().unwrap();
+    env::set_current_dir(&input_dir).unwrap();
+
+    // Check if build.zig exists for input
+    let build_input_zig_path = format!("{}\\build.zig", input_dir);
+    if !Path::new(&build_input_zig_path).exists() {
+        panic!(
+            "Error: build.zig not found at {}. Please ensure the input project is properly set up.",
+            build_input_zig_path
+        );
+    }
+
+    println!("Running zig build command for input shared library...");
+    let build_result = Command::new("zig")
+        .args(&[
+            "build",
+            "-Dtarget=x86_64-windows-msvc",
+            "-Doptimize=Debug",
+            "-freference-trace",
+        ])
+        .current_dir(&input_dir)
+        .output();
+
+    match build_result {
+        Ok(output) => {
+            println!(
+                "Zig build for input stdout: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            println!(
+                "Zig build stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if !output.status.success() {
+                panic!(
+                    "Zig build failed with error: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+        Err(e) => {
+            panic!("Failed to execute zig build for input: {}", e);
+        }
+    }
+
+    env::set_current_dir(current_dir).unwrap();
+
+    // Windows paths with backslashes need to be handled carefully
+    // For shared libraries on Windows, we need both the DLL and its import lib
+    let input_dll_path = format!("{}\\zig-out\\bin\\input.dll", input_dir);
+    let input_lib_path = format!("{}\\zig-out\\lib\\input.lib", input_dir); // Import lib
+    println!("Input DLL path: {}", input_dll_path);
+    println!("Input import lib path: {}", input_lib_path);
+
+    if !Path::new(&input_dll_path).exists() {
+        panic!(
+            "Error: Input shared library (DLL) not found at {}. Check Zig build configuration.",
+            &input_dll_path
+        );
+    }
+
+    if !Path::new(&input_lib_path).exists() {
+        panic!(
+            "Error: Input import library not found at {}. Check Zig build configuration.",
+            &input_lib_path
+        );
+    }
+
+    // Get the target directory
+    let out_dir = build_dir.clone();
+    
+    // Copy both DLL and import library to the build directory
+    let dll_dest_path = Path::new(&out_dir).join("input.dll");
+    let dll_dest_path_str = dll_dest_path.to_str().unwrap();
+    std::fs::copy(&input_dll_path, dll_dest_path_str).unwrap();
+    println!("Copied input DLL to: {}", dll_dest_path_str);
+    
+    let lib_dest_path = Path::new(&out_dir).join("input.lib");
+    let input_dest_path = lib_dest_path.to_str().unwrap();
+    std::fs::copy(&input_lib_path, input_dest_path).unwrap();
+    println!("Copied input import library to: {}", input_dest_path);
 
     // Make sure we link to our own gfx.lib, not one in the Vulkan SDK
     // Ensure library paths are in the right order (build dir should be first)
     println!("cargo:rustc-link-search=native={}", out_dir);
 
-    // Ensure static linking
-    println!("cargo:rustc-link-lib=static=math"); // CHANGED to static
-    println!("cargo:rustc-link-lib=static=gfx"); // CHANGED to static
+    // Also add project root directory to search paths
+    println!("cargo:rustc-link-search=native={}", root_dir);
+    println!("cargo:rustc-link-search=native={}/target/debug", root_dir);
+    println!(
+        "cargo:rustc-link-search=native={}/src/gfx/zig-out/lib",
+        root_dir
+    );
+
+    // Verify the exact names of the library files before linking
+
+    // Use dynamic linking with explicit library names based on platform
+    if cfg!(target_os = "windows") {
+        // On Windows, we need to link to the import libraries (.lib) for our DLLs
+        println!("cargo:rustc-link-lib=dylib=math");
+        println!("cargo:rustc-link-lib=dylib=gfx");
+        println!("cargo:rustc-link-lib=dylib=input");
+        
+        // Set PATH environment variable so the DLLs can be found at runtime
+        println!("cargo:rustc-env=PATH={};", out_dir);
+    } else {
+        // On Unix, we also use dynamic linking
+        println!("cargo:rustc-link-lib=dylib=math");
+        println!("cargo:rustc-link-lib=dylib=gfx");
+        println!("cargo:rustc-link-lib=dylib=input");
+    }
 
     let vulkan_sdk = env::var("VULKAN_SDK").unwrap_or_else(|_| String::new());
 
@@ -495,6 +703,51 @@ fn build_windows(project_root: &str) {
     println!("cargo:rustc-link-lib=user32");
     println!("cargo:rustc-link-lib=gdi32");
     println!("cargo:rustc-link-lib=shell32");
+    println!("cargo:rustc-link-lib=ntdll"); // Native NT API functions
+    println!("cargo:rustc-link-lib=kernel32");
+
+    // Disable LTO which can cause issues with system libraries
+    println!("cargo:rustc-link-arg=/LTCG:OFF");
+
+    // Notify about specific exported symbols we need
+    println!("cargo:warning=Looking for the following symbols: init, setCamera, render, shutdown");
+
+    // On Windows, we need to ensure proper linkage with Zig libraries
+    if cfg!(target_os = "windows") {
+        // Use a specific linking mode for Windows
+        println!("cargo:rustc-link-arg=/WHOLEARCHIVE:gfx.lib");
+
+        // Try different name variations since Zig exports functions within a namespace
+        // Try bare names
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:init");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:shutdown");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:render");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:setCamera");
+
+        // Try with render_ namespace prefix (from lib.zig)
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:render_init");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:render_shutdown");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:render_render");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:render_setCamera");
+
+        // Try with underscore prefixes (common in Windows ABI)
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_init");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_shutdown");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_render");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_setCamera");
+
+        // Try with both render_ prefix and underscore
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_render_init");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_render_shutdown");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_render_render");
+        println!("cargo:rustc-cdylib-link-arg=/EXPORT:_render_setCamera");
+
+        // Add Windows subsystem - use console for debugging
+        println!("cargo:rustc-link-arg=/SUBSYSTEM:CONSOLE");
+
+        // Export all symbols from the Zig libraries
+        println!("cargo:rustc-link-arg=/VERBOSE");
+    }
 
     // Note about Vulkan on Windows
     println!("Note: Make sure you have the Vulkan SDK installed for Windows.");
@@ -509,7 +762,7 @@ fn find_latest_windows_sdk() -> String {
     let sdk_base = "C:\\Program Files (x86)\\Windows Kits\\10\\Lib";
     let sdk_path = Path::new(sdk_base);
 
-    if (!sdk_path.exists()) {
+    if !sdk_path.exists() {
         return String::new();
     }
 
@@ -580,7 +833,7 @@ fn get_command_output(cmd: &str, args: &[&str]) -> String {
         .output()
         .unwrap_or_else(|e| panic!("Failed to run {}: {}", cmd, e));
 
-    if (!output.status.success()) {
+    if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         panic!("Command '{}' failed: {}", cmd, stderr);
     }

@@ -38,12 +38,13 @@ pub fn build(b: *std.Build) void {
     // Add the include module as a dependency of the main module
     surface_module.addImport("include", include_module);
 
-    // Create a static library for external consumption
-    const lib = b.addStaticLibrary(.{
+    // Create a shared library for external consumption
+    const lib = b.addSharedLibrary(.{
         .name = "surface",
         .root_source_file = b.path(root_source_path),
         .target = target,
         .optimize = optimize,
+        .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
     
     // Make sure the library also has access to the include module

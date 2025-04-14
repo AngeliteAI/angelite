@@ -18,7 +18,7 @@ pub struct Mat4 {
     pub data: [f32; 16],
 }
 
-extern "C" {
+unsafe extern "C" {
     // Matrix constructors
     pub fn m2Id() -> Mat2;
     pub fn m3Id() -> Mat3;

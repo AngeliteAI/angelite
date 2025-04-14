@@ -186,17 +186,17 @@ pub export fn eq(a: f32, b: f32, eps: f32) bool {
     return abs(a - b) <= eps;
 }
 
-pub export fn log(x: f32) f32 {
+pub export fn logf(x: f32) f32 {
     return @log(x);
 }
 
 // Added: Base-2 logarithm
-pub export fn log2(x: f32) f32 {
+pub export fn log2f(x: f32) f32 {
     return @log2(x);
 }
 
 // Added: Base-10 logarithm
-pub export fn log10(x: f32) f32 {
+pub export fn log10f(x: f32) f32 {
     return @log10(x);
 }
 

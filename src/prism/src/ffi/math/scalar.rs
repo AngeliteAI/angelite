@@ -1,4 +1,4 @@
-extern "C" {
+unsafe extern "C" {
     // Constants
     pub static PI: f32;
     pub static PI_OVER_180: f32;

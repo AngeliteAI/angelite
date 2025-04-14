@@ -1,0 +1,72 @@
+#![no_std]
+#![no_main]
+use crate::ffi::{
+    gfx::{render, surface},
+    math::{mat, quat, vec},
+};
+use core::{f32::consts::PI, ptr};
+
+mod ffi;
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+#[unsafe(no_mangle)]
+fn main() {
+    // Create a surface
+    let surface_ptr = unsafe { surface::createSurface() };
+    if surface_ptr.is_null() {
+        return;
+    }
+
+    // Initialize the renderer with our surface
+    let renderer_ptr = unsafe { render::init(surface_ptr) };
+    let mut camera = render::Camera {
+        position: unsafe { vec::v3(0.0, 0.0, -5.0) },
+        rotation: unsafe { quat::qId() },
+        projection: unsafe { mat::m4Persp(PI / 2.0, 1.0, 0.1, 100.0) },
+    };
+    if renderer_ptr.is_null() {
+        unsafe {
+            render::shutdown(renderer_ptr);
+            surface::destroySurface(surface_ptr);
+        };
+        return;
+    }
+
+    // // Main game loop
+    loop {
+        // Poll for window events
+        unsafe { surface::pollSurface() };
+
+        let mut width = 0;
+        let mut height = 0;
+        unsafe {
+            surface::getSize(surface_ptr, &mut width, &mut height);
+        }
+
+        camera.projection =
+            unsafe { mat::m4Persp(PI / 2.0, (width as f32) / (height as f32), 0.1, 100.0) };
+
+        unsafe {
+            render::setCamera(renderer_ptr, &camera);
+        }
+
+        // Render the frame
+        unsafe { render::render(renderer_ptr) };
+
+        // Here you would typically add:
+        // 1. Check for exit condition
+        // 2. Update game state
+        // 3. Handle input
+        // 4. Fixed time step logic
+    }
+
+    // // Cleanup (in a real app, we'd need to handle Ctrl+C/signal interruption)
+    // unsafe {
+    //     render::shutdown();
+    //     surface::destroySurface(surface_ptr);
+    // }
+}

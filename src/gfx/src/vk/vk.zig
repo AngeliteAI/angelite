@@ -59,7 +59,7 @@ pub const SurfaceCreateInfo = blk: {
         break :blk c.VkXcbSurfaceCreateInfoKHR;
     }
 };
-
+pub  const PhysicalDeviceSynchronization2Features = c.VkPhysicalDeviceSynchronization2Features;
 pub const createVkSurface = blk: {
     if (@import("builtin").os.tag == .windows) {
         break :blk c.vkCreateWin32SurfaceKHR;
@@ -130,6 +130,7 @@ pub const StructureType = enum(c_uint) {
     ImageMemoryBarrier2KHR = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR,
     MemoryBarrier2KHR = c.VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR,
     PhysicalDeviceSynchronization2FeaturesKHR = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR,
+    MemoryAllocateFlagsInfo = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
 
     // Descriptor-related structure types
     DescriptorSetLayoutCreateInfo = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -164,12 +165,13 @@ pub const InstanceInfo = c.VkInstanceCreateInfo;
 pub const DeviceQueueCreateInfo = c.VkDeviceQueueCreateInfo;
 pub const DeviceCreateInfo = c.VkDeviceCreateInfo;
 pub const enumerateInstanceLayerProperties = c.vkEnumerateInstanceLayerProperties;
-
+pub const MemoryAllocateFlagsInfo = c.VkMemoryAllocateFlagsInfo;
 pub const Result = c.VkResult;
 pub const Instance = c.VkInstance;
 pub const PhysicalDevice = c.VkPhysicalDevice;
 pub const PhysicalDeviceProperties = c.VkPhysicalDeviceProperties;
 pub const PhysicalDeviceMemoryProperties = c.VkPhysicalDeviceMemoryProperties;
+pub const MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT = c.VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
 pub const Device = c.VkDevice;
 pub const Pipeline = c.VkPipeline;
 pub const PipelineLayout = c.VkPipelineLayout;
@@ -293,6 +295,11 @@ pub const CommandPool = c.VkCommandPool;
 pub const CommandBufferAllocateInfo = c.VkCommandBufferAllocateInfo;
 pub const CommandBuffer = c.VkCommandBuffer;
 pub const CommandBufferLevel = c.VkCommandBufferLevel;
+
+pub const ERROR_DEVICE_LOST = c.VK_ERROR_DEVICE_LOST;
+pub const ERROR_OUT_OF_HOST_MEMORY = c.VK_ERROR_OUT_OF_HOST_MEMORY;
+
+pub const ERROR_OUT_OF_DEVICE_MEMORY = c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
 
 // Command pool-related functions
 

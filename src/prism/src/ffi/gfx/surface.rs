@@ -1,5 +1,5 @@
-use std::os::raw::{c_char, c_uchar};
-use std::slice;
+use core::ffi::{c_char, c_uchar};
+use core::slice;
 
 #[repr(C)]
 pub struct Surface {
@@ -29,26 +29,4 @@ unsafe extern "C" {
     pub fn isVSync(s: *mut Surface) -> bool;
     pub fn showCursor(s: *mut Surface, show: bool);
     pub fn confineCursor(s: *mut Surface, confine: bool);
-}
-
-// Safe wrappers
-impl Surface {
-    pub fn new() -> Option<*mut Surface> {
-        unsafe { createSurface().as_mut().map(|s| s as *mut _) }
-    }
-
-    pub fn set_name(&mut self, name: &str) {
-        unsafe {
-            setName(self, name.as_ptr() as *const c_char, name.len());
-        }
-    }
-
-    pub fn get_name(&self) -> String {
-        unsafe {
-            let mut len = 0;
-            let ptr = getName(self as *const _ as *mut _, &mut len);
-            let slice = slice::from_raw_parts(ptr as *const u8, len);
-            String::from_utf8_lossy(slice).into_owned()
-        }
-    }
 }

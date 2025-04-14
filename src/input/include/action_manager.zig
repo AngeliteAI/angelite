@@ -1,5 +1,5 @@
 const std = @import("std");
-const mapping = @import("mapping_consolidated.zig");
+const mapping = @import("mapping.zig");
 const state = @import("state.zig");
 const Allocator = std.mem.Allocator;
 
@@ -11,7 +11,7 @@ pub const ActionManager = struct {
     allocator: Allocator,
     actions: std.AutoHashMap(ActionId, *Action),
     next_id: ActionId,
-    
+
     // Initialize the action manager
     pub fn init(allocator: Allocator) ActionManager {
         return ActionManager{
@@ -20,7 +20,7 @@ pub const ActionManager = struct {
             .next_id = 1,
         };
     }
-    
+
     // Clean up resources
     pub fn deinit(self: *ActionManager) void {
         var it = self.actions.iterator();
@@ -30,24 +30,24 @@ pub const ActionManager = struct {
         }
         self.actions.deinit();
     }
-    
+
     // Create a new action and return its ID
     pub fn createAction(self: *ActionManager, name: []const u8) !ActionId {
         const id = self.next_id;
         self.next_id += 1;
-        
-        var action = try self.allocator.create(Action);
+
+        const action = try self.allocator.create(Action);
         action.* = Action.init(self.allocator, id, name);
-        
+
         try self.actions.put(id, action);
         return id;
     }
-    
+
     // Get an action by ID
     pub fn getAction(self: *ActionManager, id: ActionId) ?*Action {
         return self.actions.get(id);
     }
-    
+
     // Delete an action
     pub fn deleteAction(self: *ActionManager, id: ActionId) void {
         if (self.actions.get(id)) |action| {
@@ -56,7 +56,7 @@ pub const ActionManager = struct {
             _ = self.actions.remove(id);
         }
     }
-    
+
     // Register all actions with the input system
     pub fn registerAllActions(self: *ActionManager) void {
         var it = self.actions.iterator();
@@ -73,7 +73,7 @@ pub const Action = struct {
     bindings: std.ArrayList(ActionBinding),
     user_data: ?*anyopaque,
     allocator: Allocator,
-    
+
     // Initialize a new action
     pub fn init(allocator: Allocator, id: ActionId, name: []const u8) Action {
         return Action{
@@ -84,18 +84,18 @@ pub const Action = struct {
             .allocator = allocator,
         };
     }
-    
+
     // Clean up resources
     pub fn deinit(self: *Action) void {
         self.allocator.free(self.name);
         self.bindings.deinit();
     }
-    
+
     // Set the user data for this action
     pub fn setUserData(self: *Action, user_data: *anyopaque) void {
         self.user_data = user_data;
     }
-    
+
     // Add a keyboard binding
     pub fn addKeyboardBinding(self: *Action, key: mapping.Key, action: mapping.ButtonAction) !void {
         try self.bindings.append(ActionBinding{
@@ -103,7 +103,7 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .button = action },
         });
     }
-    
+
     // Add a mouse button binding
     pub fn addMouseButtonBinding(self: *Action, button: mapping.MouseButton, action: mapping.ButtonAction) !void {
         try self.bindings.append(ActionBinding{
@@ -111,7 +111,7 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .button = action },
         });
     }
-    
+
     // Add a gamepad button binding
     pub fn addGamepadButtonBinding(self: *Action, button: mapping.GamepadButton, action: mapping.ButtonAction) !void {
         try self.bindings.append(ActionBinding{
@@ -119,7 +119,7 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .button = action },
         });
     }
-    
+
     // Add a mouse axis binding
     pub fn addMouseAxisBinding(self: *Action, axis: mapping.Axis, threshold: f32) !void {
         try self.bindings.append(ActionBinding{
@@ -127,7 +127,7 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .axis = threshold },
         });
     }
-    
+
     // Add a joystick binding
     pub fn addJoystickBinding(self: *Action, axis: mapping.Axis, side: mapping.Side, threshold: f32) !void {
         try self.bindings.append(ActionBinding{
@@ -135,7 +135,7 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .axis = threshold },
         });
     }
-    
+
     // Add a trigger binding
     pub fn addTriggerBinding(self: *Action, side: mapping.Side, threshold: f32) !void {
         try self.bindings.append(ActionBinding{
@@ -143,7 +143,7 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .axis = threshold },
         });
     }
-    
+
     // Add a scroll binding
     pub fn addScrollBinding(self: *Action, axis: mapping.Axis, threshold: f32) !void {
         try self.bindings.append(ActionBinding{
@@ -151,11 +151,11 @@ pub const Action = struct {
             .threshold = mapping.InputThreshold{ .axis = threshold },
         });
     }
-    
+
     // Register all bindings with the input system
     pub fn registerBindings(self: *Action) void {
         if (self.user_data == null) return;
-        
+
         for (self.bindings.items) |binding| {
             const legacy_binding = mapping.convertToLegacyBinding(binding.binding);
             const legacy_control = mapping.convertToLegacyControl(binding.threshold);

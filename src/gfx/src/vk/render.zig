@@ -1,6 +1,7 @@
 const inc = @import("include").render;
 
 const vk = @import("vk.zig");
+const logger = @import("../logger.zig");
 // Import surface as a dependency
 const sf = @import("surface");
 const std = @import("std");
@@ -8,6 +9,7 @@ const pipelines = @import("pipeline.zig");
 const task = @import("task.zig");
 const frame = @import("frame.zig");
 const math = @import("math");
+const include = @import("include");
 
 const Mat4 = math.Mat4;
 const SurfaceId = sf.Id;
@@ -372,7 +374,7 @@ const Renderer = struct {
         return error.NoSupportedQueue;
     }
 
-    fn createLogicalDevice(physical_device: vk.PhysicalDevice, qfi: u32) vk.Device {
+    fn createLogicalDevice(physical_device: vk.PhysicalDevice, qfi: u32, sync2_supported: bool) vk.Device {
         // Enable buffer device address feature
         var buffer_device_address_features = vk.PhysicalDeviceBufferDeviceAddressFeatures{
             .sType = vk.sTy(vk.StructureType.PhysicalDeviceBufferDeviceAddressFeatures),
@@ -382,10 +384,17 @@ const Renderer = struct {
             .bufferDeviceAddressMultiDevice = vk.FALSE,
         };
 
+        // Add Synchronization2 features if supported
+        var sync2_features = vk.PhysicalDeviceSynchronization2Features{
+            .sType = vk.sTy(vk.StructureType.PhysicalDeviceSynchronization2FeaturesKHR),
+            .pNext = &buffer_device_address_features,
+            .synchronization2 = if (sync2_supported) vk.TRUE else vk.FALSE,
+        };
+
         // Use device extensions
         var dynamic_rendering_features = vk.PhysicalDeviceDynamicRenderingFeatures{
             .sType = vk.sTy(vk.StructureType.PhysicalDeviceDynamicRenderingFeatures),
-            .pNext = &buffer_device_address_features,
+            .pNext = if (sync2_supported) &sync2_features else &buffer_device_address_features,
             .dynamicRendering = vk.TRUE,
         };
 
@@ -520,35 +529,35 @@ const Renderer = struct {
         return buffers.?[0];
     }
     fn init(surface: *Surface) !?*Renderer {
-        std.debug.print("Initializing Vulkan renderer for surface ID: {}\n", .{surface.id});
+        logger.info("Initializing Vulkan renderer for surface ID: {}", .{surface.id});
 
         // Check instance extensions
-        std.debug.print("Checking available instance extensions...\n", .{});
+        logger.info("Checking available instance extensions...", .{});
         const instance_extensions = getAvailableInstanceExtensions() catch {
-            std.debug.print("ERROR: Failed to get available instance extensions\n", .{});
+            logger.err("Failed to get available instance extensions", .{});
             return null;
         };
         defer renderAllocator.free(instance_extensions);
-        std.debug.print("Found {} instance extensions\n", .{instance_extensions.len});
+        logger.info("Found {} instance extensions", .{instance_extensions.len});
 
         const instance_extensions_supported = checkExtensionsSupport(&InstanceExtensions, instance_extensions) catch |err| {
-            std.debug.print("ERROR: Error checking instance extensions: {s}\n", .{@errorName(err)});
+            logger.err("Error checking instance extensions: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Instance extensions supported: {}\n", .{instance_extensions_supported});
+        logger.info("Instance extensions supported: {}", .{instance_extensions_supported});
 
-        std.debug.print("Creating Vulkan instance...\n", .{});
+        logger.info("Creating Vulkan instance...", .{});
         const instance = Renderer.createInstance(instance_extensions_supported);
         if (instance == null) {
-            std.debug.print("ERROR: Failed to create Vulkan instance\n", .{});
+            logger.err("Failed to create Vulkan instance", .{});
             return null;
         }
-        std.debug.print("Vulkan instance created successfully: {*}\n", .{instance});
+        logger.info("Vulkan instance created successfully: {*}", .{instance});
 
-        std.debug.print("Setting up Vulkan surface...\n", .{});
+        logger.info("Setting up Vulkan surface...", .{});
         const activeVkSurface = set: {
             if (instance_extensions_supported) {
-                std.debug.print("Creating platform-specific surface for OS: {s}\n", .{@tagName(@import("builtin").os.tag)});
+                logger.info("Creating platform-specific surface for OS: {s}", .{@tagName(@import("builtin").os.tag)});
                 const platform_info = switch (@import("builtin").os.tag) {
                     .windows => vk.PlatformSpecificInfo{ .PlatformWindows = .{
                         .hinstance = sf.win_surfaces.get(surface.*.id).?.hinstance,
@@ -559,49 +568,49 @@ const Renderer = struct {
                         .window = sf.xcb_surfaces.get(sf.Id{ .id = surface.*.id }).?.window,
                     } },
                     else => {
-                        std.debug.print("ERROR: Unsupported platform: {s}\n", .{@tagName(@import("builtin").os.tag)});
+                        logger.err("Unsupported platform: {s}", .{@tagName(@import("builtin").os.tag)});
                         return null; // Unsupported platform
                     },
                 };
                 const vkSurface = Renderer.createSurface(instance, surface, platform_info);
                 if (vkSurface == null) {
-                    std.debug.print("ERROR: Failed to create Vulkan surface\n", .{});
+                    logger.err("Failed to create Vulkan surface", .{});
                     return null;
                 }
-                std.debug.print("Vulkan surface created successfully: {*}\n", .{vkSurface});
+                logger.info("Vulkan surface created successfully: {*}", .{vkSurface});
                 break :set vkSurface;
             } else {
-                std.debug.print("Running in Headless mode, surface extension not supported\n", .{});
+                logger.info("Running in Headless mode, surface extension not supported", .{});
                 break :set undefined;
             }
         };
 
-        std.debug.print("Selecting physical device...\n", .{});
+        logger.info("Selecting physical device...", .{});
         const physicalDevice = Renderer.determineBestPhysicalDevice(instance);
         if (physicalDevice == null) {
-            std.debug.print("ERROR: Failed to select suitable physical device\n", .{});
+            logger.err("Failed to select suitable physical device", .{});
             return null;
         }
-        std.debug.print("Selected physical device: {*}\n", .{physicalDevice});
+        logger.info("Selected physical device: {*}", .{physicalDevice});
 
-        std.debug.print("Finding compatible queue family...\n", .{});
+        logger.info("Finding compatible queue family...", .{});
         const qfi = Renderer.getQueueFamilyIndex(physicalDevice, activeVkSurface) catch |err| {
-            std.debug.print("ERROR: Failed to get queue family index: {s}\n", .{@errorName(err)});
+            logger.err("Failed to get queue family index: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Selected queue family index: {}\n", .{qfi});
+        logger.info("Selected queue family index: {}", .{qfi});
 
         // Check device extensions
-        std.debug.print("Checking available device extensions...\n", .{});
+        logger.info("Checking available device extensions...", .{});
         const device_extensions = getAvailableDeviceExtensions(physicalDevice) catch {
-            std.debug.print("ERROR: Failed to get available device extensions\n", .{});
+            logger.err("Failed to get available device extensions", .{});
             return null;
         };
         defer renderAllocator.free(device_extensions);
-        std.debug.print("Found {} device extensions\n", .{device_extensions.len});
+        logger.info("Found {} device extensions", .{device_extensions.len});
 
         const device_extensions_supported = checkExtensionsSupport(&DeviceExtensions, device_extensions) catch |err| {
-            std.debug.print("ERROR: Error checking device extensions: {s}\n", .{@errorName(err)});
+            logger.err("Error checking device extensions: {s}", .{@errorName(err)});
             return null;
         };
 
@@ -610,67 +619,67 @@ const Renderer = struct {
             return null;
         };
         if (!device_extensions_supported) {
-            std.debug.print("ERROR: Required device extensions not supported, renderer cannot be initialized\n", .{});
+            logger.err("Required device extensions not supported, renderer cannot be initialized", .{});
             return null;
         }
-        std.debug.print("All required device extensions are supported\n", .{});
+        logger.info("All required device extensions are supported", .{});
 
-        std.debug.print("Creating logical device...\n", .{});
-        const device: vk.Device = Renderer.createLogicalDevice(physicalDevice, qfi);
+        logger.info("Creating logical device...", .{});
+        const device: vk.Device = Renderer.createLogicalDevice(physicalDevice, qfi, sync2_extension_supported);
         if (device == null) {
-            std.debug.print("ERROR: Failed to create logical device\n", .{});
+            logger.err("Failed to create logical device", .{});
             return null;
         }
-        std.debug.print("Logical device created successfully: {*}\n", .{device});
+        logger.info("Logical device created successfully: {*}", .{device});
 
-        std.debug.print("Loading device extension functions...\n", .{});
+        logger.info("Loading device extension functions...", .{});
         vk.loadDeviceExtensionFunctions(device);
-        std.debug.print("Device extension functions loaded\n", .{});
+        logger.info("Device extension functions loaded", .{});
 
-        std.debug.print("Getting device queue...\n", .{});
+        logger.info("Getting device queue...", .{});
         const queue: vk.Queue = Renderer.getDeviceQueue(device, qfi);
-        std.debug.print("Device queue obtained: {*}\n", .{queue});
+        logger.info("Device queue obtained: {*}", .{queue});
 
-        std.debug.print("Creating swapchain...\n", .{});
+        logger.info("Creating swapchain...", .{});
         const swapchain: vk.Swapchain = Renderer.createSwapchain(device, physicalDevice, activeVkSurface, null) catch |err| {
-            std.debug.print("ERROR: Failed to create swapchain: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create swapchain: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Swapchain created successfully: {*}\n", .{swapchain});
+        logger.info("Swapchain created successfully: {*}", .{swapchain});
 
-        std.debug.print("Getting swapchain images...\n", .{});
+        logger.info("Getting swapchain images...", .{});
         const swapchainImages: []vk.ImageView = Renderer.getSwapchainImages(device, swapchain) catch |err| {
-            std.debug.print("ERROR: Failed to get swapchain image views: {s}\n", .{@errorName(err)});
+            logger.err("Failed to get swapchain image views: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Retrieved {} swapchain images\n", .{swapchainImages.len});
+        logger.info("Retrieved {} swapchain images", .{swapchainImages.len});
 
-        std.debug.print("Creating command pool...\n", .{});
+        logger.info("Creating command pool...", .{});
         const command_pool = Renderer.createCommandPool(device, qfi) catch |err| {
-            std.debug.print("ERROR: Failed to create command pool: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create command pool: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Command pool created successfully: {*}\n", .{command_pool});
+        logger.info("Command pool created successfully: {*}", .{command_pool});
 
         // In your Renderer.init function:
-        std.debug.print("Creating synchronization primitives for multiple frames in flight...\n", .{});
+        logger.info("Creating synchronization primitives for multiple frames in flight...", .{});
 
         // Create large heap buffer for the renderer
-        std.debug.print("Creating large renderer heap buffer (1GB)...\n", .{});
+        logger.info("Creating large renderer heap buffer (1GB)...", .{});
         const renderer_heap = heap_mod.Heap.create(
             device,
             physicalDevice,
             RENDERER_HEAP_BUFFER_SIZE,
-            vk.BUFFER_USAGE_UNIFORM_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+            vk.BUFFER_USAGE_STORAGE_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT,
             vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             renderAllocator,
         ) catch |err| {
-            std.debug.print("ERROR: Failed to create renderer heap: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create renderer heap: {s}", .{@errorName(err)});
             return null;
         };
 
         // Create large staging buffer for the renderer
-        std.debug.print("Creating large renderer staging buffer (8MB)...\n", .{});
+        logger.info("Creating large renderer staging buffer (8MB)...", .{});
         const renderer_stage = stage_mod.Stage.createWithBufferTarget(
             device,
             physicalDevice,
@@ -680,7 +689,7 @@ const Renderer = struct {
             0, // Target offset 0
             renderAllocator,
         ) catch |err| {
-            std.debug.print("ERROR: Failed to create renderer stage: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create renderer stage: {s}", .{@errorName(err)});
             renderer_heap.destroy(device, renderAllocator);
             return null;
         };
@@ -706,25 +715,25 @@ const Renderer = struct {
             images_in_flight[i] = null;
         }
 
-        std.debug.print("Initializing pipeline compiler...\n", .{});
+        logger.info("Initializing pipeline compiler...", .{});
         const pipelineCompiler = PipelineCompiler.init(device) catch |err| {
-            std.debug.print("ERROR: Failed to initialize pipeline compiler: {s}\n", .{@errorName(err)});
+            logger.err("Failed to initialize pipeline compiler: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Pipeline compiler initialized\n", .{});
+        logger.info("Pipeline compiler initialized", .{});
 
-        std.debug.print("Creating triangle graphics pipeline...\n", .{});
+        logger.info("Creating triangle graphics pipeline...", .{});
         _ = pipelineCompiler.createGraphicsPipeline("triangle", .{
             .vertex_shader = .{ .path = "src/gfx/src/vk/hellotriangle.glsl", .shader_type = .Vertex },
             .fragment_shader = .{ .path = "src/gfx/src/vk/hellotrianglef.glsl", .shader_type = .Fragment },
             .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Srgb},
         }) catch |err| {
-            std.debug.print("ERROR: Failed to create graphics pipeline: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create graphics pipeline: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Triangle graphics pipeline created successfully\n", .{});
+        logger.info("Triangle graphics pipeline created successfully", .{});
 
-        std.debug.print("Creating bindless triangle graphics pipeline...\n", .{});
+        logger.info("Creating bindless triangle graphics pipeline...", .{});
         _ = pipelineCompiler.createGraphicsPipeline("bindless_triangle", .{
             .vertex_shader = .{
                 .path = "src/gfx/src/vk/bindless_triangle.glsl",
@@ -738,67 +747,100 @@ const Renderer = struct {
             // Add push constant range for the camera device address and model matrix
             .push_constant_size = @sizeOf(camera_sys.CameraPushConstants),
         }) catch |err| {
-            std.debug.print("ERROR: Failed to create bindless graphics pipeline: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create bindless graphics pipeline: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Bindless triangle graphics pipeline created successfully\n", .{});
+        logger.info("Bindless triangle graphics pipeline created successfully", .{});
 
-        std.debug.print("Creating synchronization primitives...\n", .{});
+        logger.info("Creating synchronization primitives...", .{});
         const image_available_semaphore = Renderer.createSemaphore(device) catch |err| {
-            std.debug.print("ERROR: Failed to create image available semaphore: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create image available semaphore: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Image available semaphore created: {*}\n", .{image_available_semaphore});
+        logger.info("Image available semaphore created: {*}", .{image_available_semaphore});
 
         const render_finished_semaphore = Renderer.createSemaphore(device) catch |err| {
-            std.debug.print("ERROR: Failed to create render finished semaphore: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create render finished semaphore: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Render finished semaphore created: {*}\n", .{render_finished_semaphore});
+        logger.info("Render finished semaphore created: {*}", .{render_finished_semaphore});
 
         const in_flight_fence = Renderer.createFence(device) catch |err| {
-            std.debug.print("ERROR: Failed to create in-flight fence: {s}\n", .{@errorName(err)});
+            logger.err("Failed to create in-flight fence: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("In-flight fence created: {*}\n", .{in_flight_fence});
+        logger.info("In-flight fence created: {*}", .{in_flight_fence});
 
-        std.debug.print("Allocating renderer structure...\n", .{});
+        logger.info("Allocating renderer structure...", .{});
         var renderer = renderAllocator.create(Renderer) catch |err| {
-            std.debug.print("ERROR: Failed to allocate memory for renderer: {s}\n", .{@errorName(err)});
+            logger.err("Failed to allocate memory for renderer: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Renderer structure allocated: {*}\n", .{renderer});
+        logger.info("Renderer structure allocated: {*}", .{renderer});
 
-        std.debug.print("Initializing render graph...\n", .{});
+        logger.info("Initializing render graph...", .{});
         const graph = Graph.init(renderAllocator, renderer, swapchain, render_finished_semaphore, image_available_semaphore, in_flight_fence, queue, sync2_extension_supported) catch |err| {
-            std.debug.print("ERROR: Failed to initialize graph: {s}\n", .{@errorName(err)});
+            logger.err("Failed to initialize graph: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Render graph initialized: {*}\n", .{graph});
+        logger.info("Render graph initialized: {*}", .{graph});
 
-        std.debug.print("Setting up triangle rendering pass...\n", .{});
+        logger.info("Setting up triangle rendering pass...", .{});
         const trianglePassFn = struct {
             fn execute(ctx: PassContext) void {
-                std.debug.print("Executing triangle pass...\n", .{});
+                logger.info("Executing triangle pass...", .{});
                 const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(ctx.userData)));
+
+                logger.info("Triangle pass context: cmd={*}, frame={}x{}", .{
+                    ctx.cmd,
+                    ctx.frame.*.width,
+                    ctx.frame.*.height
+                });
+
                 if (ctx.pass.inputs.items.len == 0 or ctx.pass.inputs.items[0].resource.view == null) {
-                    std.debug.print("ERROR: No inputs for triangle pass\n", .{});
+                    logger.err("No inputs for triangle pass", .{});
                     return;
                 }
 
+
                 // Get heap device address for bindless access
+                logger.info("Getting heap device address...", .{});
+                if (taskRenderer.renderer_heap == null) {
+                    logger.err("Renderer heap is null!", .{});
+                    return;
+                }
+
                 const heapAddress = taskRenderer.renderer_heap.?.getDeviceAddress() catch |err| {
-                    std.debug.print("ERROR: Failed to get heap device address: {s}\n", .{@errorName(err)});
+                    logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
                     return;
                 };
+                logger.info("Heap device address: 0x{x}", .{heapAddress});
 
                 // Create push constant data with the heap address
+                logger.info("Creating push constants...", .{});
+
+                // Check that m4Id returns a valid matrix
+                const modelMatrix = math.m4Id();
+                logger.info("Model matrix from m4Id: {any}", .{modelMatrix});
+
+                // Print out the data array to verify it's a proper identity matrix
+                logger.info("Model matrix data array:", .{});
+                for (0..4) |col| {
+                    logger.info("Col {}: [{}, {}, {}, {}]", .{
+                        col,
+                        modelMatrix.data[col*4+0], modelMatrix.data[col*4+1],
+                        modelMatrix.data[col*4+2], modelMatrix.data[col*4+3],
+                    });
+                }
+
+                // Create push constants with the verified model matrix
                 const pushConstants = camera_sys.CameraPushConstants{
                     .heap_address = heapAddress,
-                    .model_matrix = math.m4Id(),
+                    .model_matrix = modelMatrix,
                 };
+                logger.info("Push constants created with heap_address=0x{x}", .{pushConstants.heap_address});
 
-                std.debug.print("Setting up color attachment for frame {}x{}\n", .{ ctx.frame.*.width, ctx.frame.*.height });
+                logger.info("Setting up color attachment for frame {}x{}", .{ ctx.frame.*.width, ctx.frame.*.height });
                 const color_attachment = vk.RenderingAttachmentInfoKHR{
                     .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
                     .imageView = ctx.pass.inputs.items[0].resource.view.?.imageView,
@@ -826,17 +868,19 @@ const Renderer = struct {
                     .pColorAttachments = &color_attachment,
                 };
 
-                std.debug.print("Beginning dynamic rendering\n", .{});
+                logger.info("Beginning dynamic rendering", .{});
                 vk.cmdBeginRenderingKHR(ctx.cmd, &rendering_info);
-                std.debug.print("Color attachment: {any}\n", .{rendering_info});
+                logger.debug("Color attachment: {any}", .{rendering_info});
 
                 // Use the bindless pipeline instead of the regular triangle pipeline
+                logger.info("Getting bindless_triangle pipeline...", .{});
                 const pipeline = taskRenderer.pipeline.getPipeline("bindless_triangle") catch |err| {
-                    std.debug.print("ERROR: Failed to get bindless pipeline: {s}\n", .{@errorName(err)});
+                    logger.err("Failed to get bindless pipeline: {s}", .{@errorName(err)});
                     return;
                 };
+                logger.info("Pipeline obtained: {*}", .{pipeline});
 
-                std.debug.print("Binding pipeline\n", .{});
+                logger.info("Binding pipeline", .{});
                 vk.CmdBindPipeline(ctx.cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
 
                 const viewport = vk.Viewport{
@@ -848,7 +892,7 @@ const Renderer = struct {
                     .maxDepth = 1.0,
                 };
 
-                std.debug.print("Setting viewport: {}x{}\n", .{ viewport.width, viewport.height });
+                logger.info("Setting viewport: {}x{}", .{ viewport.width, viewport.height });
                 vk.CmdSetViewport(ctx.cmd, 0, 1, &viewport);
 
                 const scissor = vk.Rect2D{
@@ -856,36 +900,60 @@ const Renderer = struct {
                     .extent = vk.Extent2D{ .width = ctx.frame.*.width, .height = ctx.frame.*.height },
                 };
 
-                std.debug.print("Setting scissor: {}x{}\n", .{ scissor.extent.width, scissor.extent.height });
+                logger.info("Setting scissor: {}x{}", .{ scissor.extent.width, scissor.extent.height });
                 vk.CmdSetScissor(ctx.cmd, 0, 1, &scissor);
 
                 // Push the constants to the shader
-                std.debug.print("Pushing constants with heap address: {x}\n", .{heapAddress});
+                logger.info("Pushing constants with heap address: 0x{x}", .{heapAddress});
+                if (pipeline.asGraphics() == null) {
+                    logger.err("Pipeline is not a graphics pipeline", .{});
+                    return;
+                }
+
+                const pipelineLayout = pipeline.asGraphics().?.base.layout;
+                logger.info("Pipeline layout: {*}", .{pipelineLayout});
+
+                // Verify the push constant size
+                const pushConstantsSize = @sizeOf(camera_sys.CameraPushConstants);
+                logger.info("Push constants size: {} bytes", .{pushConstantsSize});
+                logger.info("Model matrix in push constants: {any}", .{pushConstants.model_matrix});
+
+                // Calculate raw pointer offset to model matrix for debugging
+                const modelMatrixOffset = @offsetOf(camera_sys.CameraPushConstants, "model_matrix");
+                logger.info("Model matrix offset in push constants: {} bytes", .{modelMatrixOffset});
+
+                // Verify the first few bytes of push constants to check alignment
+                const pushConstantsPtr = @as([*]const u8, @ptrCast(&pushConstants));
+                logger.info("First 16 bytes of push constants: {any}", .{pushConstantsPtr[0..16]});
+
                 vk.CmdPushConstants(ctx.cmd,
-                    pipeline.asGraphics().?.base.layout,
-                    vk.SHADER_STAGE_VERTEX_BIT,
+                    pipelineLayout,
+                    vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT,
                     0,
-                    @sizeOf(camera_sys.CameraPushConstants),
+                    pushConstantsSize,
                     &pushConstants);
 
-                std.debug.print("Drawing triangle (3 vertices)\n", .{});
+                logger.info("Drawing triangle (3 vertices) with cmd={*}", .{ctx.cmd});
                 vk.CmdDraw(ctx.cmd, 3, 1, 0, 0);
+                logger.info("Draw call completed", .{});
 
-                std.debug.print("Ending dynamic rendering\n", .{});
+                logger.info("Ending dynamic rendering", .{});
                 vk.cmdEndRenderingKHR(ctx.cmd);
-                std.debug.print("Triangle pass execution complete\n", .{});
+                logger.info("Triangle pass execution complete", .{});
             }
         }.execute;
 
-        const trianglePass = Pass.init(renderAllocator, "triangle", trianglePassFn) catch |err| {
-            std.debug.print("ERROR: Failed to initialize triangle pass: {s}\n", .{@errorName(err)});
+        const trianglePass = Pass.init(renderAllocator, "triangle", trianglePassFn) catch {
             return null;
         };
-        std.debug.print("Triangle pass initialized\n", .{});
+        // CRITICAL FIX: Set the renderer as userData for the triangle pass
+        // This ensures the triangle pass has access to the renderer during execution
+        trianglePass.userData = renderer;
+        logger.info("Triangle pass initialized with renderer userData: {*}", .{renderer});
 
-        std.debug.print("Creating swapchain image resource...\n", .{});
+        logger.info("Creating swapchain image resource...", .{});
         renderer.swapchainImageResource = renderAllocator.create(task.Resource) catch |err| {
-            std.debug.print("ERROR: Failed to allocate memory for swapchain image resource: {s}\n", .{@errorName(err)});
+            logger.err("Failed to allocate memory for swapchain image resource: {s}", .{@errorName(err)});
             return null;
         };
         renderer.swapchainImageResource.* = task.Resource{
@@ -894,40 +962,95 @@ const Renderer = struct {
             .handle = null,
             .view = null,
         };
-        std.debug.print("Swapchain image resource created: {*}\n", .{renderer.swapchainImageResource});
+        logger.info("Swapchain image resource created: {*}", .{renderer.swapchainImageResource});
 
-        std.debug.print("Adding swapchain as input to triangle pass...\n", .{});
+        logger.info("Adding swapchain as input to triangle pass...", .{});
         trianglePass.addInput(renderer.swapchainImageResource, task.ResourceState{
             .accessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE,
             .stageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
             .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
         }) catch |err| {
-            std.debug.print("ERROR: Failed to add input to triangle pass: {s}\n", .{@errorName(err)});
+            logger.err("Failed to add input to triangle pass: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Input added successfully\n", .{});
+        logger.info("Input added successfully", .{});
 
-        std.debug.print("Adding passes to render graph...\n", .{});
+        // Initialize camera system using renderer's heap and stage
+        logger.info("Initializing camera system with renderer's heap and stage...", .{});
+        renderer.camera = RendererCamera.create(
+            device,
+            renderer_heap,
+            renderer_stage,
+            renderAllocator
+        ) catch |err| {
+            logger.err("Failed to initialize camera system: {s}", .{@errorName(err)});
+            renderer.camera = null;
+            renderer.camera_pass = null;
+            return null;
+        };
+
+        // Create camera pass and add it to the graph
+        logger.info("Creating camera update pass...", .{});
+        renderer.camera_pass = renderer.camera.?.createCameraPass("CameraUpdate") catch |err| {
+            logger.err("Failed to create camera pass: {s}", .{@errorName(err)});
+            renderer.camera_pass = null;
+            return null;
+        };
+
+        // Set initial camera at position 0,0,5 looking toward the triangle at z=-2
+        const initial_position = math.v3(0.0, 0.0, 5.0);
+        const look_target = math.v3(0.0, 0.0, -2.0); // Look at where the triangle is positioned
+        const initial_view = math.m4LookAt(
+            initial_position,
+            look_target,
+            math.v3Z() // Using Z as up vector as requested
+        );
+        const initial_projection = math.m4Persp(
+            math.rad(45.0),
+            @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)),
+            0.1,
+            1000.0
+        );
+
+        _ = renderer.camera.?.update(initial_view, initial_projection) catch |err| {
+            logger.warn("Failed to set initial camera: {s}", .{@errorName(err)});
+        };
+
+        logger.info("Adding passes to render graph...", .{});
+
+        // Add camera pass to the graph BEFORE triangle pass
+        logger.info("Adding camera pass to render graph...", .{});
+        graph.addPass(renderer.camera_pass.?) catch |err| {
+            logger.err("Failed to add camera pass to graph: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Camera pass added to graph", .{});
+
+        // Now add the triangle pass after the camera pass
         graph.addPass(trianglePass) catch |err| {
-            std.debug.print("ERROR: Failed to add triangle pass to graph: {s}\n", .{@errorName(err)});
+            logger.err("Failed to add triangle pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Triangle pass added to graph\n", .{});
+        logger.info("Triangle pass added to graph", .{});
 
-        graph.addPass(task.getPassSubmit()) catch |err| {
-            std.debug.print("ERROR: Failed to add submit pass to graph: {s}\n", .{@errorName(err)});
+        var submitPass = task.getPassSubmit(renderer);
+        submitPass.userData = renderer;
+        graph.addPass(submitPass) catch |err| {
+            logger.err("Failed to add submit pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Submit pass added to graph\n", .{});
+        logger.info("Submit pass added to graph", .{});
 
-        graph.addPass(task.pass_present(renderer.swapchainImageResource)) catch |err| {
-            std.debug.print("ERROR: Failed to add present pass to graph: {s}\n", .{@errorName(err)});
+        var presentPass = task.pass_present(renderer.swapchainImageResource);
+        presentPass.userData = renderer;
+        graph.addPass(presentPass) catch |err| {
+            logger.err("Failed to add present pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-        std.debug.print("Present pass added to graph\n", .{});
+        logger.info("Present pass added to graph", .{});
 
-        std.debug.print("Finalizing renderer setup...\n", .{});
+        logger.info("Finalizing renderer setup...", .{});
         renderer.frame = Frame{
             .width = 800,
             .index = 0,
@@ -954,102 +1077,56 @@ const Renderer = struct {
         renderer.renderer_heap = renderer_heap;
         renderer.renderer_stage = renderer_stage;
 
-        // Initialize camera system using renderer's heap and stage
-        std.debug.print("Initializing camera system with renderer's heap and stage...\n", .{});
-        renderer.camera = RendererCamera.create(
-            device,
-            renderer_heap,
-            renderer_stage,
-            renderAllocator
-        ) catch |err| {
-            std.debug.print("ERROR: Failed to initialize camera system: {s}\n", .{@errorName(err)});
-            renderer.camera = null;
-            renderer.camera_pass = null;
-            return renderer;
-        };
-
-        // Create camera pass and add it to the graph
-        std.debug.print("Creating camera update pass...\n", .{});
-        renderer.camera_pass = renderer.camera.?.createCameraPass("CameraUpdate") catch |err| {
-            std.debug.print("ERROR: Failed to create camera pass: {s}\n", .{@errorName(err)});
-            renderer.camera_pass = null;
-            return renderer;
-        };
-
-        // Add camera pass to the graph (before triangle pass)
-        std.debug.print("Adding camera pass to render graph...\n", .{});
-        graph.addPass(renderer.camera_pass.?) catch |err| {
-            std.debug.print("ERROR: Failed to add camera pass to graph: {s}\n", .{@errorName(err)});
-            return renderer;
-        };
-
-        // Set initial camera at position 0
-        const initial_position = math.v3Zero();
-        const initial_view = math.m4LookAt(
-            initial_position,
-            math.v3Add(initial_position, math.v3Y()),
-            math.v3Z()
-        );
-        const initial_projection = math.m4Persp(
-            math.rad(45.0),
-            @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)),
-            0.1,
-            1000.0
-        );
-
-        _ = renderer.camera.?.update(initial_position, initial_view, initial_projection) catch |err| {
-            std.debug.print("WARNING: Failed to set initial camera: {s}\n", .{@errorName(err)});
-        };
-
-        std.debug.print("Renderer initialization complete. Returning renderer: {*}\n", .{renderer});
+        logger.info("Renderer initialization complete. Returning renderer: {*}", .{renderer});
         return renderer;
     }
 };
 
 pub export fn init(surface: ?*Surface) ?*PlatformRenderer {
+    // Fixed export with name that matches Rust's expectation
     if (surface == null) {
-        std.debug.print("Surface is null.\n", .{});
+        logger.err("Surface is null.", .{});
         return null;
     }
     if (surfaceRenderers.contains(surface.?.*)) {
-        std.debug.print("Renderer already exists for this surface.\n", .{});
+        logger.warn("Renderer already exists for this surface.", .{});
         return null;
     }
 
     const renderer = Renderer.init(surface.?) catch |err| {
-        std.debug.print("Renderer initialization failed: {s}\n", .{@errorName(err)});
+        logger.err("Renderer initialization failed: {s}", .{@errorName(err)});
         return null;
     };
     if (renderer == null) {
-        std.debug.print("Renderer initialization failed.\n", .{});
+        logger.err("Renderer initialization failed.", .{});
         return null;
     }
 
     const id = platformRendererActive;
     platformRendererActive.id += 1;
     platformRenderers.put(id, renderer.?) catch |err| {
-        std.debug.print("Failed to allocate memory for renderer\n {s}", .{@errorName(err)});
+        logger.err("Failed to allocate memory for renderer: {s}", .{@errorName(err)});
         return null;
     };
     surfaceRenderers.put(surface.?.*, id) catch |err| {
-        std.debug.print("Failed to allocate memory for renderer\n {s}", .{@errorName(err)});
+        logger.err("Failed to allocate memory for renderer: {s}", .{@errorName(err)});
         return null;
     };
-    std.debug.print("Renderer initialized successfully.\n", .{});
-    std.debug.print("Renderer ID: {}\n", .{id});
-    std.debug.print("Renderer pointer: {}\n", .{renderer.?.*});
-    std.debug.print("Surface pointer: {}\n", .{surface.?.*});
-    std.debug.print("Surface ID: {}\n", .{surface.?.*});
+    logger.info("Renderer initialized successfully.", .{});
+    logger.info("Renderer ID: {}", .{id});
+    logger.info("Renderer pointer: {}", .{renderer.?.*});
+    logger.info("Surface pointer: {}", .{surface.?.*});
+    logger.info("Surface ID: {}", .{surface.?.*});
 
     const platform_renderer = renderAllocator.create(PlatformRenderer) catch |err| {
-        std.debug.print("Failed to allocate memory for platform renderer\n {s}", .{@errorName(err)});
+        logger.err("Failed to allocate memory for platform renderer: {s}", .{@errorName(err)});
         return null;
     };
     platform_renderer.* = id;
     return platform_renderer;
 }
 
-pub export fn destroy(handle: ?*PlatformRenderer) void {
+pub export fn shutdown(handle: ?*PlatformRenderer) void {
     if (handle == null) return;
 
     var renderer = platformRenderers.get(handle.?.*) orelse {
@@ -1107,7 +1184,7 @@ pub export fn destroy(handle: ?*PlatformRenderer) void {
 
     // Remove from maps
     _ = platformRenderers.remove(handle.?.*);
-    
+
     // Find and remove from surfaceRenderers by value
     var sr_it = surfaceRenderers.iterator();
     while (sr_it.next()) |entry| {
@@ -1120,31 +1197,46 @@ pub export fn destroy(handle: ?*PlatformRenderer) void {
     renderAllocator.destroy(renderer);
     renderAllocator.destroy(handle.?);
 
-    std.debug.print("Vulkan renderer destroyed.\n", .{});
+    logger.info("Vulkan renderer destroyed.", .{});
 }
 pub export fn render(handle: ?*PlatformRenderer) void {
+    logger.info("Render function called with handle: {*}", .{handle});
+
     // Get renderer...
     var renderer = platformRenderers.get(handle.?.*) orelse {
+        logger.err("Could not find renderer for handle {*}", .{handle});
         return;
     };
+    logger.info("Found renderer: {*}", .{renderer});
 
     const activeFrame = &renderer.frame;
     const frameIndex = activeFrame.index;
+    logger.info("Active frame index: {}, width: {}, height: {}", .{frameIndex, activeFrame.width, activeFrame.height});
 
     // Wait for this frame's fence
-    std.debug.print("Waiting for frame {} fence\n", .{frameIndex});
-    _ = vk.waitForFences(renderer.device, 1, &renderer.in_flight_fences[frameIndex], vk.TRUE, std.math.maxInt(u64));
+    std.debug.print("[RENDER] SYNC: Waiting for frame {} fence {any}...\n", .{frameIndex, renderer.in_flight_fences[frameIndex]});
+    const wait_result = vk.waitForFences(renderer.device, 1, &renderer.in_flight_fences[frameIndex], vk.TRUE, std.math.maxInt(u64));
+    std.debug.print("[RENDER] SYNC: Wait result: {any}\n", .{wait_result});
 
     // Acquire next image using this frame's semaphore
+    std.debug.print("[RENDER] SYNC: Acquiring next image with semaphore {any}...\n", .{renderer.image_available_semaphores[frameIndex]});
     const result = vk.acquireNextImageKHR(renderer.device, renderer.swapchain, std.math.maxInt(u64), // Wait indefinitely
         renderer.image_available_semaphores[frameIndex], null, &activeFrame.index);
+    std.debug.print("[RENDER] SYNC: Acquire result: {any}, image index: {}\n", .{result, activeFrame.index});
 
     // If image is being used by another frame, wait for that frame's fence
     if (renderer.images_in_flight[activeFrame.index] != null) {
-        _ = vk.waitForFences(renderer.device, 1, &renderer.images_in_flight[activeFrame.index], vk.TRUE, std.math.maxInt(u64));
+        std.debug.print("[RENDER] SYNC: Image {} is in use by another frame, waiting for fence {any}...\n",
+                     .{activeFrame.index, renderer.images_in_flight[activeFrame.index]});
+        const img_wait_result = vk.waitForFences(renderer.device, 1, &renderer.images_in_flight[activeFrame.index], vk.TRUE, std.math.maxInt(u64));
+        std.debug.print("[RENDER] SYNC: Image wait result: {any}\n", .{img_wait_result});
+    } else {
+        std.debug.print("[RENDER] SYNC: Image {} is not in use by another frame\n", .{activeFrame.index});
     }
 
     // Mark this image as being used by the current frame
+    std.debug.print("[RENDER] SYNC: Marking image {} as used by frame {} (fence {any})\n",
+                 .{activeFrame.index, frameIndex, renderer.in_flight_fences[frameIndex]});
     renderer.images_in_flight[activeFrame.index] = renderer.in_flight_fences[frameIndex];
 
     // Only reset the fence now after we've verified the image is available
@@ -1173,16 +1265,13 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         renderer.frame.height = height;
         renderer.frame.width = width;
         std.debug.print("Swapchain recreated successfully.\n", .{});
+        return;
     }
 
-    // Process swapchain image for current frame...
-    renderer.swapchainImageResource.handle = task.ResourceHandle{ .image = renderer.swapchainImages[activeFrame.index] };
 
-    // Create view...
-
-    std.debug.print("Acquired image index: {}\n", .{activeFrame.index});
-    std.debug.print("Swapchain image length: {}\n", .{renderer.swapchainImages.len});
-    std.debug.print("Swapchain image: {any}\n", .{renderer.swapchainImages[0]});
+    logger.debug("Acquired image index: {}", .{activeFrame.index});
+    logger.debug("Swapchain image length: {}", .{renderer.swapchainImages.len});
+    logger.debug("Swapchain image: {any}", .{renderer.swapchainImages[0]});
 
     std.debug.print(
         "Swapchain image resource: {any}\n",
@@ -1194,7 +1283,12 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         return;
     };
 
-    std.debug.print("execute", .{});
+
+    logger.info("Executing render commands for frame {}", .{frameIndex});
+
+    // Log command buffer state
+    logger.info("Using command buffer: {*}", .{renderer.command_buffers[frameIndex]});
+
     // Execute the graph with the CURRENT frame's command buffer and synchronization objects
     const passContext = PassContext{
         .cmd = renderer.command_buffers[frameIndex],
@@ -1206,20 +1300,43 @@ pub export fn render(handle: ?*PlatformRenderer) void {
         .frame = activeFrame,
         .userData = renderer,
     };
+
+    logger.info("Starting graph execution with context: cmd={*}, queue={*}, fence={*}",
+        .{passContext.cmd, passContext.queue, passContext.in_flight_fence});
+
+    // Update the camera pass with the latest upload offset before executing the graph
+    if (renderer.camera != null and renderer.camera_pass != null) {
+        logger.info("Updating camera pass with latest upload offset", .{});
+        renderer.camera.?.updateCameraPass(renderer.camera_pass.?);
+    }
+
     renderer.graph.execute(renderer.command_buffers[frameIndex], // Use frame-specific command buffer
         passContext // Pass context to the execute function
     ) catch |err| {
-        std.debug.print("Failed to execute render graph: {s}\n", .{@errorName(err)});
+        logger.err("Failed to execute render graph: {s}", .{@errorName(err)});
         return;
     };
+
+    logger.info("Graph execution completed successfully", .{});
     // Advance to next frame
 }
 
-pub export fn setCamera(renderer: *Renderer, position: *math.Vec3, view: *math.Mat4, projection: *math.Mat4) void {
+pub export fn setCamera(handle: ?*include.render.Renderer, camera: *const include.render.Camera) void {
+        if (handle == null) return;
+
+    var renderer = platformRenderers.get(handle.?.*) orelse {
+        return;
+    };
+    const position = camera.position;
+    const rotation = camera.rotation;
+    const translationMatrix = math.m4TransV3(position);
+    const rotationMatrix = math.qToM4(rotation);
+    const transform = math.m4Mul(translationMatrix, rotationMatrix);
+    const view = math.m4Inv(transform);
     // If the camera system is available, update it
     if (renderer.camera != null) {
-        _ = renderer.camera.?.update(position.*, view.*, projection.*) catch |err| {
-            std.log.err("Failed to update camera in setCamera: {s}", .{@errorName(err)});
+        _ = renderer.camera.?.update(view, camera.projection) catch |err| {
+            std.debug.print("Failed to update camera in setCamera: {s}\n", .{@errorName(err)});
             return;
         };
     }

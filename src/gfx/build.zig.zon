@@ -8,6 +8,9 @@
         .surface = .{
             .path = "../surface",
         },
+        .trace = .{
+            .path = "../trace",
+        },
     },
 
     .paths = .{

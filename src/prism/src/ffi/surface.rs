@@ -7,6 +7,7 @@ pub struct Surface {
 }
 
 // Surface creation/destruction
+#[link(name = "gfx", kind = "static")]
 extern "C" {
     pub fn createSurface() -> *mut Surface;
     pub fn destroySurface(s: *mut Surface);

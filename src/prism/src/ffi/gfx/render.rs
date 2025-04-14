@@ -1,24 +1,6 @@
 use crate::ffi::gfx::surface::Surface;
 
-#[repr(C)]
-pub struct Vec3 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
-#[repr(C)]
-pub struct Quat {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-    pub w: f32,
-}
-
-#[repr(C)]
-pub struct Mat4 {
-    pub data: [f32; 16],
-}
+pub use crate::ffi::math::{Mat4, Quat, Vec3};
 
 #[repr(C)]
 pub struct Camera {
