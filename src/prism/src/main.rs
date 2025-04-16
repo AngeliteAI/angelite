@@ -21,8 +21,8 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 // Configuration constants for flight controls
-const MOVE_SPEED: f32 = 0.1; // Base movement speed
-const ROTATION_SPEED: f32 = 0.05; // Base rotation speed
+const MOVE_SPEED: f32 = 1.6; // Base movement speed
+const ROTATION_SPEED: f32 = PI / 6.0; // Base rotation speed
 const DEADZONE: f32 = 0.15; // Joystick deadzone
 
 #[unsafe(no_mangle)]
@@ -110,7 +110,6 @@ fn main() {
         .unwrap();
 
     // Register all actions with the input system
-    action_manager.register_all_actions();
 
     // Prepare buffer for collecting input actions each frame
     const MAX_ACTIONS: usize = 32;
@@ -150,7 +149,7 @@ fn main() {
                         // Handle button actions
                         let button_data = action.binding.data.button;
                         match button_data.binding.ty {
-                            crate::ffi::input::state::ButtonBindingType::Gamepad => {
+                            crate::ffi::input::state::InputType::Gamepad => {
                                 let button = button_data.binding.code.gamepad.button;
                                 if button == GamepadButton::RightShoulder {
                                     // Move up
@@ -160,7 +159,7 @@ fn main() {
                                     movement.y -= MOVE_SPEED;
                                 }
                             }
-                            crate::ffi::input::state::ButtonBindingType::Keyboard => {
+                            crate::ffi::input::state::InputType::Keyboard => {
                                 let key = button_data.binding.code.keyboard.key;
                                 // You could handle keyboard controls here too
                             }
@@ -172,9 +171,9 @@ fn main() {
                         let axis_data = action.binding.data.axis;
                         let axis_movement = action.control.data.axis.movement;
 
-                        if axis_data.binding.ty == crate::ffi::input::state::AxisDevice::Joystick {
+                        if axis_data.binding.ty == crate::ffi::input::state::InputType::Gamepad {
                             match axis_data.binding.side {
-                                Some(Side::Left) => {
+                                Side::Left => {
                                     // Left joystick controls movement
                                     if axis_data.binding.axis == Axis::X {
                                         // Strafe left/right
@@ -184,7 +183,7 @@ fn main() {
                                         movement.z -= axis_movement * MOVE_SPEED;
                                     }
                                 }
-                                Some(Side::Right) => {
+                                Side::Right => {
                                     // Right joystick controls rotation
                                     if axis_data.binding.axis == Axis::X {
                                         // Rotate left/right (yaw)

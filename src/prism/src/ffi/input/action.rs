@@ -1,4 +1,6 @@
-use crate::ffi::input::state::{Action, Axis, ButtonAction, GamepadButton, Key, MouseButton, Side};
+use crate::ffi::input::state::{
+    Action, Axis, ButtonAction, GamepadButton, InputType, Key, MouseButton, Side,
+};
 use core::ffi::c_char;
 use core::ffi::c_void;
 
@@ -29,7 +31,6 @@ unsafe extern "C" {
     pub fn createAction(manager: *mut c_void, name: *const c_char, name_len: usize) -> ActionId;
     pub fn getAction(manager: *mut c_void, id: ActionId) -> *mut c_void;
     pub fn deleteAction(manager: *mut c_void, id: ActionId);
-    pub fn registerAllActions(manager: *mut c_void);
 
     // Action functions
     pub fn setActionUserData(action: *mut c_void, user_data: *mut c_void);
@@ -77,10 +78,6 @@ impl ActionManager {
 
     pub fn delete_action(&self, id: ActionId) {
         unsafe { deleteAction(self.ptr, id) };
-    }
-
-    pub fn register_all_actions(&self) {
-        unsafe { registerAllActions(self.ptr) };
     }
 }
 

@@ -235,6 +235,7 @@ pub fn createSurface(instance: Instance, platform_specific_info: PlatformSpecifi
 // Swapchain-related constants
 pub const KHR_SWAPCHAIN_EXTENSION_NAME = c.VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
+pub const SUBOPTIMAL_KHR = c.VK_SUBOPTIMAL_KHR;
 pub const Surface = c.VkSurfaceKHR;
 // Swapchain-related structures
 pub const SwapchainCreateInfo = c.VkSwapchainCreateInfoKHR;

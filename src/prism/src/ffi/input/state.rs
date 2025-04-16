@@ -5,116 +5,107 @@ use core::ffi::c_void;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Key {
-    Q,
-    W,
-    E,
-    R,
-    T,
-    Y,
-    U,
-    I,
-    O,
-    P,
-    A,
-    S,
-    D,
-    F,
-    G,
-    H,
-    J,
-    K,
-    L,
-    Z,
-    X,
-    C,
-    V,
-    B,
-    N,
-    M,
-    Space,
+    A = 0,
+    B = 1,
+    C = 2,
+    D = 3,
+    E = 4,
+    F = 5,
+    G = 6,
+    H = 7,
+    I = 8,
+    J = 9,
+    K = 10,
+    L = 11,
+    M = 12,
+    N = 13,
+    O = 14,
+    P = 15,
+    Q = 16,
+    R = 17,
+    S = 18,
+    T = 19,
+    U = 20,
+    V = 21,
+    W = 22,
+    X = 23,
+    Y = 24,
+    Z = 25,
+    Space = 26,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MouseButton {
-    Left,
-    Right,
-    Middle,
-    X1,
-    X2,
+    Left = 0,
+    Right = 1,
+    Middle = 2,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GamepadButton {
-    A,
-    B,
-    X,
-    Y,
-    LeftShoulder,
-    RightShoulder,
-    Back,
-    Start,
-    Guide,
-    LeftStick,
-    RightStick,
-    DPadUp,
-    DPadDown,
-    DPadLeft,
-    DPadRight,
+    A = 0,
+    B = 1,
+    X = 2,
+    Y = 3,
+    LeftShoulder = 4,
+    RightShoulder = 5,
+    LeftStick = 6,
+    RightStick = 7,
+    DPadUp = 8,
+    DPadDown = 9,
+    DPadLeft = 10,
+    DPadRight = 11,
+    Start = 12,
+    Back = 13,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Axis {
-    X,
-    Y,
-    Z,
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AxisDevice {
-    Mouse,
-    Scroll,
-    Joystick,
-    Trigger,
+    X = 0,
+    Y = 1,
+    Z = 2,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Side {
-    Left,
-    Right,
+    Left = 0,
+    Right = 1,
+    None = 2,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputType {
+    Keyboard = 0,
+    Mouse = 1,
+    Gamepad = 2,
+    Joystick = 3,
+    Trigger = 4,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ButtonAction {
-    Deactivate, // Button was released
-    Activate,   // Button was pressed
-    Continuous, // Triggered every frame while button is held
+    Activate = 0,
+    Deactivate = 1,
+    Continuous = 2,
 }
 
-// Legacy binding types
+// Binding types
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ButtonBinding {
-    pub ty: ButtonBindingType,
-    pub code: ButtonBindingCode,
+    pub ty: InputType,
+    pub code: ButtonCode,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub enum ButtonBindingType {
-    Keyboard,
-    Mouse,
-    Gamepad,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub union ButtonBindingCode {
+pub union ButtonCode {
     pub keyboard: KeyboardCode,
     pub mouse: MouseCode,
     pub gamepad: GamepadCode,
@@ -142,15 +133,15 @@ pub struct GamepadCode {
 #[derive(Copy, Clone)]
 pub struct AxisBinding {
     pub axis: Axis,
-    pub ty: AxisDevice,
-    pub side: Option<Side>,
+    pub ty: InputType,
+    pub side: Side,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum BindingType {
-    Button,
-    Axis,
+    Button = 0,
+    Axis = 1,
 }
 
 #[repr(C)]
@@ -182,8 +173,8 @@ pub struct Binding {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub enum ControlType {
-    Button,
-    Axis,
+    Button = 0,
+    Axis = 1,
 }
 
 #[repr(C)]
@@ -224,7 +215,6 @@ pub struct Action {
 unsafe extern "C" {
     // Core input functions
     pub fn inputInit(surface: *mut Surface);
-    pub fn inputSetAction(binding: Binding, control: Control, user: *mut c_void);
     pub fn inputPollActiveActions(actionBuffer: *mut Action, maxActions: usize) -> usize;
 }
 
@@ -241,12 +231,6 @@ impl InputState {
         Self { initialized: true }
     }
 
-    pub fn register_action(&self, binding: Binding, control: Control, user_data: *mut c_void) {
-        unsafe {
-            inputSetAction(binding, control, user_data);
-        }
-    }
-
     pub fn poll_actions(&self, action_buffer: &mut [Action]) -> usize {
         unsafe { inputPollActiveActions(action_buffer.as_mut_ptr(), action_buffer.len()) }
     }
@@ -255,9 +239,9 @@ impl InputState {
 // Conversion functions to help create common bindings
 pub fn create_keyboard_binding(key: Key) -> Binding {
     let key_code = KeyboardCode { key };
-    let code = ButtonBindingCode { keyboard: key_code };
+    let code = ButtonCode { keyboard: key_code };
     let button_binding = ButtonBinding {
-        ty: ButtonBindingType::Keyboard,
+        ty: InputType::Keyboard,
         code,
     };
     let button_data = ButtonBindingData {
@@ -273,9 +257,9 @@ pub fn create_keyboard_binding(key: Key) -> Binding {
 
 pub fn create_mouse_binding(button: MouseButton) -> Binding {
     let mouse_code = MouseCode { button };
-    let code = ButtonBindingCode { mouse: mouse_code };
+    let code = ButtonCode { mouse: mouse_code };
     let button_binding = ButtonBinding {
-        ty: ButtonBindingType::Mouse,
+        ty: InputType::Mouse,
         code,
     };
     let button_data = ButtonBindingData {
@@ -291,11 +275,11 @@ pub fn create_mouse_binding(button: MouseButton) -> Binding {
 
 pub fn create_gamepad_binding(button: GamepadButton) -> Binding {
     let gamepad_code = GamepadCode { button };
-    let code = ButtonBindingCode {
+    let code = ButtonCode {
         gamepad: gamepad_code,
     };
     let button_binding = ButtonBinding {
-        ty: ButtonBindingType::Gamepad,
+        ty: InputType::Gamepad,
         code,
     };
     let button_data = ButtonBindingData {

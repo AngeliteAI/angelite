@@ -1,49 +1,17 @@
 const std = @import("std");
 
 // Input types and enums
-pub const Key = enum(c_int) {
-    A = 0, B = 1, C = 2, D = 3, E = 4, F = 5, G = 6, H = 7, I = 8, J = 9, K = 10, L = 11, M = 12,
-    N = 13, O = 14, P = 15, Q = 16, R = 17, S = 18, T = 19, U = 20, V = 21, W = 22, X = 23, Y = 24, Z = 25,
-    Space = 26,
-    _
-};
+pub const Key = enum(c_int) { A = 0, B = 1, C = 2, D = 3, E = 4, F = 5, G = 6, H = 7, I = 8, J = 9, K = 10, L = 11, M = 12, N = 13, O = 14, P = 15, Q = 16, R = 17, S = 18, T = 19, U = 20, V = 21, W = 22, X = 23, Y = 24, Z = 25, Space = 26, _ };
 
-pub const MouseButton = enum(c_int) {
-    Left = 0,
-    Right = 1,
-    Middle = 2,
-    _
-};
+pub const MouseButton = enum(c_int) { Left = 0, Right = 1, Middle = 2, _ };
 
-pub const GamepadButton = enum(c_int) {
-    A = 0, B = 1, X = 2, Y = 3,
-    LeftShoulder = 4, RightShoulder = 5,
-    LeftStick = 6, RightStick = 7,
-    DPadUp = 8, DPadDown = 9, DPadLeft = 10, DPadRight = 11,
-    Start = 12, Back = 13,
-    _
-};
+pub const GamepadButton = enum(c_int) { A = 0, B = 1, X = 2, Y = 3, LeftShoulder = 4, RightShoulder = 5, LeftStick = 6, RightStick = 7, DPadUp = 8, DPadDown = 9, DPadLeft = 10, DPadRight = 11, Start = 12, Back = 13, _ };
 
-pub const Axis = enum(c_int) {
-    X = 0, Y = 1, Z = 2,
-    _
-};
+pub const Axis = enum(c_int) { X = 0, Y = 1, Z = 2, _ };
 
-pub const Side = enum(c_int) {
-    Left = 0,
-    Right = 1,
-    None = 2,
-    _
-};
+pub const Side = enum(c_int) { Left = 0, Right = 1, None = 2, _ };
 
-pub const InputType = enum(c_int) {
-    Keyboard = 0,
-    Mouse = 1,
-    Gamepad = 2,
-    Joystick = 3,
-    Trigger = 4,
-    _
-};
+pub const InputType = enum(c_int) { Keyboard = 0, Mouse = 1, Gamepad = 2, Joystick = 3, Trigger = 4, _ };
 
 // Button binding structures
 pub const KeyboardCode = extern struct {
@@ -64,11 +32,11 @@ pub const ButtonCode = extern union {
     Mouse: MouseCode,
     Gamepad: GamepadCode,
     Joystick: u8, // Placeholder
-    Trigger: u8,  // Placeholder
+    Trigger: u8, // Placeholder
 };
 
 pub const ButtonBinding = extern struct {
-    ty: InputType,  // This field indicates which union variant is active
+    ty: InputType, // This field indicates which union variant is active
     code: ButtonCode,
 };
 
@@ -80,12 +48,7 @@ pub const AxisBinding = extern struct {
 };
 
 // Control types
-pub const ButtonAction = enum(c_int) {
-    Activate = 0,
-    Deactivate = 1,
-    Continuous = 2,
-    _
-};
+pub const ButtonAction = enum(c_int) { Activate = 0, Deactivate = 1, Continuous = 2, _ };
 
 pub const ButtonControl = extern struct {
     action: ButtonAction,
@@ -95,11 +58,7 @@ pub const AxisControl = extern struct {
     movement: f32,
 };
 
-pub const ControlType = enum(c_int) {
-    Button = 0,
-    Axis = 1,
-    _
-};
+pub const ControlType = enum(c_int) { Button = 0, Axis = 1, _ };
 
 // NOTE: This must match what state.zig expects - UNTAGGED union
 pub const ControlData = extern union {
@@ -108,16 +67,12 @@ pub const ControlData = extern union {
 };
 
 pub const Control = extern struct {
-    ty: ControlType,  // This field indicates which union variant is active
+    ty: ControlType, // This field indicates which union variant is active
     data: ControlData,
 };
 
 // Binding type
-pub const BindingType = enum(c_int) {
-    Button = 0,
-    Axis = 1,
-    _
-};
+pub const BindingType = enum(c_int) { Button = 0, Axis = 1, _ };
 
 // NOTE: This must match what state.zig expects - UNTAGGED union
 pub const BindingData = extern union {
@@ -126,7 +81,7 @@ pub const BindingData = extern union {
 };
 
 pub const Binding = extern struct {
-    ty: BindingType,  // This field indicates which union variant is active
+    ty: BindingType, // This field indicates which union variant is active
     data: BindingData,
 };
 
@@ -134,7 +89,7 @@ pub const Binding = extern struct {
 pub const Action = extern struct {
     control: Control,
     binding: Binding,
-    user: *anyopaque,
+    user: ?*anyopaque,
 };
 
 // Standalone hash and equality functions (instead of methods)
@@ -142,7 +97,7 @@ pub fn button_binding_hash(binding: ButtonBinding) u64 {
     var hasher = std.hash.Wyhash.init(0);
     const ty_int = @intFromEnum(binding.ty);
     std.hash.autoHash(&hasher, ty_int);
-    
+
     // Use the struct's ty field to determine which union field to access
     switch (binding.ty) {
         .Keyboard => {
@@ -159,13 +114,13 @@ pub fn button_binding_hash(binding: ButtonBinding) u64 {
         },
         else => {},
     }
-    
+
     return hasher.final();
 }
 
 pub fn button_binding_eql(a: ButtonBinding, b: ButtonBinding) bool {
     if (a.ty != b.ty) return false;
-    
+
     // Use the struct's ty field for switching
     switch (a.ty) {
         .Keyboard => {
@@ -186,25 +141,25 @@ pub fn axis_binding_hash(binding: AxisBinding) u64 {
     const axis_int = @intFromEnum(binding.axis);
     const ty_int = @intFromEnum(binding.ty);
     const side_int = @intFromEnum(binding.side);
-    
+
     std.hash.autoHash(&hasher, axis_int);
     std.hash.autoHash(&hasher, ty_int);
     std.hash.autoHash(&hasher, side_int);
-    
+
     return hasher.final();
 }
 
 pub fn axis_binding_eql(a: AxisBinding, b: AxisBinding) bool {
-    return a.axis == b.axis and 
-           a.ty == b.ty and 
-           a.side == b.side;
+    return a.axis == b.axis and
+        a.ty == b.ty and
+        a.side == b.side;
 }
 
 pub fn binding_hash(binding: Binding) u64 {
     var hasher = std.hash.Wyhash.init(0);
     const ty_int = @intFromEnum(binding.ty);
     std.hash.autoHash(&hasher, ty_int);
-    
+
     switch (binding.ty) {
         .Button => {
             std.hash.autoHash(&hasher, button_binding_hash(binding.data.Button.binding));
@@ -214,13 +169,13 @@ pub fn binding_hash(binding: Binding) u64 {
         },
         _ => {},
     }
-    
+
     return hasher.final();
 }
 
 pub fn binding_eql(a: Binding, b: Binding) bool {
     if (a.ty != b.ty) return false;
-    
+
     switch (a.ty) {
         .Button => {
             return button_binding_eql(a.data.Button.binding, b.data.Button.binding);
