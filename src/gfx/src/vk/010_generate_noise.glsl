@@ -1,20 +1,51 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
-#include "000_noise.glsl"
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_atomic_float : require
+#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_EXT_debug_printf : enable
 
-// Push constant for the heap address
+
+// Noise context structure
+layout(scalar) struct NoiseContext {
+    uint64_t noiseParamOffset;
+    uint64_t noiseDataOffset;
+};
+
+// Noise parameters structure
+layout(scalar) struct NoiseParams {
+    float seed;
+    float scale;
+    float frequency;
+    float lacunarity;
+    float persistence;
+    ivec3 offset;
+    uvec3 size;
+};
+
+// Print the size of the NoiseParams struct for debugging
 layout(push_constant) uniform PushConstants {
-    uint64_t heapAddress;  // Device address of the heap
-    uint64_t noiseContextOffset;
-} pushConstants;
+    uint64_t heap_address;
+    uint64_t noise_context_offset;
+} pc;
+
+// Print the size of the NoiseContext struct for debugging
+
+layout(buffer_reference, scalar, std430) buffer FloatRef {
+    float data;
+};
+
+layout(buffer_reference, scalar, std430) buffer NoiseContextRef {
+    NoiseContext context;
+};
 
 // Buffer reference for the noise parameters
-layout(buffer_reference, std430) buffer NoiseParamsRef {
+layout(buffer_reference, scalar, std430) buffer NoiseParamsRef {
     NoiseParams params;
 };
 
 // Buffer reference for the noise data output
-layout(buffer_reference, std430) buffer NoiseDataRef {
+layout(buffer_reference, scalar, std430) buffer NoiseDataRef {
     float data[];
 };
 
@@ -106,26 +137,75 @@ float perlinNoise3D(vec3 p, uint seed) {
     return 0.5 * mix(nxy0, nxy1, u.z) + 0.5;
 }
 
-// Compute shader for generating 3D noise
+// Main compute shader function
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 void main() {
-    // Get noise context from push constants
-    NoiseContext noiseContext = NoiseContext(pushConstants.heapAddress + pushConstants.noiseContextOffset);
-
-    // Get noise parameters and output buffer
-    NoiseParamsRef noiseParamsRef = NoiseParamsRef(pushConstants.heapAddress + noiseContext.noiseParamOffset);
-    NoiseDataRef noiseDataRef = NoiseDataRef(pushConstants.heapAddress + noiseContext.noiseDataOffset);
-
-    // Get local thread position
-    uvec3 localPos = gl_GlobalInvocationID.xyz;
-
+    // Get the global invocation ID
+    ivec3 pos = ivec3(gl_GlobalInvocationID);
+    
+    // Calculate the index in the noise data array
+    uint index = pos.z * 32 * 32 + pos.y * 32 + pos.x;
+    
+    // Get the noise context from the heap
+    uint64_t contextAddress = pc.heap_address + pc.noise_context_offset;
+    debugPrintfEXT("Noise context address: 0x%llx", contextAddress);
+    debugPrintfEXT("Heap address: 0x%llx, noise_context_offset: 0x%llx", pc.heap_address, pc.noise_context_offset);
+    
+    // Check if heap address is valid
+    if (pc.heap_address == 0) {
+        debugPrintfEXT("ERROR: Heap address is 0, which is invalid!");
+        return;
+    }
+    
+    NoiseContextRef noiseContextRef = NoiseContextRef(contextAddress);
+    NoiseContext noiseContext = noiseContextRef.context;
+    
+    debugPrintfEXT("Processing noise at position: (%d, %d, %d), index: %u", pos.x, pos.y, pos.z, index);
+    debugPrintfEXT("Noise context - noiseParamOffset: 0x%llx, noiseDataOffset: 0x%llx", 
+        noiseContext.noiseParamOffset, noiseContext.noiseDataOffset);
+    
+    // Check if noise context offsets are valid
+    if (noiseContext.noiseParamOffset == 0 || noiseContext.noiseDataOffset == 0) {
+        debugPrintfEXT("ERROR: Invalid noise context offsets!");
+        return;
+    }
+    
+    // Get the noise parameters from the heap - ensure we're using byte addressing
+    uint64_t paramAddress = pc.heap_address + noiseContext.noiseParamOffset;
+    debugPrintfEXT("Noise parameters address: 0x%llx", paramAddress);
+    NoiseParamsRef noiseParamsRef = NoiseParamsRef(paramAddress);
+    
+    // Print the raw bytes of the noise parameters for debugging
+    debugPrintfEXT("Noise parameters raw bytes: %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u %u", 
+        noiseParamsRef.params.seed, noiseParamsRef.params.scale, noiseParamsRef.params.frequency,
+        noiseParamsRef.params.lacunarity, noiseParamsRef.params.persistence,
+        noiseParamsRef.params.offset.x, noiseParamsRef.params.offset.y, noiseParamsRef.params.offset.z,
+        noiseParamsRef.params.size.x, noiseParamsRef.params.size.y, noiseParamsRef.params.size.z);
+    
+    // Print the memory layout of the noise parameters for debugging
+    debugPrintfEXT("Noise parameters memory layout: seed=%f, scale=%f, frequency=%f, lacunarity=%f, persistence=%f, offset=(%d,%d,%d), size=(%u,%u,%u)", 
+        noiseParamsRef.params.seed, noiseParamsRef.params.scale, noiseParamsRef.params.frequency,
+        noiseParamsRef.params.lacunarity, noiseParamsRef.params.persistence,
+        noiseParamsRef.params.offset.x, noiseParamsRef.params.offset.y, noiseParamsRef.params.offset.z,
+        noiseParamsRef.params.size.x, noiseParamsRef.params.size.y, noiseParamsRef.params.size.z);
+    
+    debugPrintfEXT("Noise parameters - Seed: %f, Scale: %f, Frequency: %f", 
+        noiseParamsRef.params.seed,
+        noiseParamsRef.params.scale,
+        noiseParamsRef.params.frequency);
+    
+    // Get the noise data pointer from the heap
+    uint64_t noiseDataPtr = pc.heap_address + noiseContext.noiseDataOffset;
+    debugPrintfEXT("Noise data pointer: 0x%llx", noiseDataPtr);
+    
     // Skip computation if outside the noise dimensions
-    if (any(greaterThanEqual(localPos, noiseParamsRef.params.size))) {
+    if (any(greaterThanEqual(pos, noiseParamsRef.params.size))) {
+        debugPrintfEXT("Skipping out-of-bounds position: (%d, %d, %d)", pos.x, pos.y, pos.z);
         return;
     }
 
     // Calculate normalized coordinates
-    vec3 normalizedPos = vec3(localPos) / vec3(noiseParamsRef.params.size);
+    vec3 normalizedPos = vec3(pos) / vec3(noiseParamsRef.params.size);
 
     // Apply frequency scaling
     vec3 noiseInput = normalizedPos * noiseParamsRef.params.frequency;
@@ -158,10 +238,36 @@ void main() {
     // Normalize the result
     fbm /= normalizer;
 
-    // Calculate 1D index from 3D position
-    uint index = localPos.x + noiseParamsRef.params.size.x *
-               (localPos.y + noiseParamsRef.params.size.y * localPos.z);
-
-    // Write the noise value to the output buffer
-    noiseDataRef.data[index] = fbm;
+    // Generate noise value
+    float noiseValue = fbm;
+    
+    debugPrintfEXT("Generated noise value: %f at position (%d, %d, %d)", noiseValue, pos.x, pos.y, pos.z);
+    
+    // Write the noise value to the noise data array
+    FloatRef(noiseDataPtr + index * 4).data = noiseValue;
+    
+    // Add memory barrier to ensure the write is visible to other shaders
+    memoryBarrier();
 }
+
+// Noise generation functions
+float generateNoise(ivec3 pos, NoiseParams params) {
+    // Apply offset and scale
+    vec3 p = vec3(pos + params.offset) * params.scale;
+    
+    // Generate base noise
+    float noise = 0.0;
+    float amplitude = 1.0;
+    float frequency = params.frequency;
+    
+    // Generate octaves of noise
+    for (int i = 0; i < 4; i++) {
+        noise += amplitude * perlinNoise3D(p * frequency, uint(params.seed));
+        amplitude *= params.persistence;
+        frequency *= params.lacunarity;
+    }
+    
+    return noise;
+}
+
+// Perlin noise function

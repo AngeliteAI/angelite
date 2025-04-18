@@ -7,9 +7,9 @@ pub const Palette = struct {
     palette: std.ArrayList(u32),
     count: usize,
     data: std.ArrayList(u32),
-    allocator: std.mem.Allocator,
+    allocator: *std.mem.Allocator,
 
-    pub fn initSingle(allocator: std.mem.Allocator, single: u32, count: usize) !Self {
+    pub fn initSingle(allocator: *std.mem.Allocator, single: u32, count: usize) !Self {
         var palette = std.ArrayList(u32).init(allocator);
         try palette.append(single);
 
@@ -21,7 +21,7 @@ pub const Palette = struct {
         };
     }
 
-    pub fn initUncompressed(allocator: std.mem.Allocator, uncompressed: []const u32) !Self {
+    pub fn initUncompressed(allocator: *std.mem.Allocator, uncompressed: []const u32) !Self {
         var palette = std.ArrayList(u32).init(allocator);
         var seen = std.AutoHashMap(u32, void).init(allocator);
         defer seen.deinit();

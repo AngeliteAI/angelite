@@ -19,7 +19,7 @@ pub struct Transform {
 
 // FFI bindings to the Zig voxel engine
 #[link(name = "gfx", kind = "static")]
-extern "C" {
+unsafe extern "C" {
     // Volume creation and management
     pub fn createEmptyVolume(size_x: u32, size_y: u32, size_z: u32) -> *mut Volume;
     pub fn createVolumeFromSDF(sdf: *mut core::ffi::c_void, brush: *const Brush, position: [i32; 3], size: [u32; 3]) -> *mut Volume;
@@ -63,7 +63,7 @@ impl Volume {
     pub fn new_empty(size_x: u32, size_y: u32, size_z: u32) -> Self {
         unsafe {
             let ptr = createEmptyVolume(size_x, size_y, size_z);
-            std::mem::transmute_copy(&ptr)
+            core::mem::transmute_copy(&ptr)
         }
     }
 
@@ -71,7 +71,7 @@ impl Volume {
     pub fn clone(&self) -> Self {
         unsafe {
             let ptr = cloneVolume(self);
-            std::mem::transmute_copy(&ptr)
+            core::mem::transmute_copy(&ptr)
         }
     }
 
@@ -89,7 +89,7 @@ impl Volume {
     pub fn move_by(&self, x: i32, y: i32, z: i32) -> Self {
         unsafe {
             let ptr = moveVolume(self, x, y, z);
-            std::mem::transmute_copy(&ptr)
+            core::mem::transmute_copy(&ptr)
         }
     }
 
@@ -97,7 +97,7 @@ impl Volume {
     pub fn rotate(&self, rotation: u8) -> Self {
         unsafe {
             let ptr = rotateVolume(self, rotation);
-            std::mem::transmute_copy(&ptr)
+            core::mem::transmute_copy(&ptr)
         }
     }
 
@@ -105,7 +105,7 @@ impl Volume {
     pub fn mirror(&self, axis: u8) -> Self {
         unsafe {
             let ptr = mirrorVolume(self, axis);
-            std::mem::transmute_copy(&ptr)
+            core::mem::transmute_copy(&ptr)
         }
     }
 
@@ -113,13 +113,13 @@ impl Volume {
     pub fn extract_region(&self, min_x: i32, min_y: i32, min_z: i32, max_x: i32, max_y: i32, max_z: i32) -> Self {
         unsafe {
             let ptr = extractRegion(self, min_x, min_y, min_z, max_x, max_y, max_z);
-            std::mem::transmute_copy(&ptr)
+            core::mem::transmute_copy(&ptr)
         }
     }
 
     /// Get voxels at specific positions
     pub fn get_voxels(&self, positions: &[Vec3], out_blocks: &mut [u16]) {
-        let count = std::cmp::min(positions.len(), out_blocks.len());
+        let count = core::cmp::min(positions.len(), out_blocks.len());
         if count == 0 { return; }
         
         unsafe {
@@ -129,7 +129,7 @@ impl Volume {
 
     /// Set voxels at specific positions
     pub fn set_voxels(&self, positions: &[Vec3], blocks: &[u16]) {
-        let count = std::cmp::min(positions.len(), blocks.len());
+        let count = core::cmp::min(positions.len(), blocks.len());
         if count == 0 { return; }
         
         unsafe {
@@ -170,7 +170,7 @@ pub fn load_volume(path: &str) -> Option<Volume> {
         if ptr.is_null() {
             None
         } else {
-            Some(std::mem::transmute_copy(&ptr))
+            Some(core::mem::transmute_copy(&ptr))
         }
     }
 }
@@ -181,14 +181,15 @@ pub fn merge_volumes(volumes: &[Volume]) -> Option<Volume> {
     }
 
     // Convert Vec<Volume> to Vec<*const Volume>
-    let ptrs: Vec<*const Volume> = volumes.iter().map(|v| v as *const Volume).collect();
+    // let ptrs: Vec<*const Volume> = volumes.iter().map(|v| v as *const Volume).collect();
 
-    unsafe {
-        let ptr = mergeVolumes(ptrs.as_ptr(), volumes.len());
-        if ptr.is_null() {
-            None
-        } else {
-            Some(std::mem::transmute_copy(&ptr))
-        }
-    }
+    // unsafe {
+        // let ptr = mergeVolumes(ptrs.as_ptr(), volumes.len());
+        // if ptr.is_null() {
+        //     None
+        // } else {
+        //     Some(core::mem::transmute_copy(&ptr))
+        // }
+    // }
+    todo!()
 }

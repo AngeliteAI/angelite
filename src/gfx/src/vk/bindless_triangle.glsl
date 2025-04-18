@@ -6,7 +6,7 @@
 // Push constant for the heap address
 layout(push_constant) uniform PushConstants {
     uint64_t heapAddress;  // Device address of the heap
-    mat4 modelMatrix;     // Model matrix
+    uint64_t cameraOffset;
 } pushConstants;
 
 // Define the camera data structure as it appears in memory
@@ -41,10 +41,32 @@ const vec3 colors[3] = vec3[](
 void main() {
     // Get the heap address from push constants
     uint64_t heapAddr = pushConstants.heapAddress;
-    debugPrintfEXT("Using heap address: 0x%llx", heapAddr);
+    uint64_t cameraOffset = pushConstants.cameraOffset;
+    debugPrintfEXT("Using heap address: 0x%llx, camera offset: 0x%llx", heapAddr, cameraOffset);
+    
+    // Check if heap address is valid
+    if (heapAddr == 0) {
+        debugPrintfEXT("ERROR: Heap address is 0, which is invalid!");
+        // Use a fallback position to ensure the triangle is still visible
+        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+        fragColor = colors[gl_VertexIndex];
+        return;
+    }
 
     // Create camera buffer reference - this gives access to the viewProjection matrix
-    CameraBuffer cameraData = CameraBuffer(heapAddr);
+    uint64_t cameraAddr = heapAddr + cameraOffset;
+    debugPrintfEXT("Camera buffer address: 0x%llx", cameraAddr);
+    
+    // Check if camera offset is valid
+    if (cameraOffset == 0) {
+        debugPrintfEXT("ERROR: Camera offset is 0, which is invalid!");
+        // Use a fallback position to ensure the triangle is still visible
+        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+        fragColor = colors[gl_VertexIndex];
+        return;
+    }
+    
+    CameraBuffer cameraData = CameraBuffer(cameraAddr);
 
     // Get vertex position
     vec2 position = positions[gl_VertexIndex];
@@ -64,10 +86,24 @@ void main() {
     debugPrintfEXT("First row of viewProj: [%f, %f, %f, %f]",
                   cameraData.viewProjection[0][0], cameraData.viewProjection[0][1],
                   cameraData.viewProjection[0][2], cameraData.viewProjection[0][3]);
-
-    // FALLBACK: If transformation gives invalid results (all zeros or NaNs),
-    // use direct positioning that we know works
-
+                  
+    // Check if the viewProjection matrix is valid (not all zeros)
+    bool matrixValid = false;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            if (cameraData.viewProjection[i][j] != 0.0) {
+                matrixValid = true;
+                break;
+            }
+        }
+        if (matrixValid) break;
+    }
+    
+    if (!matrixValid) {
+        debugPrintfEXT("ERROR: View-projection matrix is all zeros!");
+        // Use a fallback position to ensure the triangle is still visible
+        gl_Position = vec4(position.x, position.y, 0.0, 1.0);
+    }
 
     // Just print a simple debug message to confirm shader execution
     if (gl_VertexIndex == 0) {

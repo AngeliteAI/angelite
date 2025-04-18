@@ -98,13 +98,13 @@ pub const ShaderCompiler = struct {
         std.debug.print("ShaderCompiler.compileGlslToModule: Source written successfully\n", .{});
 
         // Prepare buffers for stdout and stderr
-        var stdout_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 8192) catch |err| {
+        var stdout_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 1024 * 1024) catch |err| {
             std.debug.print("ShaderCompiler.compileGlslToModule: Error initializing stdout buffer: {any}\n", .{err});
             return err;
         };
         defer stdout_buffer.deinit(self.allocator);
 
-        var stderr_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 8192) catch |err| {
+        var stderr_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 1024 * 1024) catch |err| {
             std.debug.print("ShaderCompiler.compileGlslToModule: Error initializing stderr buffer: {any}\n", .{err});
             return err;
         };
@@ -112,7 +112,7 @@ pub const ShaderCompiler = struct {
 
         // Read stdout and stderr
         std.debug.print("ShaderCompiler.compileGlslToModule: Collecting process output\n", .{});
-        child.collectOutput(self.allocator, &stdout_buffer, &stderr_buffer, 8192) catch |err| {
+        child.collectOutput(self.allocator, &stdout_buffer, &stderr_buffer, 1024 * 1024) catch |err| {
             std.debug.print("ShaderCompiler.compileGlslToModule: Error collecting output: {any}\n", .{err});
             return err;
         };
@@ -272,13 +272,13 @@ pub const ShaderCompiler = struct {
         try child.spawn();
 
         // Prepare buffers for stdout and stderr
-        var stdout_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 8192) catch |err| {
+        var stdout_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 1024 * 1024) catch |err| {
             std.debug.print("ShaderCompiler.compileShaderFile: Error initializing stdout buffer: {any}\n", .{err});
             return err;
         };
         defer stdout_buffer.deinit(self.allocator);
 
-        var stderr_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 8192) catch |err| {
+        var stderr_buffer = std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 1024 * 1024) catch |err| {
             std.debug.print("ShaderCompiler.compileShaderFile: Error initializing stderr buffer: {any}\n", .{err});
             return err;
         };
@@ -286,7 +286,7 @@ pub const ShaderCompiler = struct {
 
         // Read stdout and stderr before waiting
         std.debug.print("ShaderCompiler.compileShaderFile: Collecting process output\n", .{});
-        child.collectOutput(self.allocator, &stdout_buffer, &stderr_buffer, 8192) catch |err| {
+        child.collectOutput(self.allocator, &stdout_buffer, &stderr_buffer, 1024 * 1024) catch |err| {
             std.debug.print("ShaderCompiler.compileShaderFile: Error collecting output: {any}\n", .{err});
             return err;
         };

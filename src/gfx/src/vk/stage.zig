@@ -2,6 +2,7 @@ const std = @import("std");
 const heap = @import("heap.zig");
 const vk = @import("vk.zig");
 const logger = @import("../logger.zig");
+const task = @import("task.zig");
 
 pub const StageError = error{
     AllocationFailed,
@@ -17,6 +18,7 @@ pub const Upload = struct {
     offset: usize,
     size: usize,
     data: []const u8,
+    heap_offset: usize,
 };
 
 // Target union type used throughout the module
@@ -41,7 +43,7 @@ pub const Stage = struct {
     queue_family_index: u32,
     size: usize,
     uploads: std.ArrayList(Upload),
-    allocator: std.mem.Allocator,
+    allocator: *std.mem.Allocator,
     mapped_ptr: ?[*]u8,
 
     // Ring buffer tracking
@@ -53,7 +55,13 @@ pub const Stage = struct {
     target: TargetUnion,
 
     // Task system integration
-    staging_resource: ?*@import("task.zig").Resource = null,
+    staging_resource: ?*task.Resource = null,
+    // Store the staging pass to avoid creating multiple passes
+    staging_pass: ?*task.Pass = null,
+
+    ref_count: u32,
+    destroyed: bool,
+    mutex: std.Thread.Mutex,
 
     /// Create a new staging buffer with the specified size and buffer target
     pub fn createWithBufferTarget(
@@ -63,9 +71,9 @@ pub const Stage = struct {
         size: usize,
         target_buffer: vk.Buffer,
         target_offset: u64,
-        allocator: std.mem.Allocator,
+        allocator: *std.mem.Allocator,
     ) !*Stage {
-        std.debug.print("Creating Stage with buffer target, buffer: {any}, offset: {d}\n", .{target_buffer, target_offset});
+        std.debug.print("Creating Stage with buffer target, buffer: {any}, offset: {d}\n", .{ target_buffer, target_offset });
 
         // Create a properly tagged union for the target parameter
         const target_union = TargetUnion{
@@ -88,7 +96,7 @@ pub const Stage = struct {
         target_image: vk.Image,
         target_layout: vk.ImageLayout,
         aspect_mask: vk.ImageAspectFlags,
-        allocator: std.mem.Allocator,
+        allocator: *std.mem.Allocator,
     ) !*Stage {
         // Create a properly tagged union for the target parameter
         const target_union = TargetUnion{
@@ -108,14 +116,14 @@ pub const Stage = struct {
         queue_family_index: u32,
         size: usize,
         target_param: TargetUnion,
-        allocator: std.mem.Allocator,
+        allocator: *std.mem.Allocator,
     ) !*Stage {
         logger.info("[STAGE] Creating stage with size: {d}", .{size});
 
         // Log target type
         switch (target_param) {
-            .buffer => |buf| logger.info("[STAGE] Target type: buffer, handle: {any}, offset: {d}", .{buf.handle, buf.offset}),
-            .image => |img| logger.info("[STAGE] Target type: image, handle: {any}, layout: {any}", .{img.handle, img.layout}),
+            .buffer => |buf| logger.info("[STAGE] Target type: buffer, handle: {any}, offset: {d}", .{ buf.handle, buf.offset }),
+            .image => |img| logger.info("[STAGE] Target type: image, handle: {any}, layout: {any}", .{ img.handle, img.layout }),
         }
         const self = try allocator.create(Stage);
         errdefer allocator.destroy(self);
@@ -131,7 +139,7 @@ pub const Stage = struct {
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = null,
         };
-        std.debug.print("[STAGE] Creating staging buffer with size: {d}, usage: {any}\n", .{size, vk.BUFFER_USAGE_TRANSFER_SRC_BIT});
+        std.debug.print("[STAGE] Creating staging buffer with size: {d}, usage: {any}\n", .{ size, vk.BUFFER_USAGE_TRANSFER_SRC_BIT });
 
         var buffer: vk.Buffer = undefined;
         if (vk.createBuffer(device, &buffer_create_info, null, &buffer) != vk.SUCCESS) {
@@ -144,8 +152,7 @@ pub const Stage = struct {
         // Get memory requirements and allocate memory
         var mem_requirements: vk.MemoryRequirements = undefined;
         vk.getBufferMemoryRequirements(device, buffer, &mem_requirements);
-        logger.debug("[STAGE] Buffer memory requirements - size: {d}, alignment: {d}, memoryTypeBits: {b}",
-            .{mem_requirements.size, mem_requirements.alignment, mem_requirements.memoryTypeBits});
+        logger.debug("[STAGE] Buffer memory requirements - size: {d}, alignment: {d}, memoryTypeBits: {b}", .{ mem_requirements.size, mem_requirements.alignment, mem_requirements.memoryTypeBits });
 
         var memory_properties_info: vk.PhysicalDeviceMemoryProperties = undefined;
         vk.getPhysicalDeviceMemoryProperties(physical_device, &memory_properties_info);
@@ -153,9 +160,9 @@ pub const Stage = struct {
 
         // Find suitable memory type for staging (host visible and coherent)
         const memory_type_index = try heap.findMemoryType(
+            physical_device,
             mem_requirements.memoryTypeBits,
             vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT | vk.MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            memory_properties_info,
         );
         logger.debug("[STAGE] Found suitable memory type index: {d} (host visible and coherent)", .{memory_type_index});
 
@@ -190,32 +197,29 @@ pub const Stage = struct {
             .memory = memory,
             .queue_family_index = queue_family_index,
             .size = size,
-            .uploads = std.ArrayList(Upload).init(allocator),
+            .uploads = std.ArrayList(Upload).init(allocator.*),
             .allocator = allocator,
             .mapped_ptr = null,
             .current_offset = 0,
             .last_fence = null,
             .aligned_offset = 256, // Common alignment for most GPUs (adjust as needed)
-            .target = target_param,  // Directly use the anonymous struct
+            .target = target_param, // Directly use the anonymous struct
             .staging_resource = null,
+            .ref_count = 0,
+            .destroyed = false,
+            .mutex = std.Thread.Mutex{},
         };
 
         // Verify target type after assignment
         std.debug.print("[STAGE] Target type after assignment: ", .{});
         switch (self.target) {
-            .buffer => |b| std.debug.print("buffer with handle: {any}, offset: {d}\n", .{b.handle, b.offset}),
+            .buffer => |b| std.debug.print("buffer with handle: {any}, offset: {d}\n", .{ b.handle, b.offset }),
             .image => std.debug.print("image(!)\n", .{}),
         }
 
         // Create task resources for staging buffer
-        const task = @import("task.zig");
         std.debug.print("[STAGE] Creating task resource for staging buffer\n", .{});
-        self.staging_resource = try task.Resource.init(
-            allocator,
-            "StagingBuffer",
-            task.ResourceType.Buffer,
-            buffer
-        );
+        self.staging_resource = try task.Resource.init(allocator, "StagingBuffer", task.ResourceType.Buffer, buffer);
         std.debug.print("[STAGE] Task resource created successfully: {any}\n", .{self.staging_resource});
 
         logger.info("[STAGE] Stage created successfully with size: {d}", .{size});
@@ -224,39 +228,51 @@ pub const Stage = struct {
 
     /// Map the staging buffer memory for CPU access
     pub fn mapMemory(self: *Stage) !void {
-        if (self.mapped_ptr != null) {
-            logger.debug("[STAGE] Memory already mapped, skipping", .{});
-            return; // Already mapped
+        if (self.mapped_ptr != null) return;
+
+        // Add mutex lock for thread safety
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.destroyed) {
+            return error.StageDestroyed;
         }
 
-        logger.debug("[STAGE] Mapping staging buffer memory: {*}", .{self.memory});
-        var data: ?*anyopaque = null;
-        if (vk.mapMemory(self.device, self.memory, 0, vk.WHOLE_SIZE, 0, &data) != vk.SUCCESS) {
-            logger.err("[STAGE] Memory mapping failed", .{});
-            return StageError.MappingFailed;
+        var mapped_ptr: ?*anyopaque = null;
+        const result = vk.mapMemory(
+            self.device,
+            self.memory,
+            0,
+            self.size,
+            0,
+            @ptrCast(&mapped_ptr),
+        );
+
+        if (result != vk.SUCCESS) {
+            return error.VulkanError;
         }
 
-        self.mapped_ptr = @ptrCast(data);
-        logger.debug("[STAGE] Memory mapped successfully at address: {*}", .{self.mapped_ptr});
+        self.mapped_ptr = @ptrCast(mapped_ptr);
+        logger.info("Memory mapped successfully at address: {*}", .{mapped_ptr});
     }
 
     /// Unmap the staging buffer memory
     pub fn unmapMemory(self: *Stage) void {
-        if (self.mapped_ptr == null) {
-            logger.debug("[STAGE] Memory not mapped, skipping unmapping", .{});
-            return; // Not mapped
-        }
+        // Add mutex lock for thread safety
+        self.mutex.lock();
+        defer self.mutex.unlock();
 
-        std.debug.print("[STAGE] Unmapping memory: {any}\n", .{self.memory});
+        if (self.mapped_ptr == null) return;
+
         vk.unmapMemory(self.device, self.memory);
         self.mapped_ptr = null;
-        std.debug.print("[STAGE] Memory unmapped successfully\n", .{});
+        logger.info("Memory unmapped successfully", .{});
     }
 
     /// Align an offset to the required alignment
     fn alignOffset(self: *Stage, offset: usize) usize {
         const aligned = (offset + self.aligned_offset - 1) & ~(self.aligned_offset - 1);
-        std.debug.print("[STAGE] Aligning offset {d} to {d} (alignment: {d})\n", .{offset, aligned, self.aligned_offset});
+        std.debug.print("[STAGE] Aligning offset {d} to {d} (alignment: {d})\n", .{ offset, aligned, self.aligned_offset });
         return aligned;
     }
 
@@ -278,48 +294,47 @@ pub const Stage = struct {
     }
 
     /// Queue an upload operation to the staging buffer
-    pub fn queueUpload(self: *Stage, data: []const u8) !usize {
-        std.debug.print("[STAGE] Queuing upload of {d} bytes\n", .{data.len});
+    pub fn queueUpload(self: *Stage, data: []const u8, heap_offset: usize) !usize {
+        std.debug.print("[STAGE] Queueing upload: size={d}, heap_offset={d}\n", .{ data.len, heap_offset });
 
-        // Check if we need to reset or have enough space
-        const aligned_size = self.alignOffset(data.len);
-        const end_offset = self.current_offset + aligned_size;
-        std.debug.print("[STAGE] Current offset: {d}, aligned size: {d}, end offset: {d}, buffer size: {d}\n",
-            .{self.current_offset, aligned_size, end_offset, self.size});
-
-        if (end_offset > self.size) {
-            std.debug.print("[STAGE] Not enough space in staging buffer, attempting reset\n", .{});
-            // Try to reset the buffer first
-            self.resetOffset();
-
-            // If we still don't have enough space, return an error
-            if (aligned_size > self.size) {
-                std.debug.print("[STAGE] Data too large for staging buffer even after reset ({d} > {d})\n",
-                    .{aligned_size, self.size});
-                return StageError.NotEnoughSpace;
-            }
+        // Check if we have enough space in the staging buffer
+        if (data.len > self.size) {
+            std.debug.print("[STAGE] Data size {d} exceeds staging buffer size {d}\n", .{ data.len, self.size });
+            return error.StagingBufferFull;
         }
 
-        // Reserve the current offset
-        const upload_offset = self.current_offset;
-        std.debug.print("[STAGE] Reserved upload at offset: {d}\n", .{upload_offset});
+        // Calculate the offset, handling ring buffer wrapping
+        var offset = self.current_offset;
+        if (offset + data.len > self.size) {
+            // We need to wrap around to the beginning
+            std.debug.print("[STAGE] Wrapping around ring buffer: current={d}, size={d}\n", .{ offset, self.size });
+            offset = 0;
+            self.current_offset = data.len;
+        } else {
+            self.current_offset += data.len;
+        }
 
-        // Move the current offset forward
-        self.current_offset += aligned_size;
-        std.debug.print("[STAGE] Updated current offset to: {d}\n", .{self.current_offset});
+        // Map the memory if not already mapped
+        if (self.mapped_ptr == null) {
+            try self.mapMemory();
+        }
+
+        // Copy the data to the staging buffer:w
+
+        @memcpy(self.mapped_ptr.?[offset .. offset + data.len], data);
 
         // Add the upload to the queue
         try self.uploads.append(.{
-            .offset = upload_offset,
+            .offset = offset,
             .size = data.len,
             .data = data,
+            .heap_offset = heap_offset,
         });
-        std.debug.print("[STAGE] Added upload to queue, total queued uploads: {d}\n", .{self.uploads.items.len});
 
-        return upload_offset;
+        std.debug.print("[STAGE] Upload queued: offset={d}, size={d}, heap_offset={d}\n", .{ offset, data.len, heap_offset });
+        return offset;
     }
 
-    /// Perform all queued uploads to the staging buffer
     /// Perform all queued uploads to the staging buffer
     /// clear_uploads: If true, clears the uploads list after flushing (default: false)
     pub fn flushUploads(self: *Stage, clear_uploads: bool) !void {
@@ -336,8 +351,7 @@ pub const Stage = struct {
         // Copy data for all uploads
         std.debug.print("[STAGE] Copying data for {d} uploads to staging buffer\n", .{self.uploads.items.len});
         for (self.uploads.items, 0..) |upload, i| {
-            std.debug.print("[STAGE] Copying upload {d}/{d}: {d} bytes to offset {d}\n",
-                .{i+1, self.uploads.items.len, upload.data.len, upload.offset});
+            std.debug.print("[STAGE] Copying upload {d}/{d}: {d} bytes to offset {d}\n", .{ i + 1, self.uploads.items.len, upload.data.len, upload.offset });
             // Direct copy to mapped memory
             @memcpy(self.mapped_ptr.?[upload.offset .. upload.offset + upload.data.len], upload.data);
         }
@@ -380,28 +394,27 @@ pub const Stage = struct {
 
     /// Data structure for buffer copy operations
     pub const BufferCopyData = struct {
-        stage: *Stage,      // Reference to the Stage
-        offset: usize,      // Source offset in staging buffer
-        size: usize,        // Size of data to copy
+        stage: *Stage, // Reference to the Stage
+        offset: usize, // Source offset in staging buffer
+        size: usize, // Size of data to copy
     };
 
     /// Create a task pass for copying from staging buffer to the target heap buffer
-    pub fn createBufferCopyPass(self: *Stage, name: []const u8, dst_resource: ?*@import("task.zig").Resource, offset: usize, size: usize) !*@import("task.zig").Pass {
+    pub fn createBufferCopyPass(self: *Stage, name: []const u8, dst_resource: ?*task.Resource, offset: usize, size: usize) !*task.Pass {
         // Validate that this Stage has a buffer target
         std.debug.print("[STAGE] createBufferCopyPass - validating target type\n", .{});
+
         switch (self.target) {
-            .buffer => |b| std.debug.print("[STAGE] confirmed buffer target: {any}, offset: {d}\n",
-                                          .{b.handle, b.offset}),
+            .buffer => |b| std.debug.print("[STAGE] confirmed buffer target: {any}, offset: {d}\n", .{ b.handle, b.offset }),
             .image => {
                 std.debug.print("[STAGE] ERROR: attempting to create buffer copy pass with image target!\n", .{});
                 return error.InvalidTargetType;
             },
         }
-        const task = @import("task.zig");
 
         const copy_data = try self.allocator.create(BufferCopyData);
         copy_data.* = .{
-            .stage = self,    // Store the Stage reference
+            .stage = self, // Store the Stage reference
             .offset = offset,
             .size = size,
         };
@@ -416,91 +429,32 @@ pub const Stage = struct {
                 // Get Stage from the CopyData struct
                 const stage = data.stage;
 
+                // Get the destination buffer
                 const dst_buf = ctx.pass.outputs.items[0].resource;
-                const src_buf = ctx.pass.inputs.items[0].resource;
 
-                // Both resources must have valid buffer handles
-                if (dst_buf.handle == null or src_buf.handle == null) {
-                    std.log.err("Invalid buffer handles in buffer copy pass", .{});
-                    unreachable;
+                // Get the destination buffer handle
+                if (dst_buf.handle == null or dst_buf.ty != .Buffer) {
+                    std.log.err("Invalid destination buffer in buffer copy pass", .{});
+                    return;
                 }
 
-                // Get the staging buffer
-                const stage_buffer = src_buf.handle.?.buffer;
-
-                // Check the destination resource type
-                std.log.debug("dst_buf.ty = {any}", .{dst_buf.ty});
-                if (dst_buf.ty != .Buffer) {
-                    std.log.err("Attempted to use buffer copy pass with image target", .{});
-                    unreachable;
-                }
-
-                // Get offset from stage target and verify it matches resource type
-                std.log.debug("stage.target = {any}", .{stage.target});
-                var dst_offset: u64 = undefined;
-                switch (stage.target) {
-                    .buffer => |buffer_target| {
-                        std.log.debug("Buffer target handle: {any}, offset: {any}", .{buffer_target.handle, buffer_target.offset});
-                        dst_offset = buffer_target.offset;
-                    },
-                    .image => {
-                        // Should never happen with the check above
-                        std.log.err("Inconsistent target types - stage.target is image but dst_buf.ty is Buffer", .{});
-                        std.log.err("This indicates a mismatch between the stage's target and the resource type", .{});
-                        unreachable;
-                    },
-                }
-
-                // Fixed buffer copy region with thorough validation
-                const final_src_offset = @min(data.offset, @as(u64, 1024 * 1024 * 8)); // Cap at 8MB (staging buffer size)
-                // Increase size limit to accommodate larger structures like matrices (16 floats = 64 bytes)
-                const final_size = @min(data.size, @as(u64, 4096)); // Increased from 1KB to 4KB
-
-                std.debug.print("[STAGE] Fixing copy parameters - original: src={}, size={}\n",
-                             .{data.offset, data.size});
-                std.debug.print("[STAGE] Fixed parameters: src={}, dst={}, size={}\n",
-                             .{final_src_offset, dst_offset, final_size});
-
-                const region = vk.BufferCopy{
-                    .srcOffset = final_src_offset,
-                    .dstOffset = dst_offset,
-                    .size = final_size,
+                // Get the destination offset from the stage target
+                const dst_offset = switch (stage.target) {
+                    .buffer => |b| b.offset,
+                    .image => 0, // Should never happen
                 };
 
-                // Detailed logging before copy command
-                std.debug.print("[STAGE] About to execute CmdCopyBuffer - src: {any}, dst: {any}, region: {{srcOffset={d}, dstOffset={d}, size={d}}}\n",
-                           .{stage_buffer, dst_buf.handle.?.buffer, region.srcOffset, region.dstOffset, region.size});
+                // Create the copy region
+                const region = vk.BufferCopy{
+                    .srcOffset = data.offset,
+                    .dstOffset = dst_offset,
+                    .size = data.size,
+                };
 
-                // Comprehensive buffer validation
-                if (stage_buffer == null or dst_buf.handle == null or dst_buf.handle.?.buffer == null) {
-                    std.debug.print("[STAGE] CRITICAL ERROR: Invalid buffer handle detected!\n", .{});
-                    std.debug.print("[STAGE] stage_buffer: {any}, dst_buf.handle: {any}\n",
-                                 .{stage_buffer, if (dst_buf.handle != null) dst_buf.handle.?.buffer else null});
-                    return; // Prevent device lost error by not executing invalid command
-                }
+                // Execute the copy command
+                std.debug.print("[STAGE] Executing cmdCopyBuffer - src: {any}, dst: {any}, region: {{srcOffset={d}, dstOffset={d}, size={d}}}\n", .{ stage.buffer, dst_buf.handle.?.buffer, region.srcOffset, region.dstOffset, region.size });
 
-                // Double-check resource type and validity
-                if (dst_buf.ty != .Buffer) {
-                    std.debug.print("[STAGE] ERROR: Destination is not a buffer (type: {any})\n", .{dst_buf.ty});
-                    return;
-                }
-
-                // Validate region parameters
-                if (data.size == 0 or data.size > 10000000) {
-                    std.debug.print("[STAGE] ERROR: Suspicious copy size: {d}\n", .{data.size});
-                    return;
-                }
-
-                // Try/catch the copy command to prevent potential crashes
-                std.debug.print("[STAGE] Executing CmdCopyBuffer...\n", .{});
-                vk.CmdCopyBuffer(
-                    ctx.cmd,
-                    stage_buffer,
-                    dst_buf.handle.?.buffer,
-                    1,
-                    &region
-                );
-                std.debug.print("[STAGE] CmdCopyBuffer executed successfully\n", .{});
+                vk.cmdCopyBuffer(ctx.cmd, stage.buffer, dst_buf.handle.?.buffer, 1, &region);
 
                 // Store the fence for synchronization if provided
                 if (ctx.in_flight_fence != null) {
@@ -509,7 +463,7 @@ pub const Stage = struct {
             }
         }.execute;
 
-        const pass = try task.Pass.init(self.allocator, name, copy_buffer_fn);
+        const pass = try task.Pass.init(self.allocator.*, name, copy_buffer_fn);
         pass.userData = copy_data;
 
         // Add custom cleanup function
@@ -531,16 +485,22 @@ pub const Stage = struct {
             .stageMask = vk.PIPELINE_STAGE_TRANSFER_BIT,
             .layout = undefined, // Not used for buffers
             .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        }, .{
+            .offset = 0,
+            .size = self.size,
         });
 
         // Add the destination buffer as output
         if (dst_resource) |resource| {
-            std.log.debug("Using provided dst_resource: {s}, type: {any}, handle: {any}", .{resource.name, resource.ty, resource.handle});
+            std.log.debug("Using provided dst_resource: {s}, type: {any}, handle: {any}", .{ resource.name, resource.ty, resource.handle });
             try pass.addOutput(resource, task.ResourceState{
                 .accessMask = vk.ACCESS_SHADER_READ_BIT,
                 .stageMask = vk.PIPELINE_STAGE_VERTEX_SHADER_BIT | vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 .layout = undefined, // Not used for buffers
                 .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+            }, .{
+                .offset = 0,
+                .size = self.size,
             });
         } else {
             // If dst_resource is null, we need to create or get a resource for the target
@@ -553,18 +513,16 @@ pub const Stage = struct {
                 },
             };
 
-            const target_resource = try task.Resource.init(
-                self.allocator,
-                "TargetBuffer",
-                task.ResourceType.Buffer,
-                buffer
-            );
+            const target_resource = try task.Resource.init(self.allocator.*, "TargetBuffer", task.ResourceType.Buffer, buffer);
 
             try pass.addOutput(target_resource, task.ResourceState{
                 .accessMask = vk.ACCESS_SHADER_READ_BIT,
                 .stageMask = vk.PIPELINE_STAGE_VERTEX_SHADER_BIT | vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                 .layout = undefined, // Not used for buffers
                 .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+            }, .{
+                .offset = 0,
+                .size = self.size,
             });
         }
 
@@ -572,16 +530,11 @@ pub const Stage = struct {
     }
 
     /// Create a task pass for copying from staging buffer to an image
-    pub fn createImageCopyPass(self: *Stage, name: []const u8, dst_resource: *@import("task.zig").Resource, regions: []const vk.BufferImageCopy, dst_layout: vk.ImageLayout) !*@import("task.zig").Pass {
-        const task = @import("task.zig");
-
-        // Data to be stored with the pass
-        const ImageCopyData = struct {
+    pub fn createImageCopyPass(self: *Stage, name: []const u8, dst_resource: *task.Resource, regions: []const vk.BufferImageCopy, dst_layout: vk.ImageLayout) !*task.Pass {
+        const copy_data = try self.allocator.create(struct {
             regions: []const vk.BufferImageCopy,
             layout: vk.ImageLayout,
-        };
-
-        const copy_data = try self.allocator.create(ImageCopyData);
+        });
         copy_data.* = .{
             .regions = try self.allocator.dupe(vk.BufferImageCopy, regions),
             .layout = dst_layout,
@@ -595,33 +548,33 @@ pub const Stage = struct {
 
                 // Both resources must have valid handles
                 if (dst_image.handle == null or dst_image.ty != task.ResourceType.Image or
-                    src_buf.handle == null or src_buf.ty != task.ResourceType.Buffer) {
+                    src_buf.handle == null or src_buf.ty != task.ResourceType.Buffer)
+                {
                     std.log.err("Invalid resource handles in image copy pass", .{});
                     return;
                 }
 
                 // Get the copy data
-                const data = @as(*ImageCopyData, @ptrCast(@alignCast(ctx.userData)));
+                const data = @as(*struct {
+                    regions: []const vk.BufferImageCopy,
+                    layout: vk.ImageLayout,
+                }, @ptrCast(@alignCast(ctx.userData)));
 
                 // Record buffer-to-image copy command
-                vk.CmdCopyBufferToImage(
-                    ctx.cmd,
-                    src_buf.handle.?.buffer,
-                    dst_image.handle.?.image,
-                    data.layout,
-                    @intCast(data.regions.len),
-                    data.regions.ptr
-                );
+                vk.cmdCopyBufferToImage(ctx.cmd, src_buf.handle.?.buffer, dst_image.handle.?.image, data.layout, @intCast(data.regions.len), data.regions.ptr);
             }
         }.execute;
 
-        var pass = try task.Pass.init(self.allocator, name, copy_image_fn);
+        var pass = try task.Pass.init(self.allocator.*, name, copy_image_fn);
         pass.userData = copy_data;
 
         // Add an proper cleanup function
         pass.deinit_fn = struct {
             fn deinit(p: *task.Pass, alloc: std.mem.Allocator) void {
-                const data = @as(*ImageCopyData, @ptrCast(@alignCast(p.userData)));
+                const data = @as(*struct {
+                    regions: []const vk.BufferImageCopy,
+                    layout: vk.ImageLayout,
+                }, @ptrCast(@alignCast(p.userData)));
                 alloc.free(data.regions);
                 alloc.destroy(data);
                 p.userData = null;
@@ -637,6 +590,9 @@ pub const Stage = struct {
             .stageMask = vk.PIPELINE_STAGE_TRANSFER_BIT,
             .layout = undefined, // Not used for buffers
             .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        }, .{
+            .offset = 0,
+            .size = self.size,
         });
 
         // Add the destination image as output
@@ -645,18 +601,17 @@ pub const Stage = struct {
             .stageMask = vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
             .layout = dst_layout,
             .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-        });
+        }, null);
 
         return pass;
     }
 
-
     pub fn copyToTarget(self: *Stage, cmd: vk.CommandBuffer, src_offset: u64, size: u64) !void {
-        std.debug.print("[STAGE] Copying {d} bytes from staging buffer offset {d} to target\n", .{size, src_offset});
+        std.debug.print("[STAGE] Copying {d} bytes from staging buffer offset {d} to target\n", .{ size, src_offset });
 
         switch (self.target) {
             .buffer => |buffer_target| {
-                std.debug.print("[STAGE] Target is buffer: {any}, target offset: {d}\n", .{buffer_target.handle, buffer_target.offset});
+                std.debug.print("[STAGE] Target is buffer: {any}, target offset: {d}\n", .{ buffer_target.handle, buffer_target.offset });
                 const region = vk.BufferCopy{
                     .srcOffset = src_offset,
                     .dstOffset = buffer_target.offset,
@@ -664,15 +619,14 @@ pub const Stage = struct {
                 };
 
                 std.debug.print("[STAGE] Issuing buffer copy command to command buffer: {any}\n", .{cmd});
-                vk.CmdCopyBuffer(cmd, self.buffer, buffer_target.handle, 1, &region);
+                vk.cmdCopyBuffer(cmd, self.buffer, buffer_target.handle, 1, &region);
                 std.debug.print("[STAGE] Buffer copy command issued\n", .{});
             },
             .image => |image_target| {
-                std.debug.print("[STAGE] Target is image: {any}, layout: {any}, aspect: {any}\n",
-                    .{image_target.handle, image_target.layout, image_target.aspect_mask});
+                std.debug.print("[STAGE] Target is image: {any}, layout: {any}, aspect: {any}\n", .{ image_target.handle, image_target.layout, image_target.aspect_mask });
                 const region = vk.BufferImageCopy{
                     .bufferOffset = src_offset,
-                    .bufferRowLength = 0,  // Tightly packed
+                    .bufferRowLength = 0, // Tightly packed
                     .bufferImageHeight = 0, // Tightly packed
                     .imageSubresource = .{
                         .aspectMask = image_target.aspect_mask,
@@ -689,14 +643,7 @@ pub const Stage = struct {
                 };
 
                 std.debug.print("[STAGE] Issuing buffer-to-image copy command to command buffer: {any}\n", .{cmd});
-                vk.CmdCopyBufferToImage(
-                    cmd,
-                    self.buffer,
-                    image_target.handle,
-                    image_target.layout,
-                    1,
-                    &region
-                );
+                vk.cmdCopyBufferToImage(cmd, self.buffer, image_target.handle, image_target.layout, 1, &region);
                 std.debug.print("[STAGE] Buffer-to-image copy command issued\n", .{});
             },
         }
@@ -707,23 +654,116 @@ pub const Stage = struct {
         self.uploads.clearRetainingCapacity();
     }
 
+    /// Creates a staging pass for queued uploads
+    pub fn createStagingPass(self: *Stage, name: []const u8) !*task.Pass {
+        std.debug.print("[STAGE] Creating staging pass '{s}' with {d} uploads\n", .{ name, self.uploads.items.len });
+
+        // Define the execution function for the pass
+        const execute_fn = struct {
+            fn execute(ctx: task.PassContext) void {
+                const stage = @as(*Stage, @ptrCast(@alignCast(ctx.userData)));
+
+                // Get the staging buffer and target buffer
+                const staging_buf = ctx.pass.inputs.items[0].resource;
+                const target_buf = ctx.pass.outputs.items[0].resource;
+                std.debug.print("[STAGE] Staging buffer: {any}, target buffer: {any}\n", .{ staging_buf.handle, target_buf.handle });
+
+                // Execute copy commands for each upload
+                for (stage.uploads.items) |upload| {
+                    std.debug.print("[STAGE] Executing copy command: src_offset={d}, dst_offset={d}, size={d}\n", .{
+                        upload.offset,
+                        upload.heap_offset,
+                        upload.size,
+                    });
+
+                    const region = vk.BufferCopy{
+                        .srcOffset = upload.offset,
+                        .dstOffset = upload.heap_offset,
+                        .size = upload.size,
+                    };
+
+                    vk.cmdCopyBuffer(ctx.cmd, staging_buf.handle.?.buffer, target_buf.handle.?.buffer, 1, &region);
+                }
+                std.debug.print("[STAGE] All copy commands executed\n", .{});
+
+                // Store the fence for synchronization if provided
+                if (ctx.in_flight_fence != null) {
+                    stage.last_fence = ctx.in_flight_fence;
+                }
+
+                // Clear uploads after the pass is executed
+                stage.uploads.clearRetainingCapacity();
+                stage.current_offset = 0;
+            }
+        }.execute;
+
+        // Create a new pass with the allocator, name, and execution function
+        const pass = try task.Pass.init(self.allocator, name, execute_fn);
+        pass.userData = self;
+
+        // Add resources
+        try pass.addInput(self.staging_resource.?, task.ResourceState{
+            .accessMask = vk.ACCESS_TRANSFER_READ_BIT,
+            .stageMask = vk.PIPELINE_STAGE_TRANSFER_BIT,
+            .layout = undefined, // Not used for buffers
+            .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        }, .{
+            .offset = 0,
+            .size = self.size,
+        });
+
+        // Extract the buffer from the target union
+        const buffer = switch (self.target) {
+            .buffer => |b| b.handle,
+            .image => {
+                std.debug.print("[STAGE] ERROR: Cannot create staging pass with image target!\n", .{});
+                return error.InvalidTargetType;
+            },
+        };
+
+        // Create a resource for the target buffer
+        const target_resource = try task.Resource.init(self.allocator, "TargetBuffer", task.ResourceType.Buffer, buffer);
+
+        try pass.addOutput(target_resource, task.ResourceState{
+            .accessMask = vk.ACCESS_TRANSFER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_TRANSFER_BIT,
+            .layout = undefined, // Not used for buffers
+            .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
+        }, .{
+            .offset = 0,
+            .size = self.size,
+        });
+
+        return pass;
+    }
+
     /// Destroy the stage and free its resources
     pub fn destroy(self: *Stage) void {
-        std.debug.print("[STAGE] Destroying stage, buffer: {any}, memory: {any}, size: {d}\n",
-            .{self.buffer, self.memory, self.size});
+        if (self.destroyed) return;
+
+        // Set destroyed flag first
+        self.destroyed = true;
+
+        // Only destroy if ref count is 0
+        if (self.ref_count > 0) {
+            logger.info("Stage marked as destroyed but ref count is {}, deferring actual destruction", .{self.ref_count});
+            return;
+        }
+
+        logger.info("Destroying stage, buffer: {any}, memory: {any}, size: {d}", .{ self.buffer, self.memory, self.size });
 
         // Make sure all operations are complete
         if (self.last_fence) |fence| {
-            std.debug.print("[STAGE] Waiting for fence: {any} before destruction\n", .{fence});
+            logger.info("Waiting for fence: {any} before destruction", .{fence});
             const result = vk.waitForFences(self.device, 1, &fence, vk.TRUE, std.time.ns_per_s * 5);
-            std.debug.print("[STAGE] Fence wait result: {any}\n", .{result});
+            logger.info("Fence wait result: {any}", .{result});
             // Note: We don't destroy the fence as it's owned by the task system
             self.last_fence = null;
         }
 
         // Unmap memory if mapped
         if (self.mapped_ptr != null) {
-            std.debug.print("[STAGE] Unmapping memory before destruction\n", .{});
+            logger.info("Unmapping memory before destruction", .{});
             self.unmapMemory();
         }
 
@@ -734,8 +774,15 @@ pub const Stage = struct {
         // Clean up task resources if we created them
         if (self.staging_resource != null) {
             std.debug.print("[STAGE] Cleaning up staging task resource: {any}\n", .{self.staging_resource});
-            self.staging_resource.?.deinit(&self.allocator);
+            self.staging_resource.?.deinit(self.allocator);
             self.staging_resource = null;
+        }
+
+        // Clean up staging pass if we created it
+        if (self.staging_pass != null) {
+            std.debug.print("[STAGE] Cleaning up staging pass: {any}\n", .{self.staging_pass});
+            self.staging_pass.?.deinit(self.allocator.*);
+            self.staging_pass = null;
         }
 
         // Free Vulkan resources
@@ -749,5 +796,4 @@ pub const Stage = struct {
         self.allocator.destroy(self);
         std.debug.print("[STAGE] Stage destroyed successfully\n", .{});
     }
-
 };

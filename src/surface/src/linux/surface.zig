@@ -13,7 +13,7 @@ pub const XcbSurface = struct {
 
 var next_surface_id: Id = Id{ .id = 0 };
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
-var xcb_surface_allocator: std.mem.Allocator = undefined;
+var xcb_surface_allocator: *std.mem.Allocator = undefined;
 pub var xcb_surfaces: std.AutoHashMap(Id, XcbSurface) = undefined;
 var init: bool = false;
 pub export fn createSurface() ?*Surface {

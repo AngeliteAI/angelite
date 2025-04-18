@@ -17,7 +17,7 @@ pub const VoxelGrid = struct {
     rotation: Quat,
     dirty: bool,
 
-    pub fn init(allocator: std.mem.Allocator, data: *Palette, size: UVec3) !*VoxelGrid {
+    pub fn init(allocator: *std.mem.Allocator, data: *Palette, size: UVec3) !*VoxelGrid {
         const grid = try allocator.create(VoxelGrid);
         grid.* = .{
             .data = data,
@@ -30,7 +30,7 @@ pub const VoxelGrid = struct {
         return grid;
     }
 
-    pub fn deinit(self: *VoxelGrid, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *VoxelGrid, allocator: *std.mem.Allocator) void {
         allocator.destroy(self);
     }
 

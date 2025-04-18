@@ -59,7 +59,7 @@ pub const SurfaceCreateInfo = blk: {
         break :blk c.VkXcbSurfaceCreateInfoKHR;
     }
 };
-pub  const PhysicalDeviceSynchronization2Features = c.VkPhysicalDeviceSynchronization2Features;
+pub const PhysicalDeviceSynchronization2Features = c.VkPhysicalDeviceSynchronization2Features;
 pub const createVkSurface = blk: {
     if (@import("builtin").os.tag == .windows) {
         break :blk c.vkCreateWin32SurfaceKHR;
@@ -123,6 +123,7 @@ pub const StructureType = enum(c_uint) {
     PipelineInputAssemblyStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
     PipelineRasterizationStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
     PipelineColorBlendStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    ComputePipelineCreateInfo = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
     PipelineDepthStencilStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 
     DependencyInfoKHR = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR,
@@ -160,8 +161,9 @@ pub fn sTy(ty: StructureType) c.VkStructureType {
 pub const API_VERSION_1_0 = c.VK_API_VERSION_1_0;
 pub const API_VERSION_1_3 = c.VK_API_VERSION_1_3;
 pub const MAKE_VERSION = c.VK_MAKE_VERSION;
-pub const AppInfo = c.VkApplicationInfo;
-pub const InstanceInfo = c.VkInstanceCreateInfo;
+pub const ApplicationInfo = c.VkApplicationInfo;
+pub const Bool32 = c.VkBool32;
+pub const InstanceCreateInfo = c.VkInstanceCreateInfo;
 pub const DeviceQueueCreateInfo = c.VkDeviceQueueCreateInfo;
 pub const DeviceCreateInfo = c.VkDeviceCreateInfo;
 pub const enumerateInstanceLayerProperties = c.vkEnumerateInstanceLayerProperties;
@@ -178,6 +180,7 @@ pub const PipelineLayout = c.VkPipelineLayout;
 pub const ShaderModule = c.VkShaderModule;
 pub const ACCESS_TRANSFER_READ_BIT = c.VK_ACCESS_TRANSFER_READ_BIT;
 pub const ACCESS_TRANSFER_WRITE_BIT = c.VK_ACCESS_TRANSFER_WRITE_BIT;
+pub const ComputePipelineCreateInfo = c.VkComputePipelineCreateInfo;
 pub const PIPELINE_STAGE_VERTEX_SHADER_BIT = c.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 pub const PIPELINE_STAGE_FRAGMENT_SHADER_BIT = c.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 
@@ -194,7 +197,10 @@ pub const createDevice = c.vkCreateDevice;
 pub const destroyDevice = c.vkDestroyDevice;
 pub const destroyInstance = c.vkDestroyInstance;
 pub const getSwapchainImages = c.vkGetSwapchainImagesKHR;
+pub const PIPELINE_STAGE_COMPUTE_SHADER_BIT = c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+pub const ACCESS_SHADER_WRITE_BIT = c.VK_ACCESS_SHADER_WRITE_BIT;
 pub const createImageView = c.vkCreateImageView;
+pub const DeviceSize = c.VkDeviceSize;
 pub const destroyImageView = c.vkDestroyImageView;
 pub const enumerateInstanceExtensionProperties = c.vkEnumerateInstanceExtensionProperties;
 pub const queuePresent = c.vkQueuePresentKHR;
@@ -208,7 +214,9 @@ pub const enumerateDeviceExtensionProperties = c.vkEnumerateDeviceExtensionPrope
 pub const SemaphoreCreateInfo = c.VkSemaphoreCreateInfo;
 pub const FenceCreateInfo = c.VkFenceCreateInfo;
 pub const ExtensionProperties = c.VkExtensionProperties;
-
+pub const COMPUTE = c.VK_SHADER_STAGE_COMPUTE_BIT;
+pub const PIPELINE_BIND_POINT_COMPUTE = c.VK_PIPELINE_BIND_POINT_COMPUTE;
+pub const cmdDispatch = c.vkCmdDispatch;
 pub fn createSurface(instance: Instance, platform_specific_info: PlatformSpecificInfo) ?Surface {
     const create_info = switch (@import("builtin").os.tag) {
         .windows => c.VkWin32SurfaceCreateInfoKHR{
@@ -245,50 +253,10 @@ pub const SurfaceFormat = c.VkSurfaceFormatKHR;
 pub const Extent2D = c.VkExtent2D;
 
 // Swapchain-related functions
-pub const createSwapchainKHR = c.vkCreateSwapchainKHR;
 pub const destroySwapchainKHR = c.vkDestroySwapchainKHR;
 pub const getSwapchainImagesKHR = c.vkGetSwapchainImagesKHR;
-pub const acquireNextImageKHR = c.vkAcquireNextImageKHR;
 pub const queuePresentKHR = c.vkQueuePresentKHR;
-
-// Helper function to create a swapchain
-pub fn createSwapchain(
-    device: Device,
-    surface: Surface,
-    surface_format: SurfaceFormat,
-    extent: Extent2D,
-    present_mode: PresentMode,
-    old_swapchain: ?Swapchain,
-) ?Swapchain {
-    const create_info = SwapchainCreateInfo{
-        .sType = sTy(.SwapchainCreateInfo),
-        .pNext = null,
-        .surface = surface,
-        .minImageCount = 2, // Double buffering
-        .imageFormat = surface_format.format,
-        .imageColorSpace = surface_format.colorSpace,
-        .imageExtent = extent,
-        .imageArrayLayers = 1,
-        .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
-        .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = null,
-        .preTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-        .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        .presentMode = present_mode,
-        .clipped = true,
-        .oldSwapchain = old_swapchain orelse null,
-    };
-
-    var swapchain: Swapchain = undefined;
-    const result = createSwapchainKHR(device, &create_info, null, &swapchain);
-    if (result != SUCCESS) {
-        return null;
-    }
-    return swapchain;
-}
-
-// ...existing code...
+pub const PhysicalDeviceFeatures = c.VkPhysicalDeviceFeatures;
 
 // Command pool-related constants
 pub const CommandPoolCreateInfo = c.VkCommandPoolCreateInfo;
@@ -499,7 +467,7 @@ pub const QueueFamilyProperties = c.VkQueueFamilyProperties;
 pub const getPhysicalDeviceQueueFamilyProperties = c.vkGetPhysicalDeviceQueueFamilyProperties;
 
 // Surface support function (capital G version is used in render.zig)
-pub const GetPhysicalDeviceSurfaceSupportKHR = c.vkGetPhysicalDeviceSurfaceSupportKHR;
+pub const getPhysicalDeviceSurfaceSupportKHR = c.vkGetPhysicalDeviceSurfaceSupportKHR;
 
 // ...existing code...
 
@@ -511,6 +479,7 @@ pub const PresentModeKHR = c.VkPresentModeKHR;
 // Surface-related constants
 pub const COLOR_SPACE_SRGB_NONLINEAR_KHR = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 pub const PRESENT_MODE_FIFO_KHR = c.VK_PRESENT_MODE_FIFO_KHR;
+pub const createComputePipelines = c.vkCreateComputePipelines;
 pub const PRESENT_MODE_MAILBOX_KHR = c.VK_PRESENT_MODE_MAILBOX_KHR;
 pub const PRESENT_MODE_IMMEDIATE_KHR = c.VK_PRESENT_MODE_IMMEDIATE_KHR;
 pub const COMPOSITE_ALPHA_OPAQUE_BIT_KHR = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -524,10 +493,10 @@ pub const SHARING_MODE_EXCLUSIVE = c.VK_SHARING_MODE_EXCLUSIVE;
 pub const SURFACE_TRANSFORM_IDENTITY_BIT_KHR = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 
 // Surface functions
-pub const GetPhysicalDeviceSurfaceCapabilitiesKHR = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
-pub const GetPhysicalDeviceSurfaceFormatsKHR = c.vkGetPhysicalDeviceSurfaceFormatsKHR;
-pub const GetPhysicalDeviceSurfacePresentModesKHR = c.vkGetPhysicalDeviceSurfacePresentModesKHR;
-pub const CreateSwapchainKHR = c.vkCreateSwapchainKHR;
+pub const getPhysicalDeviceSurfaceCapabilitiesKHR = c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR;
+pub const getPhysicalDeviceSurfaceFormatsKHR = c.vkGetPhysicalDeviceSurfaceFormatsKHR;
+pub const getPhysicalDeviceSurfacePresentModesKHR = c.vkGetPhysicalDeviceSurfacePresentModesKHR;
+pub const createSwapchainKHR = c.vkCreateSwapchainKHR;
 pub const destroySurfaceKHR = c.vkDestroySurfaceKHR;
 
 // Image/view-related types
@@ -545,14 +514,14 @@ pub const IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL = c.VK_IMAGE_LAYOUT_COLOR_ATTACH
 pub const PIPELINE_BIND_POINT_GRAPHICS = c.VK_PIPELINE_BIND_POINT_GRAPHICS;
 
 // Command buffer functions for dynamic rendering
-pub const CmdBindPipeline = c.vkCmdBindPipeline;
-pub const CmdDraw = c.vkCmdDraw;
-pub const CmdSetScissor = c.vkCmdSetScissor;
-pub const CmdSetViewport = c.vkCmdSetViewport;
+pub const cmdBindPipeline = c.vkCmdBindPipeline;
+pub const cmdDraw = c.vkCmdDraw;
+pub const cmdSetScissor = c.vkCmdSetScissor;
+pub const cmdSetViewport = c.vkCmdSetViewport;
 pub const BeginCommandBuffer = c.vkBeginCommandBuffer;
 pub const EndCommandBuffer = c.vkEndCommandBuffer;
-pub const CreateImageView = c.vkCreateImageView;
-pub const AcquireNextImageKHR = c.vkAcquireNextImageKHR;
+pub const acquireNextImageKHR = c.vkAcquireNextImageKHR;
+pub const getPhysicalDeviceFeatures = c.vkGetPhysicalDeviceFeatures;
 
 // Command buffer and synchronization types
 pub const CommandBufferBeginInfo = c.VkCommandBufferBeginInfo;
@@ -839,9 +808,9 @@ pub const invalidateMappedMemoryRanges = c.vkInvalidateMappedMemoryRanges;
 pub const getBufferDeviceAddress = c.vkGetBufferDeviceAddress;
 
 // Command buffer functions for buffer operations
-pub const CmdCopyBuffer = c.vkCmdCopyBuffer;
-pub const CmdCopyBufferToImage = c.vkCmdCopyBufferToImage;
-pub const CmdPushConstants = c.vkCmdPushConstants;
+pub const cmdCopyBuffer = c.vkCmdCopyBuffer;
+pub const cmdCopyBufferToImage = c.vkCmdCopyBufferToImage;
+pub const cmdPushConstants = c.vkCmdPushConstants;
 
 // Add Windows-specific surface type definitions
 pub const Win32SurfaceCreateInfoKHR = c.VkWin32SurfaceCreateInfoKHR;

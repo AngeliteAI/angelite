@@ -10,6 +10,8 @@ const task = @import("task.zig");
 const frame = @import("frame.zig");
 const math = @import("math");
 const include = @import("include");
+const ctx = @import("ctx.zig");
+const alloc = @import("alloc.zig");
 
 const Mat4 = math.Mat4;
 const SurfaceId = sf.Id;
@@ -21,9 +23,26 @@ const Pass = task.Pass;
 const PassContext = task.PassContext;
 const ResourceState = task.ResourceState;
 const Frame = frame.Frame;
+const Context = ctx.Context;
+
+// Define the noise context and parameters structures
+const NoiseContext = struct {
+    noiseParamOffset: u64 align(8),
+    noiseDataOffset: u64 align(8),
+};
+
+const NoiseParams = struct {
+    seed: f32,
+    scale: f32,
+    frequency: f32,
+    lacunarity: f32,
+    persistence: f32,
+    offset: [3]i32 align(16), // Align to 16 bytes to match vec3 in shader
+    size: [3]u32 align(16), // Align to 16 bytes to match vec3 in shader
+};
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const renderAllocator = gpa.allocator();
+pub var renderAllocator: std.mem.Allocator = gpa.allocator();
 
 var platformRenderers = std.AutoHashMap(PlatformRenderer, *Renderer).init(gpa.allocator());
 var surfaceRenderers = std.AutoHashMap(Surface, PlatformRenderer).init(gpa.allocator());
@@ -45,166 +64,57 @@ const RENDERER_STAGING_BUFFER_SIZE = 1024 * 1024 * 8; // 8MB
 const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 1024; // 1GB
 
 const Renderer = struct {
-
-
     context: *Context,
     graph: *Graph,
     swapchainImageResource: *task.Resource,
     pipeline: *PipelineCompiler,
-
     frame: Frame,
-
     // Large heap and stage buffers for the renderer
-    renderer_heap: ?*heap_mod.Heap,
-    renderer_stage: ?*stage_mod.Stage,
-
+    renderer_heap: *heap_mod.Heap,
+    renderer_stage: *stage_mod.Stage,
     camera: ?*RendererCamera,
-    camera_pass: ?*task.Pass,
+    allocator: *alloc.Allocator,
+    // Noise allocations
+    noise_context_allocation: *alloc.Allocation,
+    noise_params_allocation: *alloc.Allocation,
+    noise_data_allocation: *alloc.Allocation,
+    // Add staging pass
+    staging_pass: ?*task.Pass,
+
     fn init(surface: *Surface) !?*Renderer {
         logger.info("Initializing Vulkan renderer for surface ID: {}", .{surface.id});
 
-        // Check instance extensions
-        logger.info("Checking available instance extensions...", .{});
-        const instance_extensions = getAvailableInstanceExtensions() catch {
-            logger.err("Failed to get available instance extensions", .{});
+        // Allocate renderer structure first
+        logger.info("Allocating renderer structure...", .{});
+        var renderer = renderAllocator.create(Renderer) catch |err| {
+            logger.err("Failed to allocate memory for renderer: {s}", .{@errorName(err)});
             return null;
         };
-        defer renderAllocator.free(instance_extensions);
-        logger.info("Found {} instance extensions", .{instance_extensions.len});
+        logger.info("Renderer structure allocated: {*}", .{renderer});
 
-        const instance_extensions_supported = checkExtensionsSupport(&InstanceExtensions, instance_extensions) catch |err| {
-            logger.err("Error checking instance extensions: {s}", .{@errorName(err)});
+        // Initialize Vulkan context
+        const vulkanContext = Context.init(surface) catch |err| {
+            logger.err("Failed to initialize Vulkan context: {s}", .{@errorName(err)});
             return null;
         };
-        logger.info("Instance extensions supported: {}", .{instance_extensions_supported});
-
-        logger.info("Creating Vulkan instance...", .{});
-        const instance = Renderer.createInstance(instance_extensions_supported);
-        if (instance == null) {
-            logger.err("Failed to create Vulkan instance", .{});
+        if (vulkanContext == null) {
+            logger.err("Failed to initialize Vulkan context", .{});
             return null;
         }
-        logger.info("Vulkan instance created successfully: {*}", .{instance});
+        renderer.context = vulkanContext.?;
 
-        logger.info("Setting up Vulkan surface...", .{});
-        const activeVkSurface = set: {
-            if (instance_extensions_supported) {
-                logger.info("Creating platform-specific surface for OS: {s}", .{@tagName(@import("builtin").os.tag)});
-                const platform_info = switch (@import("builtin").os.tag) {
-                    .windows => vk.PlatformSpecificInfo{ .PlatformWindows = .{
-                        .hinstance = sf.win_surfaces.get(surface.*.id).?.hinstance,
-                        .hwnd = sf.win_surfaces.get(surface.*.id).?.hwnd,
-                    } },
-                    .linux => vk.PlatformSpecificInfo{ .PlatformXcb = .{
-                        .connection = sf.xcb_surfaces.get(sf.Id{ .id = surface.*.id }).?.connection,
-                        .window = sf.xcb_surfaces.get(sf.Id{ .id = surface.*.id }).?.window,
-                    } },
-                    else => {
-                        logger.err("Unsupported platform: {s}", .{@tagName(@import("builtin").os.tag)});
-                        return null; // Unsupported platform
-                    },
-                };
-                const vkSurface = Renderer.createSurface(instance, surface, platform_info);
-                if (vkSurface == null) {
-                    logger.err("Failed to create Vulkan surface", .{});
-                    return null;
-                }
-                logger.info("Vulkan surface created successfully: {*}", .{vkSurface});
-                break :set vkSurface;
-            } else {
-                logger.info("Running in Headless mode, surface extension not supported", .{});
-                break :set undefined;
-            }
-        };
-
-        logger.info("Selecting physical device...", .{});
-        const physicalDevice = Renderer.determineBestPhysicalDevice(instance);
-        if (physicalDevice == null) {
-            logger.err("Failed to select suitable physical device", .{});
-            return null;
-        }
-        logger.info("Selected physical device: {*}", .{physicalDevice});
-
-        logger.info("Finding compatible queue family...", .{});
-        const qfi = Renderer.getQueueFamilyIndex(physicalDevice, activeVkSurface) catch |err| {
-            logger.err("Failed to get queue family index: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Selected queue family index: {}", .{qfi});
-
-        // Check device extensions
-        logger.info("Checking available device extensions...", .{});
-        const device_extensions = getAvailableDeviceExtensions(physicalDevice) catch {
-            logger.err("Failed to get available device extensions", .{});
-            return null;
-        };
-        defer renderAllocator.free(device_extensions);
-        logger.info("Found {} device extensions", .{device_extensions.len});
-
-        const device_extensions_supported = checkExtensionsSupport(&DeviceExtensions, device_extensions) catch |err| {
-            logger.err("Error checking device extensions: {s}", .{@errorName(err)});
-            return null;
-        };
-
-        const sync2_extension_supported = checkExtensionsSupport(&Sync2Extensions, device_extensions) catch |err| {
-            std.debug.print("ERROR: Error checking device extensions: {s}\n", .{@errorName(err)});
-            return null;
-        };
-        if (!device_extensions_supported) {
-            logger.err("Required device extensions not supported, renderer cannot be initialized", .{});
-            return null;
-        }
-        logger.info("All required device extensions are supported", .{});
-
-        logger.info("Creating logical device...", .{});
-        const device: vk.Device = Renderer.createLogicalDevice(physicalDevice, qfi, sync2_extension_supported);
-        if (device == null) {
-            logger.err("Failed to create logical device", .{});
-            return null;
-        }
-        logger.info("Logical device created successfully: {*}", .{device});
-
-        logger.info("Loading device extension functions...", .{});
-        vk.loadDeviceExtensionFunctions(device);
-        logger.info("Device extension functions loaded", .{});
-
-        logger.info("Getting device queue...", .{});
-        const queue: vk.Queue = Renderer.getDeviceQueue(device, qfi);
-        logger.info("Device queue obtained: {*}", .{queue});
-
-        logger.info("Creating swapchain...", .{});
-        const swapchain: vk.Swapchain = Renderer.createSwapchain(device, physicalDevice, activeVkSurface, null) catch |err| {
-            logger.err("Failed to create swapchain: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Swapchain created successfully: {*}", .{swapchain});
-
-        logger.info("Getting swapchain images...", .{});
-        const swapchainImages: []vk.ImageView = Renderer.getSwapchainImages(device, swapchain) catch |err| {
-            logger.err("Failed to get swapchain image views: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Retrieved {} swapchain images", .{swapchainImages.len});
-
-        logger.info("Creating command pool...", .{});
-        const command_pool = Renderer.createCommandPool(device, qfi) catch |err| {
-            logger.err("Failed to create command pool: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Command pool created successfully: {*}", .{command_pool});
-
-        // In your Renderer.init function:
-        logger.info("Creating synchronization primitives for multiple frames in flight...", .{});
+        const workgroup_size = vulkanContext.?.maximumReasonableDispatchSize();
+        logger.info("Maximum reasonable dispatch size: {}x{}x{}", .{ workgroup_size.x, workgroup_size.y, workgroup_size.z });
 
         // Create large heap buffer for the renderer
         logger.info("Creating large renderer heap buffer (1GB)...", .{});
-        const renderer_heap = heap_mod.Heap.create(
-            device,
-            physicalDevice,
+        renderer.renderer_heap = heap_mod.Heap.create(
+            vulkanContext.?.device,
+            vulkanContext.?.physicalDevice,
             RENDERER_HEAP_BUFFER_SIZE,
             vk.BUFFER_USAGE_STORAGE_BUFFER_BIT | vk.BUFFER_USAGE_TRANSFER_DST_BIT,
             vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            renderAllocator,
+            &renderAllocator,
         ) catch |err| {
             logger.err("Failed to create renderer heap: {s}", .{@errorName(err)});
             return null;
@@ -212,50 +122,40 @@ const Renderer = struct {
 
         // Create large staging buffer for the renderer
         logger.info("Creating large renderer staging buffer (8MB)...", .{});
-        const renderer_stage = stage_mod.Stage.createWithBufferTarget(
-            device,
-            physicalDevice,
-            qfi,
+        renderer.renderer_stage = stage_mod.Stage.createWithBufferTarget(
+            vulkanContext.?.device,
+            vulkanContext.?.physicalDevice,
+            vulkanContext.?.queue_family_index,
             RENDERER_STAGING_BUFFER_SIZE,
-            renderer_heap.getBuffer(),
+            renderer.renderer_heap.getBuffer(),
             0, // Target offset 0
-            renderAllocator,
+            &renderAllocator,
         ) catch |err| {
             logger.err("Failed to create renderer stage: {s}", .{@errorName(err)});
-            renderer_heap.destroy(device, renderAllocator);
+            renderer.renderer_heap.destroy(vulkanContext.?.device, &renderAllocator);
             return null;
         };
-
-        // Allocate arrays
-        const command_buffers = try renderAllocator.alloc(vk.CommandBuffer, Renderer.MAX_FRAMES_IN_FLIGHT);
-        const image_available_semaphores = try renderAllocator.alloc(vk.Semaphore, Renderer.MAX_FRAMES_IN_FLIGHT);
-        const render_finished_semaphores = try renderAllocator.alloc(vk.Semaphore, Renderer.MAX_FRAMES_IN_FLIGHT);
-        const in_flight_fences = try renderAllocator.alloc(vk.Fence, Renderer.MAX_FRAMES_IN_FLIGHT);
-
-        // Create objects for each frame
-        for (0..Renderer.MAX_FRAMES_IN_FLIGHT) |i| {
-            command_buffers[i] = try Renderer.allocCommandBuffer(device, command_pool);
-            image_available_semaphores[i] = try Renderer.createSemaphore(device);
-            render_finished_semaphores[i] = try Renderer.createSemaphore(device);
-            in_flight_fences[i] = try Renderer.createFence(device);
-        }
-
-        // Create array to track which images are in use
-        var images_in_flight = try renderAllocator.alloc(vk.Fence, swapchainImages.len);
-        // Initialize all entries to null/invalid
-        for (0..swapchainImages.len) |i| {
-            images_in_flight[i] = null;
-        }
+        logger.info("Initializing render graph...", .{});
+        renderer.graph = Graph.init(&renderAllocator, renderer, vulkanContext.?.swapchain, vulkanContext.?.render_finished_semaphores[0], vulkanContext.?.image_available_semaphores[0], vulkanContext.?.in_flight_fences[0], vulkanContext.?.queue, true) catch |err| {
+            logger.err("Failed to initialize graph: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Render graph initialized: {*}", .{renderer.graph});
+        renderer.allocator = renderAllocator.create(alloc.Allocator) catch |err| {
+            logger.err("Failed to allocate memory for allocator: {s}", .{@errorName(err)});
+            return null;
+        };
+        renderer.allocator.* = alloc.Allocator.init(vulkanContext.?.device, renderer.renderer_heap, renderer.renderer_stage, renderer.graph);
 
         logger.info("Initializing pipeline compiler...", .{});
-        const pipelineCompiler = PipelineCompiler.init(device) catch |err| {
+        renderer.pipeline = PipelineCompiler.init(vulkanContext.?.device) catch |err| {
             logger.err("Failed to initialize pipeline compiler: {s}", .{@errorName(err)});
             return null;
         };
         logger.info("Pipeline compiler initialized", .{});
 
         logger.info("Creating triangle graphics pipeline...", .{});
-        _ = pipelineCompiler.createGraphicsPipeline("triangle", .{
+        _ = renderer.pipeline.createGraphicsPipeline("triangle", .{
             .vertex_shader = .{ .path = "src/gfx/src/vk/hellotriangle.glsl", .shader_type = .Vertex },
             .fragment_shader = .{ .path = "src/gfx/src/vk/hellotrianglef.glsl", .shader_type = .Fragment },
             .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Srgb},
@@ -266,15 +166,9 @@ const Renderer = struct {
         logger.info("Triangle graphics pipeline created successfully", .{});
 
         logger.info("Creating bindless triangle graphics pipeline...", .{});
-        _ = pipelineCompiler.createGraphicsPipeline("bindless_triangle", .{
-            .vertex_shader = .{
-                .path = "src/gfx/src/vk/bindless_triangle.glsl",
-                .shader_type = .Vertex
-            },
-            .fragment_shader = .{
-                .path = "src/gfx/src/vk/bindless_trianglef.glsl",
-                .shader_type = .Fragment
-            },
+        _ = renderer.pipeline.createGraphicsPipeline("bindless_triangle", .{
+            .vertex_shader = .{ .path = "src/gfx/src/vk/bindless_triangle.glsl", .shader_type = .Vertex },
+            .fragment_shader = .{ .path = "src/gfx/src/vk/bindless_trianglef.glsl", .shader_type = .Fragment },
             .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Srgb},
             // Add push constant range for the camera device address and model matrix
             .push_constant_size = @sizeOf(camera_sys.CameraPushConstants),
@@ -284,69 +178,48 @@ const Renderer = struct {
         };
         logger.info("Bindless triangle graphics pipeline created successfully", .{});
 
-        logger.info("Creating synchronization primitives...", .{});
-        const image_available_semaphore = Renderer.createSemaphore(device) catch |err| {
-            logger.err("Failed to create image available semaphore: {s}", .{@errorName(err)});
+        // Create noise compute pipeline
+        logger.info("Creating noise compute pipeline...", .{});
+        _ = renderer.pipeline.createComputePipeline("noise_compute", .{
+            .shader = .{ .path = "src/gfx/src/vk/010_generate_noise.glsl", .shader_type = .Compute },
+            // Add push constant range for the heap address and noise context offset
+            .push_constant_size = @sizeOf(struct {
+                heap_address: u64,
+                noise_context_offset: u64,
+            }),
+        }) catch |err| {
+            logger.err("Failed to create noise compute pipeline: {s}", .{@errorName(err)});
             return null;
         };
-        logger.info("Image available semaphore created: {*}", .{image_available_semaphore});
-
-        const render_finished_semaphore = Renderer.createSemaphore(device) catch |err| {
-            logger.err("Failed to create render finished semaphore: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Render finished semaphore created: {*}", .{render_finished_semaphore});
-
-        const in_flight_fence = Renderer.createFence(device) catch |err| {
-            logger.err("Failed to create in-flight fence: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("In-flight fence created: {*}", .{in_flight_fence});
-
-        logger.info("Allocating renderer structure...", .{});
-        var renderer = renderAllocator.create(Renderer) catch |err| {
-            logger.err("Failed to allocate memory for renderer: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Renderer structure allocated: {*}", .{renderer});
-
-        logger.info("Initializing render graph...", .{});
-        const graph = Graph.init(renderAllocator, renderer, swapchain, render_finished_semaphore, image_available_semaphore, in_flight_fence, queue, sync2_extension_supported) catch |err| {
-            logger.err("Failed to initialize graph: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Render graph initialized: {*}", .{graph});
+        logger.info("Noise compute pipeline created successfully", .{});
 
         logger.info("Setting up triangle rendering pass...", .{});
         const trianglePassFn = struct {
-            fn execute(ctx: PassContext) void {
+            fn execute(passCtx: PassContext) void {
                 logger.info("Executing triangle pass...", .{});
-                const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(ctx.userData)));
+                const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(passCtx.userData)));
 
-                logger.info("Triangle pass context: cmd={*}, frame={}x{}", .{
-                    ctx.cmd,
-                    ctx.frame.*.width,
-                    ctx.frame.*.height
-                });
+                logger.info("Triangle pass context: cmd={*}, frame={}x{}", .{ passCtx.cmd, passCtx.frame.*.width, passCtx.frame.*.height });
 
-                if (ctx.pass.inputs.items.len == 0 or ctx.pass.inputs.items[0].resource.view == null) {
+                if (passCtx.pass.inputs.items.len == 0 or passCtx.pass.inputs.items[0].resource.view == null) {
                     logger.err("No inputs for triangle pass", .{});
                     return;
                 }
 
-
                 // Get heap device address for bindless access
                 logger.info("Getting heap device address...", .{});
-                if (taskRenderer.renderer_heap == null) {
-                    logger.err("Renderer heap is null!", .{});
-                    return;
-                }
 
-                const heapAddress = taskRenderer.renderer_heap.?.getDeviceAddress() catch |err| {
+                const heapAddress = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
                     logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
                     return;
                 };
                 logger.info("Heap device address: 0x{x}", .{heapAddress});
+
+                // Verify the heap address is valid
+                if (heapAddress == 0) {
+                    logger.err("Invalid heap address (0)", .{});
+                    return;
+                }
 
                 // Create push constant data with the heap address
                 logger.info("Creating push constants...", .{});
@@ -360,22 +233,44 @@ const Renderer = struct {
                 for (0..4) |col| {
                     logger.info("Col {}: [{}, {}, {}, {}]", .{
                         col,
-                        modelMatrix.data[col*4+0], modelMatrix.data[col*4+1],
-                        modelMatrix.data[col*4+2], modelMatrix.data[col*4+3],
+                        modelMatrix.data[col * 4 + 0],
+                        modelMatrix.data[col * 4 + 1],
+                        modelMatrix.data[col * 4 + 2],
+                        modelMatrix.data[col * 4 + 3],
                     });
                 }
+
+                // Get camera offset
+                const cameraOffset = if (taskRenderer.camera) |camera| blk: {
+                    if (camera.camera_allocation) |allocation| {
+                        logger.info("Camera allocation heap offset: {}", .{allocation.heap_offset});
+                        break :blk allocation.heap_offset;
+                    } else {
+                        logger.err("Camera allocation is null", .{});
+                        break :blk 0;
+                    }
+                } else blk: {
+                    logger.err("Camera is null", .{});
+                    break :blk 0;
+                };
 
                 // Create push constants with the verified model matrix
                 const pushConstants = camera_sys.CameraPushConstants{
                     .heap_address = heapAddress,
-                    .model_matrix = modelMatrix,
+                    .camera_offset = cameraOffset,
                 };
-                logger.info("Push constants created with heap_address=0x{x}", .{pushConstants.heap_address});
+                logger.info("Push constants created with heap_address=0x{x}, camera_offset={}", .{ pushConstants.heap_address, pushConstants.camera_offset });
 
-                logger.info("Setting up color attachment for frame {}x{}", .{ ctx.frame.*.width, ctx.frame.*.height });
+                // Verify push constants are valid
+                if (pushConstants.heap_address == 0) {
+                    logger.err("Invalid heap address in push constants (0)", .{});
+                    return;
+                }
+
+                logger.info("Setting up color attachment for frame {}x{}", .{ passCtx.frame.*.width, passCtx.frame.*.height });
                 const color_attachment = vk.RenderingAttachmentInfoKHR{
                     .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
-                    .imageView = ctx.pass.inputs.items[0].resource.view.?.imageView,
+                    .imageView = passCtx.pass.inputs.items[0].resource.view.?.imageView,
                     .imageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                     .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
                     .resolveImageView = null,
@@ -393,7 +288,7 @@ const Renderer = struct {
                     .sType = vk.sTy(vk.StructureType.RenderingInfoKHR),
                     .renderArea = vk.Rect2D{
                         .offset = vk.Offset2D{ .x = 0, .y = 0 },
-                        .extent = vk.Extent2D{ .width = ctx.frame.*.width, .height = ctx.frame.*.height },
+                        .extent = vk.Extent2D{ .width = passCtx.frame.*.width, .height = passCtx.frame.*.height },
                     },
                     .layerCount = 1,
                     .colorAttachmentCount = 1,
@@ -401,7 +296,7 @@ const Renderer = struct {
                 };
 
                 logger.info("Beginning dynamic rendering", .{});
-                vk.cmdBeginRenderingKHR(ctx.cmd, &rendering_info);
+                vk.cmdBeginRenderingKHR(passCtx.cmd, &rendering_info);
                 logger.debug("Color attachment: {any}", .{rendering_info});
 
                 // Use the bindless pipeline instead of the regular triangle pipeline
@@ -413,27 +308,27 @@ const Renderer = struct {
                 logger.info("Pipeline obtained: {*}", .{pipeline});
 
                 logger.info("Binding pipeline", .{});
-                vk.CmdBindPipeline(ctx.cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
+                vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
 
                 const viewport = vk.Viewport{
                     .x = 0.0,
                     .y = 0.0,
-                    .width = @floatFromInt(ctx.frame.*.width),
-                    .height = @floatFromInt(ctx.frame.*.height),
+                    .width = @floatFromInt(passCtx.frame.*.width),
+                    .height = @floatFromInt(passCtx.frame.*.height),
                     .minDepth = 0.0,
                     .maxDepth = 1.0,
                 };
 
                 logger.info("Setting viewport: {}x{}", .{ viewport.width, viewport.height });
-                vk.CmdSetViewport(ctx.cmd, 0, 1, &viewport);
+                vk.cmdSetViewport(passCtx.cmd, 0, 1, &viewport);
 
                 const scissor = vk.Rect2D{
                     .offset = vk.Offset2D{ .x = 0, .y = 0 },
-                    .extent = vk.Extent2D{ .width = ctx.frame.*.width, .height = ctx.frame.*.height },
+                    .extent = vk.Extent2D{ .width = passCtx.frame.*.width, .height = passCtx.frame.*.height },
                 };
 
                 logger.info("Setting scissor: {}x{}", .{ scissor.extent.width, scissor.extent.height });
-                vk.CmdSetScissor(ctx.cmd, 0, 1, &scissor);
+                vk.cmdSetScissor(passCtx.cmd, 0, 1, &scissor);
 
                 // Push the constants to the shader
                 logger.info("Pushing constants with heap address: 0x{x}", .{heapAddress});
@@ -448,53 +343,270 @@ const Renderer = struct {
                 // Verify the push constant size
                 const pushConstantsSize = @sizeOf(camera_sys.CameraPushConstants);
                 logger.info("Push constants size: {} bytes", .{pushConstantsSize});
-                logger.info("Model matrix in push constants: {any}", .{pushConstants.model_matrix});
-
-                // Calculate raw pointer offset to model matrix for debugging
-                const modelMatrixOffset = @offsetOf(camera_sys.CameraPushConstants, "model_matrix");
-                logger.info("Model matrix offset in push constants: {} bytes", .{modelMatrixOffset});
-
                 // Verify the first few bytes of push constants to check alignment
                 const pushConstantsPtr = @as([*]const u8, @ptrCast(&pushConstants));
                 logger.info("First 16 bytes of push constants: {any}", .{pushConstantsPtr[0..16]});
 
-                vk.CmdPushConstants(ctx.cmd,
-                    pipelineLayout,
-                    vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT,
-                    0,
-                    pushConstantsSize,
-                    &pushConstants);
+                vk.cmdPushConstants(passCtx.cmd, pipelineLayout, vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT, 0, pushConstantsSize, &pushConstants);
 
-                logger.info("Drawing triangle (3 vertices) with cmd={*}", .{ctx.cmd});
-                vk.CmdDraw(ctx.cmd, 3, 1, 0, 0);
+                logger.info("Drawing triangle (3 vertices) with cmd={*}", .{passCtx.cmd});
+                vk.cmdDraw(passCtx.cmd, 3, 1, 0, 0);
                 logger.info("Draw call completed", .{});
 
                 logger.info("Ending dynamic rendering", .{});
-                vk.cmdEndRenderingKHR(ctx.cmd);
+                vk.cmdEndRenderingKHR(passCtx.cmd);
                 logger.info("Triangle pass execution complete", .{});
             }
         }.execute;
 
-        const trianglePass = Pass.init(renderAllocator, "triangle", trianglePassFn) catch {
+        logger.info("Creating triangle pass...", .{});
+        const trianglePass = Pass.init(&renderAllocator, "triangle", trianglePassFn) catch |err| {
+            logger.err("Failed to create triangle pass: {s}", .{@errorName(err)});
             return null;
         };
+        logger.info("Triangle pass created", .{});
         // CRITICAL FIX: Set the renderer as userData for the triangle pass
         // This ensures the triangle pass has access to the renderer during execution
         trianglePass.userData = renderer;
-        logger.info("Triangle pass initialized with renderer userData: {*}", .{renderer});
 
-        logger.info("Creating swapchain image resource...", .{});
-        renderer.swapchainImageResource = renderAllocator.create(task.Resource) catch |err| {
-            logger.err("Failed to allocate memory for swapchain image resource: {s}", .{@errorName(err)});
+        const noisePassFn = struct {
+            fn execute(passCtx: PassContext) void {
+                const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(passCtx.userData)));
+                logger.info("Executing noise pass...", .{});
+
+                // Get the compute pipeline for noise generation
+                const pipeline = taskRenderer.pipeline.getPipeline("noise_compute") catch |err| {
+                    logger.err("Failed to get noise compute pipeline: {s}", .{@errorName(err)});
+                    return;
+                };
+                logger.info("Noise compute pipeline obtained successfully", .{});
+
+                // Bind the compute pipeline
+                vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
+                logger.info("Noise compute pipeline bound successfully", .{});
+
+                // Get the pipeline layout
+                const pipelineLayout = pipeline.asCompute().?.base.layout;
+
+                // Get the heap device address
+                const heapAddress = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
+                    logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
+                    return;
+                };
+                logger.info("Heap device address: 0x{x}", .{heapAddress});
+
+                // Create push constants with heap address and noise context offset
+                const pushConstants = struct {
+                    heap_address: u64,
+                    noise_context_offset: u64,
+                }{
+                    .heap_address = heapAddress,
+                    .noise_context_offset = taskRenderer.noise_context_allocation.heap_offset,
+                };
+                logger.info("Push constants: {any}", .{pushConstants});
+
+                // Push the constants to the shader
+                vk.cmdPushConstants(
+                    passCtx.cmd,
+                    pipelineLayout,
+                    vk.SHADER_STAGE_COMPUTE,
+                    0,
+                    @sizeOf(@TypeOf(pushConstants)),
+                    &pushConstants,
+                );
+                logger.info("Push constants sent to shader", .{});
+
+                // Get the maximum dispatch size from the context
+                const noise_workgroup_size = taskRenderer.context.maximumReasonableDispatchSize();
+                logger.info("Maximum workgroup size: {any}", .{noise_workgroup_size});
+
+                // Calculate grid size based on noise texture dimensions (32x32x32)
+                const grid_size_x = (32 + noise_workgroup_size.x - 1) / noise_workgroup_size.x;
+                const grid_size_y = (32 + noise_workgroup_size.y - 1) / noise_workgroup_size.y;
+                const grid_size_z = (32 + noise_workgroup_size.z - 1) / noise_workgroup_size.z;
+
+                logger.info("Dispatching noise compute shader with grid size: {}x{}x{} and workgroup size: {}x{}x{}", .{ grid_size_x, grid_size_y, grid_size_z, noise_workgroup_size.x, noise_workgroup_size.y, noise_workgroup_size.z });
+                vk.cmdDispatch(passCtx.cmd, grid_size_x, grid_size_y, grid_size_z);
+                logger.info("Noise compute shader dispatch complete", .{});
+            }
+        }.execute;
+
+        // Create the noise pass
+        logger.info("Creating noise pass...", .{});
+        const noisePass = Pass.init(&renderAllocator, "noise", noisePassFn) catch |err| {
+            logger.err("Failed to create noise pass: {s}", .{@errorName(err)});
             return null;
         };
-        renderer.swapchainImageResource.* = task.Resource{
-            .ty = task.ResourceType.Image,
-            .name = "SwapchainImageResource",
-            .handle = null,
-            .view = null,
+        logger.info("Noise pass created", .{});
+        noisePass.userData = renderer;
+
+        // Create resources for noise data
+        const noiseContextResource = task.Resource.init(&renderAllocator, "noise_context", .Buffer, renderer.renderer_heap.buffer) catch |err| {
+            logger.err("Failed to create noise context resource: {s}", .{@errorName(err)});
+            return null;
+        };
+        const noiseParamsResource = task.Resource.init(&renderAllocator, "noise_params", .Buffer, renderer.renderer_heap.buffer) catch |err| {
+            logger.err("Failed to create noise params resource: {s}", .{@errorName(err)});
+            return null;
+        };
+        const noiseDataResource = task.Resource.init(&renderAllocator, "noise_data", .Buffer, renderer.renderer_heap.buffer) catch |err| {
+            logger.err("Failed to create noise data resource: {s}", .{@errorName(err)});
+            return null;
+        };
+
+        logger.info("Allocating memory for noise context (size: {} bytes)...", .{@sizeOf(NoiseContext)});
+        // Allocate memory for noise context
+        const noiseContextSize = @sizeOf(NoiseContext);
+        logger.info("allocator ptr: {}", .{renderer.allocator});
+        renderer.noise_context_allocation = renderer.allocator.alloc(noiseContextSize, 8) catch |err| {
+            logger.err("Failed to allocate noise context: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise context allocation successful at offset: {}", .{renderer.noise_context_allocation.heap_offset});
+
+        logger.info("Allocating memory for noise parameters (size: {} bytes)...", .{@sizeOf(NoiseParams)});
+        // Allocate memory for noise parameters
+        const noiseParamsSize = @sizeOf(NoiseParams);
+        renderer.noise_params_allocation = renderer.allocator.alloc(noiseParamsSize, 8) catch |err| {
+            logger.err("Failed to allocate noise parameters: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise parameters allocation successful at offset: {}", .{renderer.noise_params_allocation.heap_offset});
+
+        logger.info("Allocating memory for noise data (size: {} bytes)...", .{32 * 32 * 32 * @sizeOf(f32)});
+        // Allocate memory for noise data (32x32x32 = 32768 floats)
+        const noiseDataSize = 32 * 32 * 32 * @sizeOf(f32);
+        renderer.noise_data_allocation = renderer.allocator.alloc(noiseDataSize, 8) catch |err| {
+            logger.err("Failed to allocate noise data: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise data allocation successful at offset: {}", .{renderer.noise_data_allocation.heap_offset});
+
+        // Create and write the noise context
+        const noiseContext = NoiseContext{
+            .noiseParamOffset = renderer.noise_params_allocation.heap_offset,
+            .noiseDataOffset = renderer.noise_data_allocation.heap_offset,
+        };
+        logger.info("Created noise context with param offset: {} and data offset: {}", .{ noiseContext.noiseParamOffset, noiseContext.noiseDataOffset });
+        // Write the noise context to its allocation
+        logger.info("Writing noise context to allocation...", .{});
+        logger.info("Writing bytes: {any}", .{std.mem.asBytes(&noiseContext)});
+        const bytesWritten = renderer.noise_context_allocation.write(std.mem.asBytes(&noiseContext)) catch |err| {
+            logger.err("Failed to write noise context: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise context written successfully, {} bytes written", .{bytesWritten});
+
+        // Create and write the noise parameters
+        const noiseParams = NoiseParams{
+            .seed = 42.0,
+            .scale = 1.0,
+            .frequency = 1.0,
+            .lacunarity = 2.0,
+            .persistence = 0.5,
+            .offset = [_]i32{ 0, 0, 0 },
+            .size = [_]u32{ 32, 32, 32 },
+        };
+        logger.info("Created noise parameters: seed={}, scale={}, frequency={}, lacunarity={}, persistence={}, offset=[{}, {}, {}], size=[{}, {}, {}]", .{ noiseParams.seed, noiseParams.scale, noiseParams.frequency, noiseParams.lacunarity, noiseParams.persistence, noiseParams.offset[0], noiseParams.offset[1], noiseParams.offset[2], noiseParams.size[0], noiseParams.size[1], noiseParams.size[2] });
+
+        // Write the noise parameters to its allocation
+        logger.info("Writing noise parameters to allocation...", .{});
+        const paramsBytesWritten = renderer.noise_params_allocation.write(std.mem.asBytes(&noiseParams)) catch |err| {
+            logger.err("Failed to write noise parameters: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise parameters written successfully, {} bytes written", .{paramsBytesWritten});
+
+        // Get device addresses for verification
+        const noiseContextAddr = renderer.noise_context_allocation.deviceAddress() catch |err| {
+            logger.err("Failed to get noise context device address: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise context device address: 0x{x}", .{noiseContextAddr});
+
+        const noiseParamsAddr = renderer.noise_params_allocation.deviceAddress() catch |err| {
+            logger.err("Failed to get noise params device address: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise params device address: 0x{x}", .{noiseParamsAddr});
+
+        const noiseDataAddr = renderer.noise_data_allocation.deviceAddress() catch |err| {
+            logger.err("Failed to get noise data device address: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise data device address: 0x{x}", .{noiseDataAddr});
+
+        // Flush individual allocations with proper synchronization
+        logger.info("Flushing noise context allocation...", .{});
+        renderer.noise_context_allocation.flush() catch |err| {
+            logger.err("Failed to flush noise context: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise context flushed successfully", .{});
+
+        logger.info("Flushing noise params allocation...", .{});
+        renderer.noise_params_allocation.flush() catch |err| {
+            logger.err("Failed to flush noise params: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise params flushed successfully", .{});
+
+        logger.info("Flushing noise data allocation...", .{});
+        renderer.noise_data_allocation.flush() catch |err| {
+            logger.err("Failed to flush noise data: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Noise data flushed successfully", .{});
+
+        // Flush all allocations to make them available on the GPU
+        logger.info("Flushing all allocations to make them available on the GPU...", .{});
+        renderer.allocator.flush() catch |err| {
+            logger.err("Failed to flush allocations: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Allocations flushed successfully", .{});
+
+        logger.info("Noise allocations initialized successfully", .{});
+
+        logger.info("Creating swapchain image resource...", .{});
+        renderer.swapchainImageResource = task.Resource.init(&renderAllocator, "swapchain_image", .Image, null) catch |err| {
+            logger.err("Failed to create swapchain image resource: {s}", .{@errorName(err)});
+            return null;
         };
         logger.info("Swapchain image resource created: {*}", .{renderer.swapchainImageResource});
+
+        // Add resources to the graph
+        logger.info("Adding resources to graph...", .{});
+        try renderer.graph.addResource(renderer.swapchainImageResource);
+        try renderer.graph.addResource(noiseContextResource);
+        try renderer.graph.addResource(noiseParamsResource);
+        try renderer.graph.addResource(noiseDataResource);
+        logger.info("Resources added to graph", .{});
+
+        // Add resources to the noise pass with proper regions
+        try noisePass.addInput(noiseContextResource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.noise_context_allocation.heap_offset,
+            .size = @sizeOf(NoiseContext),
+        });
+
+        try noisePass.addInput(noiseParamsResource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.noise_params_allocation.heap_offset,
+            .size = @sizeOf(NoiseParams),
+        });
+
+        try noisePass.addOutput(noiseDataResource, .{
+            .accessMask = vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.noise_data_allocation.heap_offset,
+            .size = 32 * 32 * 32 * @sizeOf(f32),
+        });
 
         logger.info("Adding swapchain as input to triangle pass...", .{});
         trianglePass.addInput(renderer.swapchainImageResource, task.ResourceState{
@@ -502,7 +614,7 @@ const Renderer = struct {
             .stageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,
             .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .queueFamilyIndex = vk.QUEUE_FAMILY_IGNORED,
-        }) catch |err| {
+        }, null) catch |err| {
             logger.err("Failed to add input to triangle pass: {s}", .{@errorName(err)});
             return null;
         };
@@ -510,40 +622,36 @@ const Renderer = struct {
 
         // Initialize camera system using renderer's heap and stage
         logger.info("Initializing camera system with renderer's heap and stage...", .{});
-        renderer.camera = RendererCamera.create(
-            device,
-            renderer_heap,
-            renderer_stage,
-            renderAllocator
-        ) catch |err| {
+        renderer.camera = RendererCamera.create(vulkanContext.?.device, renderer.renderer_heap, renderer.renderer_stage, renderer.allocator, &renderAllocator) catch |err| {
             logger.err("Failed to initialize camera system: {s}", .{@errorName(err)});
             renderer.camera = null;
-            renderer.camera_pass = null;
             return null;
         };
 
-        // Create camera pass and add it to the graph
-        logger.info("Creating camera update pass...", .{});
-        renderer.camera_pass = renderer.camera.?.createCameraPass("CameraUpdate") catch |err| {
-            logger.err("Failed to create camera pass: {s}", .{@errorName(err)});
-            renderer.camera_pass = null;
+        logger.info("Camera system initialized with direct allocation", .{});
+
+        // Create staging pass
+        logger.info("Creating staging pass...", .{});
+        renderer.staging_pass = renderer.renderer_stage.createStagingPass("StagingPass") catch |err| {
+            logger.err("Failed to create staging pass: {s}", .{@errorName(err)});
+            renderer.staging_pass = null;
             return null;
         };
+
+        // Add staging pass to the graph BEFORE the noise pass
+        logger.info("Adding staging pass to render graph...", .{});
+        renderer.graph.addPass(renderer.staging_pass.?) catch |err| {
+            logger.err("Failed to add staging pass to graph: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Staging pass added to graph", .{});
 
         // Set initial camera at position 0,0,5 looking toward the triangle at z=-2
         const initial_position = math.v3(0.0, 0.0, 5.0);
         const look_target = math.v3(0.0, 0.0, -2.0); // Look at where the triangle is positioned
-        const initial_view = math.m4LookAt(
-            initial_position,
-            look_target,
-            math.v3Z() // Using Z as up vector as requested
+        const initial_view = math.m4LookAt(initial_position, look_target, math.v3Z() // Using Z as up vector as requested
         );
-        const initial_projection = math.m4Persp(
-            math.rad(45.0),
-            @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)),
-            0.1,
-            1000.0
-        );
+        const initial_projection = math.m4Persp(math.rad(45.0), @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)), 0.1, 1000.0);
 
         _ = renderer.camera.?.update(initial_view, initial_projection) catch |err| {
             logger.warn("Failed to set initial camera: {s}", .{@errorName(err)});
@@ -551,16 +659,16 @@ const Renderer = struct {
 
         logger.info("Adding passes to render graph...", .{});
 
-        // Add camera pass to the graph BEFORE triangle pass
-        logger.info("Adding camera pass to render graph...", .{});
-        graph.addPass(renderer.camera_pass.?) catch |err| {
-            logger.err("Failed to add camera pass to graph: {s}", .{@errorName(err)});
+        // Add noise pass to the graph after camera pass
+        logger.info("Adding noise pass to render graph...", .{});
+        renderer.graph.addPass(noisePass) catch |err| {
+            logger.err("Failed to add noise pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-        logger.info("Camera pass added to graph", .{});
+        logger.info("Noise pass added to graph", .{});
 
         // Now add the triangle pass after the camera pass
-        graph.addPass(trianglePass) catch |err| {
+        renderer.graph.addPass(trianglePass) catch |err| {
             logger.err("Failed to add triangle pass to graph: {s}", .{@errorName(err)});
             return null;
         };
@@ -568,7 +676,7 @@ const Renderer = struct {
 
         var submitPass = task.getPassSubmit(renderer);
         submitPass.userData = renderer;
-        graph.addPass(submitPass) catch |err| {
+        renderer.graph.addPass(submitPass) catch |err| {
             logger.err("Failed to add submit pass to graph: {s}", .{@errorName(err)});
             return null;
         };
@@ -576,14 +684,14 @@ const Renderer = struct {
 
         var presentPass = task.pass_present(renderer.swapchainImageResource);
         presentPass.userData = renderer;
-        graph.addPass(presentPass) catch |err| {
+        renderer.graph.addPass(presentPass) catch |err| {
             logger.err("Failed to add present pass to graph: {s}", .{@errorName(err)});
             return null;
         };
         logger.info("Present pass added to graph", .{});
 
         var surfaceCapabilities: vk.SurfaceCapabilitiesKHR = undefined;
-        _ = vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, activeVkSurface, &surfaceCapabilities);
+        _ = vk.getPhysicalDeviceSurfaceCapabilitiesKHR(vulkanContext.?.physicalDevice, vulkanContext.?.surface.?, &surfaceCapabilities);
         logger.info("Finalizing renderer setup...", .{});
         renderer.frame = Frame{
             .width = surfaceCapabilities.currentExtent.width,
@@ -591,25 +699,9 @@ const Renderer = struct {
             .height = surfaceCapabilities.currentExtent.height,
             .count = 0,
         };
-        renderer.instance = instance;
-        renderer.physicalDevice = physicalDevice;
-        renderer.device = device;
-        renderer.queue = queue;
-        renderer.queue_family_index = qfi;
-        renderer.surface = activeVkSurface;
-        renderer.pipeline = pipelineCompiler;
-        renderer.swapchain = swapchain;
-        // Store in renderer
-        renderer.command_buffers = command_buffers;
-        renderer.image_available_semaphores = image_available_semaphores;
-        renderer.render_finished_semaphores = render_finished_semaphores;
-        renderer.in_flight_fences = in_flight_fences;
-        renderer.images_in_flight = images_in_flight;
-        renderer.command_pool = command_pool;
-        renderer.swapchainImages = swapchainImages;
-        renderer.graph = graph;
-        renderer.renderer_heap = renderer_heap;
-        renderer.renderer_stage = renderer_stage;
+
+        // Initialize noise allocations
+        logger.info("Initializing noise allocations...", .{});
 
         logger.info("Renderer initialization complete. Returning renderer: {*}", .{renderer});
         return renderer;
@@ -667,54 +759,33 @@ pub export fn shutdown(handle: ?*PlatformRenderer) void {
         return;
     };
 
+    // // Cleanup noise allocations if they exist
+    // if (renderer.noise_context_allocation != null) {
+    //     renderer.noise_context_allocation.?.deinit();
+    //     renderer.noise_context_allocation = null;
+    // }
+    // if (renderer.noise_params_allocation != null) {
+    //     renderer.noise_params_allocation.?.deinit();
+    //     renderer.noise_params_allocation = null;
+    // }
+    // if (renderer.noise_data_allocation != null) {
+    //     renderer.noise_data_allocation.?.deinit();
+    //     renderer.noise_data_allocation = null;
+    // }
+
     // Cleanup camera resources if they exist
     if (renderer.camera != null) {
         renderer.camera.?.destroy();
         renderer.camera = null;
-        renderer.camera_pass = null;
     }
 
     // Cleanup renderer stage and heap
-    if (renderer.renderer_stage != null) {
-        renderer.renderer_stage.?.destroy();
-        renderer.renderer_stage = null;
-    }
-
-    if (renderer.renderer_heap != null) {
-        renderer.renderer_heap.?.destroy(renderer.device, renderAllocator);
-        renderer.renderer_heap = null;
-    }
-
-    // Wait for the device to be idle before destroying resources
-    _ = vk.deviceWaitIdle(renderer.device);
 
     // Clean up task graph resources
     renderer.graph.deinit();
 
-    // Clean up synchronization objects
-    for (0..Renderer.MAX_FRAMES_IN_FLIGHT) |i| {
-        vk.destroySemaphore(renderer.device, renderer.image_available_semaphores[i], null);
-        vk.destroySemaphore(renderer.device, renderer.render_finished_semaphores[i], null);
-        vk.destroyFence(renderer.device, renderer.in_flight_fences[i], null);
-    }
-
-    // Free allocated memory
-    renderAllocator.free(renderer.image_available_semaphores);
-    renderAllocator.free(renderer.render_finished_semaphores);
-    renderAllocator.free(renderer.in_flight_fences);
-    renderAllocator.free(renderer.images_in_flight);
-    renderAllocator.free(renderer.command_buffers);
-
-    // Destroy Vulkan objects
-    vk.destroyCommandPool(renderer.device, renderer.command_pool);
-    vk.destroySwapchainKHR(renderer.device, renderer.swapchain, null);
-    vk.destroyDevice(renderer.device, null);
-
-    if (renderer.surface != null) {
-        vk.destroySurfaceKHR(renderer.instance, renderer.surface.?, null);
-    }
-
-    vk.destroyInstance(renderer.instance, null);
+    // Clean up Vulkan context
+    renderer.context.deinit();
 
     // Remove from maps
     _ = platformRenderers.remove(handle.?.*);
@@ -733,6 +804,7 @@ pub export fn shutdown(handle: ?*PlatformRenderer) void {
 
     logger.info("Vulkan renderer destroyed.", .{});
 }
+
 pub export fn render(handle: ?*PlatformRenderer) void {
     logger.info("Render function called with handle: {*}", .{handle});
 
@@ -745,170 +817,55 @@ pub export fn render(handle: ?*PlatformRenderer) void {
 
     const activeFrame = &renderer.frame;
     const frameIndex = activeFrame.index;
-    logger.info("Active frame index: {}, width: {}, height: {}", .{frameIndex, activeFrame.width, activeFrame.height});
+    logger.info("Active frame index: {}, width: {}, height: {}", .{ frameIndex, activeFrame.width, activeFrame.height });
 
-    // Wait for this frame's fence
-    std.debug.print("[RENDER] SYNC: Waiting for frame {} fence {any}...\n", .{frameIndex, renderer.in_flight_fences[frameIndex]});
-    const wait_result = vk.waitForFences(renderer.device, 1, &renderer.in_flight_fences[frameIndex], vk.TRUE, std.math.maxInt(u64));
-    std.debug.print("[RENDER] SYNC: Wait result: {any}\n", .{wait_result});
-
-    // Acquire next image using this frame's semaphore
-    std.debug.print("[RENDER] SYNC: Acquiring next image with semaphore {any}...\n", .{renderer.image_available_semaphores[frameIndex]});
-    const result = vk.acquireNextImageKHR(renderer.device, renderer.swapchain, std.math.maxInt(u64), // Wait indefinitely
-        renderer.image_available_semaphores[frameIndex], null, &activeFrame.index);
-    std.debug.print("[RENDER] SYNC: Acquire result: {any}, image index: {}\n", .{result, activeFrame.index});
-
-    // If image is being used by another frame, wait for that frame's fence
-    if (renderer.images_in_flight[activeFrame.index] != null) {
-        std.debug.print("[RENDER] SYNC: Image {} is in use by another frame, waiting for fence {any}...\n",
-                     .{activeFrame.index, renderer.images_in_flight[activeFrame.index]});
-        const img_wait_result = vk.waitForFences(renderer.device, 1, &renderer.images_in_flight[activeFrame.index], vk.TRUE, std.math.maxInt(u64));
-        std.debug.print("[RENDER] SYNC: Image wait result: {any}\n", .{img_wait_result});
-    } else {
-        std.debug.print("[RENDER] SYNC: Image {} is not in use by another frame\n", .{activeFrame.index});
-    }
-
-    // Mark this image as being used by the current frame
-    std.debug.print("[RENDER] SYNC: Marking image {} as used by frame {} (fence {any})\n",
-                 .{activeFrame.index, frameIndex, renderer.in_flight_fences[frameIndex]});
-    renderer.images_in_flight[activeFrame.index] = renderer.in_flight_fences[frameIndex];
-
-    // Only reset the fence now after we've verified the image is available
-    _ = vk.resetFences(renderer.device, 1, &renderer.in_flight_fences[frameIndex]);
-
-    if (result == vk.NOT_READY) {
-        return;
-    }
-    if (result == vk.OUT_OF_DATE or result == vk.SUBOPTIMAL_KHR) {
-        // Get current surface capabilities to determine the proper swapchain size
-        var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
-        _ = vk.GetPhysicalDeviceSurfaceCapabilitiesKHR(renderer.physicalDevice, renderer.surface.?, &capabilities);
-        // Use the current extent from surface capabilities
-        const width = capabilities.currentExtent.width;
-        const height = capabilities.currentExtent.height;
-        std.debug.print("Recreating swapchain with dimensions: {}x{}\n", .{ width, height });
-
-        // Only recreate if dimensions actually changed
-        if (width != renderer.frame.width or height != renderer.frame.height) {
-            std.debug.print("Dimensions changed from {}x{} to {}x{}\n",
-                .{renderer.frame.width, renderer.frame.height, width, height});
-
-            // Wait for all operations to complete before recreating swapchain
-            std.debug.print("Waiting for device idle before recreating swapchain...\n", .{});
-            _ = vk.deviceWaitIdle(renderer.device);
-
-            // Store the old swapchain to properly clean up later
-            const oldSwapchain = renderer.swapchain;
-
-            // Recreate swapchain
-            renderer.swapchain = Renderer.createSwapchain(renderer.device, renderer.physicalDevice, renderer.surface.?, oldSwapchain) catch |err| {
-                std.debug.print("Failed to recreate swapchain: {s}\n", .{@errorName(err)});
-                return;
-            };
-
-            // Clean up old swapchain images before getting new ones
-            renderAllocator.free(renderer.swapchainImages);
-
-            renderer.swapchainImages = Renderer.getSwapchainImages(renderer.device, renderer.swapchain) catch |err| {
-                std.debug.print("Failed to recreate swapchain image views: {s}\n", .{@errorName(err)});
-                return;
-            };
-
-            // Update images_in_flight array to match the new swapchain image count
-            renderAllocator.free(renderer.images_in_flight);
-            renderer.images_in_flight = renderAllocator.alloc(vk.Fence, renderer.swapchainImages.len) catch |err| {
-                std.debug.print("Failed to allocate memory for images_in_flight: {s}\n", .{@errorName(err)});
-                return;
-            };
-
-            // Initialize all entries to null/invalid
-            for (0..renderer.swapchainImages.len) |i| {
-                renderer.images_in_flight[i] = null;
-            }
-
-            // Update frame dimensions
-            renderer.frame.width = width;
-            renderer.frame.height = height;
-            renderer.frame.index = 0; // Reset the frame index
-
-            // Update camera projection if camera exists
-            if (renderer.camera != null) {
-                // Create a new view matrix looking at the origin
-                const position = math.v3(0.0, 0.0, 5.0);
-                const look_target = math.v3(0.0, 0.0, -2.0);
-                const view = math.m4LookAt(
-                    position,
-                    look_target,
-                    math.v3Z() // Using Z as up vector
-                );
-
-                // Create a new projection with the correct aspect ratio
-                const aspect_ratio = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
-                const projection = math.m4Persp(
-                    math.rad(45.0),
-                    aspect_ratio,
-                    0.1,
-                    1000.0
-                );
-
-                std.debug.print("Updating camera with new aspect ratio: {}\n", .{aspect_ratio});
-                _ = renderer.camera.?.update(view, projection) catch |err| {
-                    std.debug.print("Failed to update camera after resize: {s}\n", .{@errorName(err)});
-                };
-            }
-
-            std.debug.print("Swapchain recreated successfully.\n", .{});
-        } else {
-            std.debug.print("Dimensions unchanged (still {}x{}), skipping recreation\n", .{width, height});
+    // Acquire next image using the context
+    const imageIndex = renderer.context.acquireNextImage(frameIndex) catch |err| {
+        if (err == error.NotReady) {
+            return;
         }
-
-        // Return early - we'll continue rendering on the next frame
+        if (err == error.OutOfDate) {
+            // Swapchain was recreated, continue on next frame
+            return;
+        }
+        logger.err("Failed to acquire next image: {s}", .{@errorName(err)});
         return;
-    }
+    };
 
-
-    logger.debug("Acquired image index: {}", .{activeFrame.index});
-    logger.debug("Swapchain image length: {}", .{renderer.swapchainImages.len});
-    logger.debug("Swapchain image: {any}", .{renderer.swapchainImages[0]});
+    logger.debug("Acquired image index: {}", .{imageIndex});
+    logger.debug("Swapchain image length: {}", .{renderer.context.swapchainImages.len});
+    logger.debug("Swapchain image: {any}", .{renderer.context.swapchainImages[0]});
 
     std.debug.print(
         "Swapchain image resource: {any}\n",
         .{renderer.swapchainImageResource},
     );
-    renderer.swapchainImageResource.handle = task.ResourceHandle{ .image = renderer.swapchainImages[activeFrame.index] };
-    renderer.swapchainImageResource.createView(renderer.device, vk.IMAGE_VIEW_TYPE_2D, vk.Format.B8G8R8A8Srgb) catch |err| {
+    renderer.swapchainImageResource.handle = task.ResourceHandle{ .image = renderer.context.swapchainImages[imageIndex] };
+    renderer.swapchainImageResource.createView(renderer.context.device, vk.IMAGE_VIEW_TYPE_2D, vk.Format.B8G8R8A8Srgb) catch |err| {
         std.debug.print("Failed to create image view: {s}\n", .{@errorName(err)});
         return;
     };
 
-
     logger.info("Executing render commands for frame {}", .{frameIndex});
 
     // Log command buffer state
-    logger.info("Using command buffer: {*}", .{renderer.command_buffers[frameIndex]});
+    logger.info("Using command buffer: {*}", .{renderer.context.command_buffers[frameIndex]});
 
     // Execute the graph with the CURRENT frame's command buffer and synchronization objects
     const passContext = PassContext{
-        .cmd = renderer.command_buffers[frameIndex],
-        .queue = renderer.queue,
-        .swapchain = renderer.swapchain,
-        .render_finished_semaphore = renderer.render_finished_semaphores[frameIndex],
-        .image_available_semaphore = renderer.image_available_semaphores[frameIndex],
-        .in_flight_fence = renderer.in_flight_fences[frameIndex],
+        .cmd = renderer.context.command_buffers[frameIndex],
+        .queue = renderer.context.queue,
+        .swapchain = renderer.context.swapchain,
+        .render_finished_semaphore = renderer.context.render_finished_semaphores[frameIndex],
+        .image_available_semaphore = renderer.context.image_available_semaphores[frameIndex],
+        .in_flight_fence = renderer.context.in_flight_fences[frameIndex],
         .frame = activeFrame,
         .userData = renderer,
     };
 
-    logger.info("Starting graph execution with context: cmd={*}, queue={*}, fence={*}",
-        .{passContext.cmd, passContext.queue, passContext.in_flight_fence});
+    logger.info("Starting graph execution with context: cmd={*}, queue={*}, fence={*}", .{ passContext.cmd, passContext.queue, passContext.in_flight_fence });
 
-    // Update the camera pass with the latest upload offset before executing the graph
-    if (renderer.camera != null and renderer.camera_pass != null) {
-        logger.info("Updating camera pass with latest upload offset", .{});
-        renderer.camera.?.updateCameraPass(renderer.camera_pass.?);
-    }
-
-    renderer.graph.execute(renderer.command_buffers[frameIndex], // Use frame-specific command buffer
+    renderer.graph.execute(renderer.context.command_buffers[frameIndex], // Use frame-specific command buffer
         passContext // Pass context to the execute function
     ) catch |err| {
         logger.err("Failed to execute render graph: {s}", .{@errorName(err)});
@@ -920,7 +877,7 @@ pub export fn render(handle: ?*PlatformRenderer) void {
 }
 
 pub export fn setCamera(handle: ?*include.render.Renderer, camera: *const include.render.Camera) void {
-        if (handle == null) return;
+    if (handle == null) return;
 
     var renderer = platformRenderers.get(handle.?.*) orelse {
         return;
