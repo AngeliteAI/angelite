@@ -213,9 +213,9 @@ pub const Allocator = struct {
     }
 
     pub fn alloc(self: *Allocator, size: usize) !*Allocation {
-        // For scalar layout, we want to minimize alignment
-        const scalar_alignment = 16;
-        const aligned_offset = std.mem.alignForward(usize, self.bump, scalar_alignment);
+        // For PhysicalStorageBuffer64, we need 16-byte alignment
+        const alignment = 16;
+        const aligned_offset = std.mem.alignForward(usize, self.bump, alignment);
 
         logger.info("Allocating {} bytes at heap offset {} (aligned from {})", .{ size, aligned_offset, self.bump });
 
@@ -244,7 +244,7 @@ pub const Allocator = struct {
         logger.info("Allocated {} bytes at heap offset {} and stage offset {}", .{ size, aligned_offset, stage_offset });
 
         // Get a pointer to the staged data in the mapping
-        const stage_ptr = @as([*]u8, @ptrCast(self.stage.mapped_ptr.?)) + stage_offset;
+        const stage_ptr = @as([*]u8, @ptrCast(@alignCast(self.stage.mapped_ptr.?))) + stage_offset;
 
         // Update the bump pointer to the end of the allocation in the heap
         self.bump = end_offset;

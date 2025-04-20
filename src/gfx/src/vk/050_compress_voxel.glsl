@@ -17,7 +17,7 @@ layout(constant_id = 0) const uint PHASE = 0; // 0 = palette creation, 1 = data 
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
-layout(buffer_reference, scalar, align = 4) buffer HeapBufferRef {
+layout(buffer_reference, scalar, align = 16) buffer HeapBufferRef {
     uint64_t data[];
 };
 
@@ -29,20 +29,20 @@ layout(push_constant) uniform PushConstants {
 } pushConstants;
 
 
-layout(buffer_reference, scalar, align = 4) buffer CompressorContextRef {
+layout(buffer_reference, scalar, align = 16) buffer CompressorContextRef {
     uint64_t faceCount;
 };
 
-layout(buffer_reference, scalar, align = 4) buffer WorkspaceRef {
+layout(buffer_reference, scalar, align = 16) buffer WorkspaceRef {
     uint64_t offsetRaw;
     uvec3 size;
 };
 
-layout(buffer_reference, scalar, align = 4) buffer RegionRef {
+layout(buffer_reference, scalar, align = 16) buffer RegionRef {
     uint64_t chunkOffsets[512];
 };
 
-layout(buffer_reference, scalar, align = 4) buffer ChunkRef {
+layout(buffer_reference, scalar, align = 16) buffer ChunkRef {
     uint64_t countPalette;
     uint64_t offsetPalette;
     uint64_t offsetCompressed;
@@ -233,16 +233,23 @@ void compressData() {
         uint64_t oldVal, newVal;
         bool success = false;
 
+        // Ensure proper alignment for atomic operations
+        uint alignedOffset = uint((chunk.offsetCompressed + wordOffset) & ~7u); // Align to 8 bytes
+        uint offsetInWord = uint((chunk.offsetCompressed + wordOffset) & 7u);
+
         while (!success) {
-            // Read current value
-            oldVal = atomicOr(heap.data[uint(chunk.offsetCompressed + wordOffset)], 0);
-
+            // Read current value with proper alignment
+            oldVal = atomicOr(heap.data[alignedOffset], uint64_t(0));
+            
+            // Adjust bit offset based on alignment
+            uint adjustedBitOffset = bitOffset + (offsetInWord * 8);
+            
             // Clear bits and set new bits
-            newVal = (oldVal & ~(mask << bitOffset)) | ((paletteIndex & mask) << bitOffset);
+            newVal = (oldVal & ~(mask << adjustedBitOffset)) | ((paletteIndex & mask) << adjustedBitOffset);
 
-            // Try to update
+            // Try to update with proper alignment
             uint64_t result = atomicCompSwap(
-                heap.data[uint(chunk.offsetCompressed + wordOffset)],
+                heap.data[alignedOffset],
                 oldVal,
                 newVal
             );
@@ -258,17 +265,22 @@ void compressData() {
         uint64_t maskCurrent = (uint64_t(1u) << bitsInCurrent) - uint64_t(1u);
         uint64_t maskNext = (uint64_t(1u) << bitsInNext) - uint64_t(1u);
 
+        // Ensure proper alignment for first word
+        uint alignedOffset1 = uint((chunk.offsetCompressed + wordOffset) & ~7u);
+        uint offsetInWord1 = uint((chunk.offsetCompressed + wordOffset) & 7u);
+        
         // Process first word
         uint64_t oldVal1, newVal1;
         bool success1 = false;
 
         while (!success1) {
-            oldVal1 = atomicOr(heap.data[uint(chunk.offsetCompressed + wordOffset)], 0);
-            newVal1 = (oldVal1 & ~(maskCurrent << bitOffset)) |
-                      ((paletteIndex & maskCurrent) << bitOffset);
+            oldVal1 = atomicOr(heap.data[alignedOffset1], uint64_t(0));
+            uint adjustedBitOffset1 = bitOffset + (offsetInWord1 * 8);
+            newVal1 = (oldVal1 & ~(maskCurrent << adjustedBitOffset1)) |
+                      ((paletteIndex & maskCurrent) << adjustedBitOffset1);
 
             uint64_t result = atomicCompSwap(
-                heap.data[uint(chunk.offsetCompressed + wordOffset)],
+                heap.data[alignedOffset1],
                 oldVal1,
                 newVal1
             );
@@ -276,16 +288,21 @@ void compressData() {
             success1 = (result == oldVal1);
         }
 
+        // Ensure proper alignment for second word
+        uint alignedOffset2 = uint((chunk.offsetCompressed + wordOffset + 1) & ~7u);
+        uint offsetInWord2 = uint((chunk.offsetCompressed + wordOffset + 1) & 7u);
+        
         // Process second word
         uint64_t oldVal2, newVal2;
         bool success2 = false;
 
         while (!success2) {
-            oldVal2 = atomicOr(heap.data[uint(chunk.offsetCompressed + wordOffset + 1)], 0);
+            oldVal2 = atomicOr(heap.data[alignedOffset2], uint64_t(0));
+            uint adjustedBitOffset2 = offsetInWord2 * 8;
             newVal2 = (oldVal2 & ~maskNext) | ((paletteIndex >> bitsInCurrent) & maskNext);
 
             uint64_t result = atomicCompSwap(
-                heap.data[uint(chunk.offsetCompressed + wordOffset + 1)],
+                heap.data[alignedOffset2],
                 oldVal2,
                 newVal2
             );

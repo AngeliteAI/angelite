@@ -19,21 +19,21 @@ layout(push_constant) uniform PushConstants {
 #define CHUNK_SIZE 8
 
 // Buffer reference for the noise data
-layout(buffer_reference, scalar, align = 4) buffer F32Ref {
+layout(buffer_reference, scalar, align = 16) buffer F32Ref {
     float data;
 };
 
-layout(buffer_reference, scalar, align = 4) buffer U64Ref {
+layout(buffer_reference, scalar, align = 16) buffer U64Ref {
     uint64_t data;
 };
 
-layout(buffer_reference, scalar, align = 4) buffer NoiseContextRef {
+layout(buffer_reference, scalar, align = 16) buffer NoiseContextRef {
     uint64_t noiseParamOffset;
     uint64_t noiseDataOffset;
 };
 
 // Buffer reference for the noise parameters
-layout(buffer_reference, scalar, align = 4) buffer NoiseParamsRef {
+layout(buffer_reference, scalar, align = 16) buffer NoiseParamsRef {
     float seed;
     float scale;
     float frequency;
@@ -44,19 +44,19 @@ layout(buffer_reference, scalar, align = 4) buffer NoiseParamsRef {
 };
 
 // Buffer reference for terrain parameters
-layout(buffer_reference, scalar, align = 4) buffer TerrainParamsRef {
+layout(buffer_reference, scalar, align = 16) buffer TerrainParamsRef {
     float heightScale;
     float heightOffset;
     float squishingFactor;
     uvec3 size;
 };
 
-layout(buffer_reference, scalar, align = 4) buffer WorkspaceRef {
+layout(buffer_reference, scalar, align = 16) buffer WorkspaceRef {
     uint64_t offsetRaw;
     uvec3 size;
 };
 
-layout(buffer_reference, scalar, align = 4) buffer RegionRef {
+layout(buffer_reference, scalar, align = 16) buffer RegionRef {
     uint64_t offsetPalette;
     uint64_t offsetCompressed;
     uvec3 size;

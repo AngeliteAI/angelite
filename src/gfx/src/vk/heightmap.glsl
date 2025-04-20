@@ -20,7 +20,7 @@ layout(buffer_reference, scalar, align = 4) readonly buffer CameraBuffer {
 
 // Define the heightmap data structure
 layout(buffer_reference, scalar, align = 4) readonly buffer HeightmapBuffer {
-    uint heights[4096];  // Total heightmap points (64x64)
+    double heights[4096];  // Total heightmap points (64x64)
 };
 
 // Grid parameters for the heightmap plane
@@ -51,8 +51,8 @@ float sampleHeight(HeightmapBuffer heightmap, int x, int z) {
     z = clamp(z, 0, GRID_SIZE - 1);
     
     int index = x + z * GRID_SIZE;
-    uint heightBits = heightmap.heights[index];
-    return uintBitsToFloat(heightBits);
+    double heightBits = heightmap.heights[index];
+    return float(heightBits);
 }
 
 // Function to perform bilinear interpolation between four height values
