@@ -49,7 +49,7 @@ pub const Stage = struct {
     // Ring buffer tracking
     current_offset: usize = 0,
     last_fence: ?vk.Fence = null,
-    aligned_offset: usize = 16, // Default alignment for most GPUs
+    aligned_offset: usize = 1, // Changed from 16 to 1 for scalar layout
 
     // Target resource this stage uploads to
     target: TargetUnion,
@@ -202,7 +202,7 @@ pub const Stage = struct {
             .mapped_ptr = null,
             .current_offset = 0,
             .last_fence = null,
-            .aligned_offset = 256, // Common alignment for most GPUs (adjust as needed)
+            .aligned_offset = 1, // Changed from 16 to 1 for scalar layout
             .target = target_param, // Directly use the anonymous struct
             .staging_resource = null,
             .ref_count = 0,

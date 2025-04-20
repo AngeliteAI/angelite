@@ -45,6 +45,8 @@ pub const Heap = struct {
 
         // Create the buffer with explicit device address usage
         const buffer_info = vk.BufferCreateInfo{
+            .sType = vk.sTy(.BufferCreateInfo),
+            .pNext = null,
             .size = size,
             .usage = usage | vk.BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
             .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
@@ -108,6 +110,8 @@ pub const Heap = struct {
 
         // Get device address
         const device_address_info2 = vk.BufferDeviceAddressInfo{
+            .sType = vk.sTy(.BufferDeviceAddressInfo),
+            .pNext = null,
             .buffer = heap.buffer,
         };
 

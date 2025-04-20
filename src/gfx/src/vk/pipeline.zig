@@ -147,6 +147,7 @@ pub const ComputePipelineConfig = struct {
     push_constant_size: u32 = 0,
     descriptor_set_layouts: []const vk.DescriptorSetLayout = &[_]vk.DescriptorSetLayout{},
     specialization_info: ?*const vk.SpecializationInfo = null,
+    phase: u32 = 0,
 };
 
 // Configuration for graphics pipeline creation with dynamic rendering
@@ -272,6 +273,22 @@ pub const PipelineCompiler = struct {
         // Compile or get cached compute shader
         const shader_module = try self.shader_compiler.compileShaderFile(config.shader.path, config.shader.shader_type);
 
+        // Create specialization map entry for phase
+        const phase_map_entry = vk.SpecializationMapEntry{
+            .constantID = 0,
+            .offset = 0,
+            .size = @sizeOf(u32),
+        };
+
+        // Create specialization data for phase
+        var phase_data: u32 = config.phase;
+        const phase_info = vk.SpecializationInfo{
+            .mapEntryCount = 1,
+            .pMapEntries = &phase_map_entry,
+            .dataSize = @sizeOf(u32),
+            .pData = &phase_data,
+        };
+
         // Create pipeline layout
         var pipeline_layout_info = vk.PipelineLayoutCreateInfo{
             .sType = vk.sTy(vk.StructureType.PipelineLayoutCreateInfo),
@@ -297,31 +314,30 @@ pub const PipelineCompiler = struct {
         const layout_result = vk.createPipelineLayout(self.device, &pipeline_layout_info, null, &pipeline_layout);
 
         if (layout_result != vk.SUCCESS) {
+            std.debug.print("Failed to create pipeline layout", .{});
             return PipelineError.PipelineCreationFailed;
         }
 
         // Create compute pipeline
-        const shader_stage = vk.PipelineShaderStageCreateInfo{
-            .sType = vk.sTy(vk.StructureType.PipelineShaderStageCreateInfo),
-            .stage = vk.SHADER_STAGE_COMPUTE,
-            .module = shader_module,
-            .pName = config.shader.entry_point.ptr,
-            .pSpecializationInfo = config.specialization_info,
-        };
-
-        const compute_create_info = vk.ComputePipelineCreateInfo{
+        const pipeline_info = vk.ComputePipelineCreateInfo{
             .sType = vk.sTy(vk.StructureType.ComputePipelineCreateInfo),
-            .stage = shader_stage,
+            .stage = .{
+                .sType = vk.sTy(vk.StructureType.PipelineShaderStageCreateInfo),
+                .stage = vk.SHADER_STAGE_COMPUTE,
+                .module = shader_module,
+                .pName = config.shader.entry_point.ptr,
+                .pSpecializationInfo = &phase_info,
+            },
             .layout = pipeline_layout,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
 
         var pipeline: vk.Pipeline = undefined;
-        const result = vk.createComputePipelines(self.device, null, 1, &compute_create_info, null, &pipeline);
+        const result = vk.createComputePipelines(self.device, null, 1, &pipeline_info, null, &pipeline);
 
         if (result != vk.SUCCESS) {
-            vk.destroyPipelineLayout(self.device, pipeline_layout, null);
+            std.debug.print("Failed to create compute pipeline", .{});
             return PipelineError.PipelineCreationFailed;
         }
 

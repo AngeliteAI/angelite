@@ -156,7 +156,7 @@ pub const Allocator = struct {
             .heap = heap_ptr,
             .stage = stage_ptr,
             .graph = graph_ptr,
-            .bump = 1024,
+            .bump = 0,
             .allocation_memory = std.heap.ArenaAllocator.init(std.heap.c_allocator),
             .current_epoch = 0,
             .mutex = std.Thread.Mutex{},
@@ -185,7 +185,7 @@ pub const Allocator = struct {
     /// Reset the allocator, clearing all allocations
     pub fn reset(self: *Allocator) !void {
         // Reset the bump pointer to a non-zero value
-        self.bump = 1024;
+        self.bump = 0;
 
         // Reset the stage buffer offset
         self.stage.resetOffset();
@@ -212,9 +212,12 @@ pub const Allocator = struct {
         self.staged_allocations.deinit();
     }
 
-    pub fn alloc(self: *Allocator, size: usize, alignment: usize) !*Allocation {
-        // Align the current offset according to the requested alignment
-        const aligned_offset = std.mem.alignForward(usize, self.bump, alignment);
+    pub fn alloc(self: *Allocator, size: usize) !*Allocation {
+        // For scalar layout, we want to minimize alignment
+        const scalar_alignment = 16;
+        const aligned_offset = std.mem.alignForward(usize, self.bump, scalar_alignment);
+
+        logger.info("Allocating {} bytes at heap offset {} (aligned from {})", .{ size, aligned_offset, self.bump });
 
         // Check if we need to grow the heap
         const end_offset = aligned_offset + size;

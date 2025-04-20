@@ -26,7 +26,7 @@ const ResourceState = task.ResourceState;
 const Frame = frame.Frame;
 
 pub const Context = struct {
-    const MAX_FRAMES_IN_FLIGHT = 3;
+    pub const MAX_FRAMES_IN_FLIGHT = 3;
     instance: vk.Instance,
     physicalDevice: vk.PhysicalDevice,
     device: vk.Device,
@@ -294,14 +294,31 @@ pub const Context = struct {
     pub fn recreateSwapchain(self: *Context) !void {
         // get current surface capabilities to determine the proper swapchain size
         var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
-        _ = vk.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physicalDevice, self.surface.?, &capabilities);
-        // Use the current extent from surface capabilities
-        const width = capabilities.currentExtent.width;
-        const height = capabilities.currentExtent.height;
-        std.debug.print("Recreating swapchain with dimensions: {}x{}\n", .{ width, height });
+        const result = vk.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physicalDevice, self.surface.?, &capabilities);
+        if (result != vk.SUCCESS) {
+            logger.err("Failed to get surface capabilities: {}", .{result});
+            return error.SurfaceCapabilitiesQueryFailed;
+        }
+
+        // Validate and use the current extent from surface capabilities
+        var width = capabilities.currentExtent.width;
+        var height = capabilities.currentExtent.height;
+
+        // Check if the surface dimensions are valid
+        if (width == std.math.maxInt(u32) or height == std.math.maxInt(u32)) {
+            logger.warn("Surface dimensions are undefined, using fallback values", .{});
+            width = 800; // Default width
+            height = 600; // Default height
+        }
+
+        // Ensure dimensions are within valid range
+        width = @max(capabilities.minImageExtent.width, @min(width, capabilities.maxImageExtent.width));
+        height = @max(capabilities.minImageExtent.height, @min(height, capabilities.maxImageExtent.height));
+
+        logger.info("Recreating swapchain with dimensions: {}x{}", .{ width, height });
 
         // Wait for all operations to complete before recreating swapchain
-        std.debug.print("Waiting for device idle before recreating swapchain...\n", .{});
+        logger.info("Waiting for device idle before recreating swapchain...", .{});
         _ = vk.deviceWaitIdle(self.device);
 
         // Store the old swapchain to properly clean up later
@@ -309,7 +326,7 @@ pub const Context = struct {
 
         // Recreate swapchain
         self.swapchain = Context.createSwapchain(self.device, self.physicalDevice, self.surface.?, oldSwapchain) catch |err| {
-            std.debug.print("Failed to recreate swapchain: {s}\n", .{@errorName(err)});
+            logger.err("Failed to recreate swapchain: {s}", .{@errorName(err)});
             return err;
         };
 
@@ -317,14 +334,14 @@ pub const Context = struct {
         renderAllocator.free(self.swapchainImages);
 
         self.swapchainImages = Context.getSwapchainImages(self.device, self.swapchain) catch |err| {
-            std.debug.print("Failed to recreate swapchain image views: {s}\n", .{@errorName(err)});
+            logger.err("Failed to recreate swapchain image views: {s}", .{@errorName(err)});
             return err;
         };
 
         // Update images_in_flight array to match the new swapchain image count
         renderAllocator.free(self.images_in_flight);
         self.images_in_flight = renderAllocator.alloc(vk.Fence, self.swapchainImages.len) catch |err| {
-            std.debug.print("Failed to allocate memory for images_in_flight: {s}\n", .{@errorName(err)});
+            logger.err("Failed to allocate memory for images_in_flight: {s}", .{@errorName(err)});
             return err;
         };
 
@@ -333,7 +350,7 @@ pub const Context = struct {
             self.images_in_flight[i] = null;
         }
 
-        std.debug.print("Swapchain recreated successfully.\n", .{});
+        logger.info("Swapchain recreated successfully.", .{});
     }
 
     // Acquire next image from swapchain
@@ -636,10 +653,17 @@ pub const Context = struct {
         device_features.samplerAnisotropy = vk.TRUE;
         device_features.shaderInt64 = vk.TRUE;
 
+        // Enable shader atomic int64 features
+        var shader_atomic_int64_features = vk.PhysicalDeviceShaderAtomicInt64Features{
+            .sType = vk.sTy(vk.StructureType.PhysicalDeviceShaderAtomicInt64Features),
+            .pNext = null,
+            .shaderBufferInt64Atomics = vk.TRUE,
+        };
+
         // Enable dynamic rendering features
         var dynamic_rendering_features = vk.PhysicalDeviceDynamicRenderingFeatures{
             .sType = vk.sTy(vk.StructureType.PhysicalDeviceDynamicRenderingFeatures),
-            .pNext = null,
+            .pNext = &shader_atomic_int64_features,
             .dynamicRendering = vk.TRUE,
         };
 
@@ -652,10 +676,17 @@ pub const Context = struct {
             .bufferDeviceAddressMultiDevice = vk.FALSE,
         };
 
+        // Enable scalar block layout features
+        var scalar_block_layout_features = vk.PhysicalDeviceScalarBlockLayoutFeatures{
+            .sType = vk.sTy(vk.StructureType.PhysicalDeviceScalarBlockLayoutFeatures),
+            .pNext = &buffer_device_address_features,
+            .scalarBlockLayout = vk.TRUE,
+        };
+
         // Enable descriptor indexing features
         var descriptor_indexing_features = vk.PhysicalDeviceDescriptorIndexingFeatures{
             .sType = vk.sTy(vk.StructureType.PhysicalDeviceDescriptorIndexingFeatures),
-            .pNext = &buffer_device_address_features,
+            .pNext = &scalar_block_layout_features,
             .shaderInputAttachmentArrayDynamicIndexing = vk.TRUE,
             .shaderUniformTexelBufferArrayDynamicIndexing = vk.TRUE,
             .shaderStorageTexelBufferArrayDynamicIndexing = vk.TRUE,
@@ -761,7 +792,7 @@ pub const Context = struct {
 
         // Choose swap extent
         var extent = surface_capabilities.currentExtent;
-        if (surface_capabilities.currentExtent.width == std.math.maxInt(u32)) {
+        if (surface_capabilities.currentExtent.width == std.math.maxInt(u32) or surface_capabilities.currentExtent.width == 0) {
             // If the surface size is undefined, the size is set to the size of the images requested
             extent.width = 800; // Default width
             extent.height = 600; // Default height

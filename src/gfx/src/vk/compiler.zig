@@ -66,6 +66,8 @@ pub const ShaderCompiler = struct {
     pub fn compileGlslToModule(self: *ShaderCompiler, source: []const u8, shader_type: ShaderType) !vk.ShaderModule {
         std.debug.print("ShaderCompiler.compileGlslToModule: Starting compilation for {s} shader (source length: {d})\n", .{ @tagName(shader_type), source.len });
 
+        std.debug.print("Last five lines of source: {s}\n", .{source[source.len - 50 ..]});
+
         const tag = @tagName(shader_type);
         const lowercase_tag = try std.ascii.allocLowerString(self.allocator, tag);
         defer self.allocator.free(lowercase_tag);
@@ -336,11 +338,9 @@ pub const ShaderCompiler = struct {
 
         // Store in cache
         std.debug.print("ShaderCompiler.compileShaderFile: Storing in cache\n", .{});
-        // Store in cache
-        std.debug.print("ShaderCompiler.compileShaderFile: Storing in cache\n", .{});
-        //const key_copy = try self.allocator.dupe(u8, trimmed_path);
-        //errdefer self.allocator.free(key_copy);
-        //try self.shader_cache.put(key_copy, shader_module);
+        const key_copy = try self.allocator.dupe(u8, trimmed_path);
+        errdefer self.allocator.free(key_copy);
+        try self.shader_cache.put(key_copy, shader_module);
         return shader_module;
     }
 

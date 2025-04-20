@@ -36,7 +36,7 @@ fn main() {
     // Initialize the renderer with our surface
     let renderer_ptr = unsafe { render::init(surface_ptr) };
     let mut camera = render::Camera {
-        position: unsafe { vec::v3(0.0, 0.0, -5.0) },
+        position: unsafe { vec::v3(0.0, 0.1, -5.0) },
         rotation: unsafe { quat::qId() },
         projection: unsafe { mat::m4Persp(PI / 2.0, 1.0, 0.1, 100.0) },
     };

@@ -1,11 +1,17 @@
 #version 450
-#include "000_chunk.glsl"
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_atomic_float : require
+#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_EXT_debug_printf : enable
+#extension GL_EXT_shader_atomic_int64 : require
 
 #define MAX_GEN 8
-#define HEAP_BITS 32
 #define CHUNK_SIZE 8
+#define REGION_SIZE 8
 #define MAX_PALETTE_SIZE 256
+#define HEIGHTMAP_POINTS_PER_CHUNK 64  // 8x8 voxels per chunk
+#define TOTAL_HEIGHTMAP_POINTS 4096     // 64 points per chunk * 64 chunks
 
 struct Quad {
     uvec3 a;
@@ -16,157 +22,244 @@ struct Quad {
 
 layout(push_constant) uniform PushConstants {
     uint64_t heapAddress; // Device address of the heap
-    //block memory with 1 Region at the beginning and then 512 Chunks corresponding to the region
-    uint64_t regionChunkMetadataOffset; // Offset to chunk metadata
+    uint64_t regionOffset;
+    uint64_t heightmapOffset;
 } pushConstants;
-// Buffer reference for noise parameters
-layout(buffer_reference, std430) buffer RegionRef {
-    Region regionRef;
+
+layout(buffer_reference, scalar, align = 4) buffer RegionRef {
+    uint64_t chunkOffsets[512];
 };
-layout(buffer_reference, std430) buffer ChunkRef {
-    Chunk chunkRef;
+
+layout(buffer_reference, scalar, align = 4) buffer ChunkRef {
+    uint64_t countPalette;
+    uint64_t offsetPalette;
+    uint64_t offsetCompressed;
+};
+
+layout(buffer_reference, scalar, align = 4) buffer HeightmapRef {
+    // We'll use the same memory location for both phases
+    // Phase 0: Store height mask as uint
+    // Phase 1: Reinterpret as float for height value
+    uint heights[TOTAL_HEIGHTMAP_POINTS];
+};
+
+layout(buffer_reference, scalar, align = 4) buffer CompressedDataRef {
+    uint64_t data[];
+};
+
+layout(buffer_reference, scalar, align = 4) buffer PaletteRef {
+    uint64_t entries[];
 };
 
 // Use a specialization constant to determine which phase we're in
 layout(constant_id = 0) const uint PHASE = 0; // 0 = palette creation, 1 = data compression
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+// Helper function to get chunk reference
+ChunkRef getChunkRef(RegionRef region, uint chunkIndex) {
+    return ChunkRef(region.chunkOffsets[chunkIndex]);
+}
+
+// Helper function to calculate heightmap index
+uint calculateHeightmapIndex(uvec3 threadPos) {
+    // Calculate region and chunk indices
+    uvec3 regionPos = threadPos / CHUNK_SIZE;
+    uvec3 localPos = threadPos % CHUNK_SIZE;
+    
+    // Calculate chunk index within region
+    uint chunkIndex = regionPos.x + REGION_SIZE * (regionPos.y + REGION_SIZE * regionPos.z);
+    
+    // Calculate local index within chunk (in XY plane)
+    uint localIndex = localPos.x + CHUNK_SIZE * localPos.y;
+    
+    // Calculate global heightmap index
+    return chunkIndex * HEIGHTMAP_POINTS_PER_CHUNK + localIndex;
+}
+
+void tessellateHeightmap() {
+    // Get buffer references
+    RegionRef regionRef = RegionRef(pushConstants.heapAddress + pushConstants.regionOffset);
+    HeightmapRef heightmapRef = HeightmapRef(pushConstants.heapAddress + pushConstants.heightmapOffset);
+
+    // Only process XY plane (z=0)
+    if (gl_GlobalInvocationID.z > 0) {
+        return;
+    }
+    
+    // Get thread identification
+    uvec2 threadId = gl_LocalInvocationID.xy;
+    uint threadIndex = threadId.x + threadId.y * gl_WorkGroupSize.x;
+    
+    // Check if we're within the total number of heightmap points
+    if (threadIndex >= TOTAL_HEIGHTMAP_POINTS) {
+        return;
+    }
+    
+    // Calculate position in heightmap
+    uint heightMapIndex = threadIndex;
+    
+    // Add memory barrier before reading height mask
+    memoryBarrierBuffer();
+    
+    // Read the height mask
+    uint heightMask = heightmapRef.heights[heightMapIndex];
+    
+    // Find the highest non-air block (position of most significant bit)
+    int height = 0;
+    if (heightMask != 0) {
+        height = findLSB(heightMask);
+        // Limit debug prints to reduce overhead
+        if (threadIndex % 1024 == 0) {
+            debugPrintfEXT("Tessellate: Thread %u - HeightMask: 0x%x MSB: %d\n", 
+                          threadIndex, heightMask, height);
+        }
+    }
+    
+    // Convert the height to a float and reinterpret the bits as a uint
+    // The height value represents the Y-coordinate of the highest non-air block
+    float heightFloat = float(height);
+    uint heightBits = floatBitsToUint(heightFloat);
+    
+    // Add memory barrier before writing
+    memoryBarrierBuffer();
+    
+    // Write the height value
+    heightmapRef.heights[heightMapIndex] = heightBits;
+    
+    // Add memory barrier after writing
+    memoryBarrierBuffer();
+    
+    // Limit debug prints to reduce overhead
+    if (threadIndex % 1024 == 0) {
+        debugPrintfEXT("Tessellate: Thread %u - Final height (Y): %d (bits: 0x%x)\n", 
+                       threadIndex, height, heightBits);
+    }
+}
+
+void maskHeightmapColumns() {
+    // Get buffer references
+    RegionRef regionRef = RegionRef(pushConstants.heapAddress + pushConstants.regionOffset);
+    HeightmapRef heightmapRef = HeightmapRef(pushConstants.heapAddress + pushConstants.heightmapOffset);
+    
+    // Get thread position
+    uvec3 threadPos = gl_GlobalInvocationID.xyz;
+    
+    // Calculate thread index for debug prints
+    uint threadIndex = threadPos.x + 64 * (threadPos.y + 64 * threadPos.z);
+    
+    // Check if we're within workspace bounds (64^3)
+    if (any(greaterThanEqual(threadPos, uvec3(64)))) {
+        return;
+    }
+    
+    // Calculate region and chunk indices
+    uvec3 regionPos = threadPos / CHUNK_SIZE;
+    uvec3 localPos = threadPos % CHUNK_SIZE;
+    
+    // Check if we're within region bounds
+    if (any(greaterThanEqual(regionPos, uvec3(REGION_SIZE)))) {
+        return;
+    }
+    
+    // Calculate chunk index within region
+    uint chunkIndex = regionPos.x + REGION_SIZE * (regionPos.y + REGION_SIZE * regionPos.z);
+    
+    // Get chunk reference
+    ChunkRef chunkRef = getChunkRef(regionRef, chunkIndex);
+    
+    // Add memory barrier before reading palette count
+    memoryBarrierBuffer();
+    
+    // Get palette count
+    uint64_t paletteCount = chunkRef.countPalette;
+    
+    // If palette count is 0, this is an empty chunk - skip
+    if (paletteCount == 0) {
+        // Debug print for empty chunks (limited to reduce output)
+        if (threadIndex % 1024 == 0) {
+            debugPrintfEXT("MaskHeightmap: Empty chunk at region (%u,%u,%u), chunk %u\n", 
+                          regionPos.x, regionPos.y, regionPos.z, chunkIndex);
+        }
+        return;
+    }
+    
+    // Get references to the palette and compressed data
+    PaletteRef paletteRef = PaletteRef(pushConstants.heapAddress + chunkRef.offsetPalette);
+    CompressedDataRef compressedRef = CompressedDataRef(pushConstants.heapAddress + chunkRef.offsetCompressed);
+    
+    // Calculate the block index within the chunk
+    uint blockIndex = localPos.x + CHUNK_SIZE * (localPos.y + CHUNK_SIZE * localPos.z);
+    
+    // Calculate how many bits are needed for palette indices
+    uint bits = max(1u, uint(ceil(log2(float(paletteCount)))));
+    
+    // Calculate bit positions for this voxel's palette index
+    uint bitCursor = blockIndex * bits;
+    uint wordOffset = bitCursor / 64;
+    uint bitOffset = bitCursor % 64;
+    
+    // Create mask for the bits we need
+    uint64_t mask = (uint64_t(1u) << bits) - uint64_t(1u);
+    
+    // Read the palette index from compressed data
+    uint64_t paletteIndex = 0;
+    if (bits <= (64 - bitOffset)) {
+        // Case 1: Palette index fits in a single word
+        paletteIndex = (compressedRef.data[wordOffset] >> bitOffset) & mask;
+    } else {
+        // Case 2: Palette index spans two words
+        uint bitsInCurrent = 64 - bitOffset;
+        uint bitsInNext = bits - bitsInCurrent;
+        
+        // Get lower bits from current word
+        uint64_t part1 = compressedRef.data[wordOffset] >> bitOffset;
+        
+        // Get upper bits from next word
+        uint64_t part2 = compressedRef.data[wordOffset + 1] & ((uint64_t(1u) << bitsInNext) - uint64_t(1u));
+        
+        // Combine the parts
+        paletteIndex = part1 | (part2 << bitsInCurrent);
+        // Apply final mask to ensure we don't have extra bits
+        paletteIndex &= mask;
+    }
+    
+    // Get the actual block ID from the palette
+    uint64_t blockID = paletteRef.entries[uint(paletteIndex)];
+    
+    // If the block is not air (blockID != 0), set the corresponding bit in the heightmap mask
+    if (blockID != 0) {
+        // Calculate the heightmap index for this column (x,y position)
+        uint heightMapIndex = calculateHeightmapIndex(uvec3(threadPos.xy, 0));
+        
+        // Add memory barrier before atomic operation
+        memoryBarrierBuffer();
+        
+        // Set the bit corresponding to this block's height
+        uint bitMask = 1u << threadPos.z;
+        
+        // Use atomicOr to set the bit
+        uint oldValue = atomicOr(heightmapRef.heights[heightMapIndex], bitMask);
+        
+        // Add memory barrier after atomic operation
+        memoryBarrierBuffer();
+        
+        // Debug print for non-air blocks (limited to reduce output)
+            debugPrintfEXT("MaskHeightmap: Non-air block at pos (%u,%u,%u) - BlockID: %llu, Height: %u, OldMask: 0x%x, NewMask: 0x%x\n", 
+                          threadPos.x, threadPos.y, threadPos.z, blockID, threadPos.z, oldValue, oldValue | bitMask);
+    }
+}
 
 void main() {
+    // Add a global memory barrier at the start of each shader invocation
+    memoryBarrier();
+    
     if (PHASE == 0) {
         maskHeightmapColumns();
     } else {
         tessellateHeightmap();
     }
-}
-
-shared uint heights[64];
-
-void tessellateHeightmap() {
-    RegionRef regionRef = RegionRef(pushConstants.heapAddress + pushConstants.regionChunkMetadataOffset);
-    //If there are 8 chunks in a region
-    //and 8 blocks in a chunk
-    //There is 64 blocks in a region
-    //heightMapResolution is therefore a divisor of 64
-    //However, we need to ensure that work is distributed across each thread
-    //So that the MSB is calculated distributed-ly
-
-    // Get thread identification
-    uvec2 threadId = gl_LocalInvocationID.xy;
-    uint threadIndex = threadId.x + threadId.y * gl_WorkGroupSize.x;
-
-    // Calculate grid parameters
-    uint resolution = regionRef.heightMapResolutionInChunks;
-    uint numPoints = resolution * resolution;
-    uint stride = REGION_SIZE / resolution;
-
-    // Step 1: Load height data for all sample points
-    barrier();
-    if (threadIndex < numPoints) {
-        // Calculate position in heightmap grid
-        uint gridX = threadIndex % resolution;
-        uint gridY = threadIndex / resolution;
-
-        // Calculate actual position in region space
-        uint regionX = gridX * stride;
-        uint regionY = gridY * stride;
-
-        // Convert to heightmap index
-        uint heightMapIndex = regionX + regionY * REGION_SIZE;
-
-        // Load the height mask from the heightmap data
-        uint heightMask = uint(pushConstants.heapAddress + regionRef.heightMapOffset + heightMapIndex * sizeof(uint));
-
-        // Find the highest non-air block (position of most significant bit)
-        uint height = 0;
-        if (heightMask != 0) {
-            // Alternative to findMSB function
-            height = findMSB(heightMask);
-        }
-
-        // Store in shared memory for quick access
-        heights[threadIndex] = height;
-    }
-
-    // Ensure all heights are loaded before proceeding to create quads
-    barrier();
-
-    // Step 2: Create quads from height data
-    // We need (resolution-1)^2 quads
-    uint numQuads = (resolution - 1) * (resolution - 1);
-
-    if (threadIndex < numQuads) {
-        // Calculate quad position in grid
-        uint quadX = threadIndex % (resolution - 1);
-        uint quadY = threadIndex / (resolution - 1);
-
-        // Calculate indices of the four corners of this quad
-        uint indexA = quadX + quadY * resolution;
-        uint indexB = indexA + 1;
-        uint indexC = indexA + resolution;
-        uint indexD = indexC + 1;
-
-        // Get heights for the four corners
-        uint heightA = heights[indexA];
-        uint heightB = heights[indexB];
-        uint heightC = heights[indexC];
-        uint heightD = heights[indexD];
-
-        // Calculate actual positions in region space
-        uint regionX = quadX * stride;
-        uint regionY = quadY * stride;
-
-        // Create the quad with correct positions and heights
-        Quad quad;
-        quad.a = uvec3(regionX, regionY, heightA);
-        quad.b = uvec3(regionX + stride, regionY, heightB);
-        quad.c = uvec3(regionX, regionY + stride, heightC);
-        quad.d = uvec3(regionX + stride, regionY + stride, heightD);
-
-        // Write the quad to memory
-        Quad quadPtr = Quad(pushConstants.heapAddress + regionRef.heightMapMeshOffset + threadIndex * sizeof(Quad));
-        quadPtr = quad;
-    }
-}
-
-void maskHeightmapColumns()
-{
-    //first get the metadata
-    //first check if the pallete is entirely air
-    RegionRef regionRef = RegionRef(pushConstants.heapAddress + pushConstants.regionChunkMetadataOffset);
-    bool airChunk[REGION_HEIGHT];
-    for (uint i = 0; i < REGION_HEIGHT; i++) {
-        airChunk[i] = false;
-    }
-    for (uint i = 0; i < REGION_HEIGHT; i++) {
-        uvec3 position = uvec3(gl_GlobalInvocationID.xy, i);
-        uint index2d = position.x + position.y * REGION_SIZE;
-        uint index3d = position.x + position.y * REGION_SIZE + position.z * REGION_SIZE * REGION_SIZE;
-        ChunkRef chunkRef = ChunkRef(regionRef.heapAddress + sizeof(RegionRef) + index3d * sizeof(ChunkRef));
-
-        //Now we need to see if the chunk is only air
-        //Were looking for chunks with only one palette entry
-        if (chunkRef.paletteCount != 1) {
-            continue;
-        }
-
-        //There is only one palette entry, so we can just use that
-        uint chunkPalette = uint(pushConstants.heapAddress + chunkRef.paletteDataOffset);
-
-        if (chunkPalette != 0) {
-            continue;
-        }
-
-        airChunk[i] = true;
-    }
-    //Now that we know which chunks are air, we can turn it into one number by representing each air chunk as a 0 and the rest of the chunks as a 1
-    uint mask = 0;
-    for (uint i = 0; i < REGION_HEIGHT; i++) {
-        mask |= airChunk[i] ? 0 : (1 << i);
-    }
-
-    //Now write the mask to the heightmap. Remember to write the mask directly
-    uint heightMapIndex = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x;
-    uint heightMapAddress = pushConstants.heapAddress + regionRef.heightMapOffset + heightMapIndex * sizeof(uint);
-    atomicExchange(uint(heightMapAddress), mask);
+    
+    // Add a global memory barrier at the end of each shader invocation
+    memoryBarrier();
 }

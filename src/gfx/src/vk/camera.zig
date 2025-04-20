@@ -9,15 +9,6 @@ const alloc = @import("alloc.zig");
 pub const GpuCameraData = extern struct {
     viewProjection: math.Mat4,
 };
-
-// Push constant structure for bindless camera access
-pub const CameraPushConstants = struct {
-    // Device address of the heap buffer (64-bit GPU pointer)
-    heap_address: u64,
-    // Additional parameters can be added here
-    camera_offset: u64,
-};
-
 // Camera system that uses the renderer's heap and stage
 pub const RendererCamera = struct {
     device: vk.Device,
@@ -51,13 +42,43 @@ pub const RendererCamera = struct {
             .std_allocator = std_allocator,
         };
 
-        // Create the camera allocation
-        self.camera_allocation = try allocator.alloc(@sizeOf(GpuCameraData), 16);
+        // Create the camera allocation with explicit size
+        const camera_size = @sizeOf(GpuCameraData);
+        std.debug.print("Allocating camera data with size: {} bytes\n", .{camera_size});
+
+        self.camera_allocation = try allocator.alloc(camera_size);
         if (self.camera_allocation) |allocation| {
+            // Verify the allocation was successful
+            if (allocation.size < camera_size) {
+                std.debug.print("ERROR: Camera allocation size ({}) is smaller than required ({})\n", .{ allocation.size, camera_size });
+                return error.BufferTooSmall;
+            }
+
+            // Get the device address to verify it's valid
+            const device_addr = try allocation.deviceAddress();
+            std.debug.print("Camera allocation device address: 0x{x}\n", .{device_addr});
+
+            if (device_addr == 0) {
+                std.debug.print("ERROR: Camera allocation device address is 0\n", .{});
+                return error.InvalidDeviceAddress;
+            }
+
             // Write initial camera data
             _ = try allocation.write(std.mem.asBytes(&initial_camera));
-            // Flush to GPU
-            try allocation.flush();
+
+            // Map memory if not already mapped
+            try self.allocator.stage.mapMemory();
+
+            // Mark the allocation as staged
+            allocation.staged = true;
+
+            // Flush all staged allocations to GPU
+            try self.allocator.flushAllStaged();
+
+            std.debug.print("Camera data initialized and flushed to GPU\n", .{});
+        } else {
+            std.debug.print("ERROR: Failed to allocate camera data\n", .{});
+            return error.AllocationFailed;
         }
 
         return self;

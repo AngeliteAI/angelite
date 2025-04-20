@@ -140,6 +140,8 @@ pub const StructureType = enum(c_uint) {
     PhysicalDeviceDynamicRenderingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
     PhysicalDeviceDescriptorIndexingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT,
     PhysicalDeviceBufferDeviceAddressFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+    PhysicalDeviceScalarBlockLayoutFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES_EXT,
+    PhysicalDeviceShaderAtomicInt64Features = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES_KHR,
 
     // Synchronization-related structure types
     FenceCreateInfo = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
@@ -149,6 +151,7 @@ pub const StructureType = enum(c_uint) {
 };
 
 pub const NULL = c.VK_NULL_HANDLE;
+pub const SpecializationMapEntry = c.VkSpecializationMapEntry;
 
 pub fn sTy(ty: StructureType) c.VkStructureType {
     // Using an explicit cast to c_int since VkStructureType is a c_int
@@ -462,6 +465,10 @@ pub const PhysicalDeviceBufferDeviceAddressFeatures = extern struct {
     bufferDeviceAddressMultiDevice: c.VkBool32,
 };
 
+// Add scalar block layout features
+pub const PhysicalDeviceScalarBlockLayoutFeatures = c.VkPhysicalDeviceScalarBlockLayoutFeaturesEXT;
+pub const PhysicalDeviceShaderAtomicInt64Features = c.VkPhysicalDeviceShaderAtomicInt64FeaturesKHR;
+
 // Queue family properties
 pub const QueueFamilyProperties = c.VkQueueFamilyProperties;
 pub const getPhysicalDeviceQueueFamilyProperties = c.vkGetPhysicalDeviceQueueFamilyProperties;
@@ -755,7 +762,7 @@ pub const ImageLayout = c.VkImageLayout;
 pub const PIPELINE_STAGE_NONE = c.VK_PIPELINE_STAGE_NONE;
 pub const IMAGE_LAYOUT_UNDEFINED = c.VK_IMAGE_LAYOUT_UNDEFINED;
 pub const QUEUE_FAMILY_IGNORED = c.VK_QUEUE_FAMILY_IGNORED;
-pub const ACCESS_COLOR_ATTACHMENT_WRITE = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+pub const ACCESS_COLOR_ATTACHMENT_WRITE_BIT = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT = c.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 pub const ACCESS_MEMORY_READ_BIT = c.VK_ACCESS_MEMORY_READ_BIT;
 pub const IMAGE_LAYOUT_PRESENT_SRC_KHR = c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
