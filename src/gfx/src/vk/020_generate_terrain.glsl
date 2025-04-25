@@ -106,15 +106,9 @@ void main() {
     // Create a more uniform terrain pattern
     // Use a combination of sine waves with different frequencies and phases
     // This should create a more varied terrain with non-air blocks at all positions
-    float wave1 = sin(globalPos.y * 0.05) * sin(globalPos.x * 0.05) * 10.0;
-    float wave2 = sin(globalPos.y * 0.1 + 1.5) * sin(globalPos.x * 0.1 + 0.7) * 5.0;
-    float wave3 = sin(globalPos.y * 0.02 + 0.3) * sin(globalPos.x * 0.02 + 1.2) * 3.0;
-    
-    // Combine the waves with different weights
-    float combinedWave = wave1 + wave2 + wave3 + 12.0;
     
     // Determine if this voxel should be solid based on the combined wave height
-    bool solid = globalPos.z < combinedWave;
+    bool solid = globalPos.z < 9;
 
     // Set voxel value (1 for solid, 0 for air)
     uint64_t terrainValue = solid ? uint64_t(1u) : uint64_t(0u);

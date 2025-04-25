@@ -83,7 +83,7 @@ uint chunkHeight(RegionRef region, ivec3 pos) {
     if (lowBits != 0) {
         return findMSB(lowBits);
     }
-    return -10;
+    return 0;
 }
 // Function to safely sample height from heightmap
 float sampleHeight(RegionRef region, int x, int y) {
