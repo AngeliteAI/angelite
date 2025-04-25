@@ -75,6 +75,9 @@ int main(int argc, char* argv[]) {
         options.SetOptimizationLevel(shaderc_optimization_level_performance);
     }
 
+    // Set SPIR-V version to 1.3
+    options.SetTargetSpirv(shaderc_spirv_version_1_3);
+
     // Compile the shader
     shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(
         shaderSource, shaderKind, inputName.c_str(), options);

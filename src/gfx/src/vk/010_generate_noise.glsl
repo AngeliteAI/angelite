@@ -13,17 +13,17 @@ layout(push_constant) uniform PushConstants {
 
 // Print the size of the NoiseContext struct for debugging
 
-layout(buffer_reference, scalar, align = 16) buffer F32Ref {
+layout(buffer_reference, scalar) buffer F32Ref {
     float data;
 };
 
-layout(buffer_reference, scalar, align = 16) buffer NoiseContextRef {
+layout(buffer_reference, scalar) buffer NoiseContextRef {
     uint64_t noiseParamOffset;
     uint64_t noiseDataOffset;
 };
 
 // Buffer reference for the noise parameters
-layout(buffer_reference, scalar, align = 16) buffer NoiseParamsRef {
+layout(buffer_reference, scalar) buffer NoiseParamsRef {
     float seed;
     float scale;
     float frequency;

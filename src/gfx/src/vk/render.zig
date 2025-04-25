@@ -112,7 +112,6 @@ const terrainPassFn = struct {
             noise_context_offset: u64,
             terrain_context_offset: u64,
             workspace_offset: u64,
-            region_offset: u64,
         }{
             .heap_address = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
                 logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
@@ -121,7 +120,6 @@ const terrainPassFn = struct {
             .noise_context_offset = taskRenderer.noise_context_allocation.heap_offset,
             .terrain_context_offset = taskRenderer.terrain_params_allocation.heap_offset,
             .workspace_offset = taskRenderer.workspace_allocation.heap_offset,
-            .region_offset = taskRenderer.region_allocation.heap_offset,
         };
         logger.info("Push constants: {any}", .{pushConstants});
 
@@ -154,6 +152,176 @@ const terrainPassFn = struct {
         vk.cmdDispatch(passCtx.cmd, grid_size.x, grid_size.y, grid_size.z);
 
         logger.info("Terrain compute shader dispatch complete", .{});
+    }
+}.execute;
+
+const facePassFn = struct {
+    fn execute(passCtx: PassContext) void {
+        logger.info("Executing face pass...", .{});
+        const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(passCtx.userData)));
+
+        logger.info("Triangle pass context: cmd={*}, frame={}x{}", .{ passCtx.cmd, passCtx.frame.*.width, passCtx.frame.*.height });
+
+        // Get heap device address for bindless access
+        logger.info("Getting heap device address...", .{});
+
+        const heapAddress = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
+            logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
+            return;
+        };
+        logger.info("Heap device address: 0x{x}", .{heapAddress});
+
+        // Verify the heap address is valid
+        if (heapAddress == 0) {
+            logger.err("Invalid heap address (0)", .{});
+            return;
+        }
+
+        // Get camera offset
+        const cameraOffset = if (taskRenderer.camera) |camera| blk: {
+            if (camera.camera_allocation) |allocation| {
+                logger.info("Camera allocation heap offset: {}", .{allocation.heap_offset});
+                break :blk allocation.heap_offset;
+            } else {
+                logger.err("Camera allocation is null", .{});
+                unreachable;
+            }
+        } else {
+            logger.err("Camera is null", .{});
+            unreachable;
+        };
+
+        // Get region offset
+        const regionOffset = taskRenderer.region_allocation.heap_offset;
+        logger.info("Region allocation heap offset: {}", .{regionOffset});
+
+        // Create push constants with heap address, camera offset, and region offset
+        const pushConstants = extern struct {
+            heap_address: u64,
+            camera_offset: u64,
+            region_offset: u64,
+        }{
+            .heap_address = heapAddress,
+            .camera_offset = cameraOffset,
+            .region_offset = regionOffset,
+        };
+        logger.info("Push constants created with heap_address=0x{x}, camera_offset={}, region_offset={}", .{ pushConstants.heap_address, pushConstants.camera_offset, pushConstants.region_offset });
+
+        // Verify push constants are valid
+        if (pushConstants.heap_address == 0) {
+            logger.err("Invalid heap address in push constants (0)", .{});
+            return;
+        }
+
+        logger.info("Setting up color attachment for frame {}x{}", .{ passCtx.frame.*.width, passCtx.frame.*.height });
+        const color_attachment = vk.RenderingAttachmentInfoKHR{
+            .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
+            .imageView = taskRenderer.swapchainImageResource.view.?.imageView,
+            .imageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
+            .resolveImageView = null,
+            .resolveImageLayout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp = vk.RENDER_PASS_LOAD_OP_LOAD,
+            .storeOp = vk.RENDER_PASS_STORE_OP_STORE,
+            .clearValue = vk.ClearValue{
+                .color = vk.ClearColorValue{
+                    .float32 = [_]f32{ 0.1, 0.1, 0.1, 1.0 },
+                },
+            },
+        };
+
+        // Set up depth attachment
+        logger.info("Setting up depth attachment...", .{});
+        const depth_attachment = vk.RenderingAttachmentInfoKHR{
+            .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
+            .imageView = taskRenderer.context.depthImageView,
+            .imageLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
+            .resolveImageView = null,
+            .resolveImageLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .loadOp = vk.RENDER_PASS_LOAD_OP_LOAD,
+            .storeOp = vk.RENDER_PASS_STORE_OP_STORE,
+            .clearValue = vk.ClearValue{
+                .depthStencil = .{
+                    .depth = 1.0,
+                    .stencil = 0,
+                },
+            },
+        };
+
+        // Create attachments array with both color and depth
+        var attachments = [_]vk.RenderingAttachmentInfoKHR{ color_attachment, depth_attachment };
+
+        const rendering_info = vk.RenderingInfoKHR{
+            .sType = vk.sTy(vk.StructureType.RenderingInfoKHR),
+            .renderArea = vk.Rect2D{
+                .offset = vk.Offset2D{ .x = 0, .y = 0 },
+                .extent = vk.Extent2D{ .width = passCtx.frame.*.width, .height = passCtx.frame.*.height },
+            },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &attachments[0],
+            .pDepthAttachment = &attachments[1],
+        };
+
+        logger.info("Beginning dynamic rendering", .{});
+        vk.cmdBeginRenderingKHR(passCtx.cmd, &rendering_info);
+        logger.debug("Color attachment: {any}", .{rendering_info});
+
+        // Use the bindless pipeline instead of the regular triangle pipeline
+        logger.info("Getting face pipeline...", .{});
+        const pipeline = taskRenderer.pipeline.getPipeline("face") catch |err| {
+            logger.err("Failed to get face pipeline: {s}", .{@errorName(err)});
+            return;
+        };
+        logger.info("Pipeline obtained: {*}", .{pipeline});
+
+        logger.info("Binding pipeline", .{});
+        vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_GRAPHICS, pipeline.asGraphics().?.getHandle().?);
+
+        const viewport = vk.Viewport{
+            .x = 0.0,
+            .y = 0.0,
+            .width = @floatFromInt(passCtx.frame.*.width),
+            .height = @floatFromInt(passCtx.frame.*.height),
+            .minDepth = 0.0,
+            .maxDepth = 1.0,
+        };
+
+        logger.info("Setting viewport: {}x{}", .{ viewport.width, viewport.height });
+        vk.cmdSetViewport(passCtx.cmd, 0, 1, &viewport);
+
+        const scissor = vk.Rect2D{
+            .offset = vk.Offset2D{ .x = 0, .y = 0 },
+            .extent = vk.Extent2D{ .width = passCtx.frame.*.width, .height = passCtx.frame.*.height },
+        };
+
+        logger.info("Setting scissor: {}x{}", .{ scissor.extent.width, scissor.extent.height });
+        vk.cmdSetScissor(passCtx.cmd, 0, 1, &scissor);
+
+        // Push the constants to the shader
+        logger.info("Pushing constants with heap address: 0x{x}", .{heapAddress});
+        if (pipeline.asGraphics() == null) {
+            logger.err("Pipeline is not a graphics pipeline", .{});
+            return;
+        }
+
+        const pipelineLayout = pipeline.asGraphics().?.base.layout;
+        logger.info("Pipeline layout: {*}", .{pipelineLayout});
+
+        // Verify the push constant size
+        const pushConstantsSize = @sizeOf(@TypeOf(pushConstants));
+        logger.info("Push constants size: {} bytes", .{pushConstantsSize});
+
+        vk.cmdPushConstants(passCtx.cmd, pipelineLayout, vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT, 0, pushConstantsSize, &pushConstants);
+
+        // Draw the grid of triangles (8x8 grid, 2 triangles per cell, 3 vertices per triangle)
+        vk.cmdDraw(passCtx.cmd, 2048, 1, 0, 0);
+        logger.info("Draw call completed", .{});
+
+        logger.info("Ending dynamic rendering", .{});
+        vk.cmdEndRenderingKHR(passCtx.cmd);
+        logger.info("Triangle pass execution complete", .{});
     }
 }.execute;
 
@@ -193,21 +361,21 @@ const trianglePassFn = struct {
             unreachable;
         };
 
-        // Get heightmap offset
-        const heightmapOffset = taskRenderer.heightmap_allocation.heap_offset;
-        logger.info("Heightmap allocation heap offset: {}", .{heightmapOffset});
+        // Get region offset
+        const regionOffset = taskRenderer.region_allocation.heap_offset;
+        logger.info("Region allocation heap offset: {}", .{regionOffset});
 
-        // Create push constants with heap address, camera offset, and heightmap offset
+        // Create push constants with heap address, camera offset, and region offset
         const pushConstants = extern struct {
             heap_address: u64,
             camera_offset: u64,
-            heightmap_offset: u64,
+            region_offset: u64,
         }{
             .heap_address = heapAddress,
             .camera_offset = cameraOffset,
-            .heightmap_offset = heightmapOffset,
+            .region_offset = regionOffset,
         };
-        logger.info("Push constants created with heap_address=0x{x}, camera_offset={}, heightmap_offset={}", .{ pushConstants.heap_address, pushConstants.camera_offset, pushConstants.heightmap_offset });
+        logger.info("Push constants created with heap_address=0x{x}, camera_offset={}, region_offset={}", .{ pushConstants.heap_address, pushConstants.camera_offset, pushConstants.region_offset });
 
         // Verify push constants are valid
         if (pushConstants.heap_address == 0) {
@@ -232,6 +400,28 @@ const trianglePassFn = struct {
             },
         };
 
+        // Set up depth attachment
+        logger.info("Setting up depth attachment...", .{});
+        const depth_attachment = vk.RenderingAttachmentInfoKHR{
+            .sType = vk.sTy(vk.StructureType.RenderingAttachmentInfoKHR),
+            .imageView = taskRenderer.context.depthImageView,
+            .imageLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .resolveMode = vk.RESOLVE_MODE_NONE_KHR,
+            .resolveImageView = null,
+            .resolveImageLayout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .loadOp = vk.RENDER_PASS_LOAD_OP_CLEAR,
+            .storeOp = vk.RENDER_PASS_STORE_OP_STORE,
+            .clearValue = vk.ClearValue{
+                .depthStencil = .{
+                    .depth = 1.0,
+                    .stencil = 0,
+                },
+            },
+        };
+
+        // Create attachments array with both color and depth
+        var attachments = [_]vk.RenderingAttachmentInfoKHR{ color_attachment, depth_attachment };
+
         const rendering_info = vk.RenderingInfoKHR{
             .sType = vk.sTy(vk.StructureType.RenderingInfoKHR),
             .renderArea = vk.Rect2D{
@@ -240,7 +430,8 @@ const trianglePassFn = struct {
             },
             .layerCount = 1,
             .colorAttachmentCount = 1,
-            .pColorAttachments = &color_attachment,
+            .pColorAttachments = &attachments[0],
+            .pDepthAttachment = &attachments[1],
         };
 
         logger.info("Beginning dynamic rendering", .{});
@@ -294,7 +485,7 @@ const trianglePassFn = struct {
 
         vk.cmdPushConstants(passCtx.cmd, pipelineLayout, vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT, 0, pushConstantsSize, &pushConstants);
 
-        // Draw the grid of triangles (64x64 grid, 2 triangles per cell, 3 vertices per triangle)
+        // Draw the grid of triangles (8x8 grid, 2 triangles per cell, 3 vertices per triangle)
         const gridSize = 64;
         const verticesPerCell = 6; // 2 triangles * 3 vertices
         const totalVertices = gridSize * gridSize * verticesPerCell;
@@ -338,9 +529,17 @@ const Workspace = struct {
 };
 
 const Region = struct {
+    offsetHeightmap: u64,
+    offsetMesh: u64,
+    faceCount: u64,
+    chunkOffsets: [512]u64,
+};
+
+const Chunk = struct {
+    countPalette: u64,
     offsetPalette: u64,
     offsetCompressed: u64,
-    size: math.UVec3,
+    offsetHeightmap: u64, // New field for heightmap offset
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -365,6 +564,10 @@ const stage_mod = @import("stage.zig");
 const RENDERER_STAGING_BUFFER_SIZE = 1024 * 1024 * 1024; // 8MB
 const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 2048; // 1GB
 
+// Heightmap constants
+const HEIGHTMAP_POINTS_PER_CHUNK = 64; // 8x8 grid per chunk
+const TOTAL_HEIGHTMAP_POINTS = 4096; // 64x64 points total
+
 const Renderer = struct {
     context: *Context,
     graph: *Graph,
@@ -384,15 +587,16 @@ const Renderer = struct {
     terrain_params_allocation: *alloc.Allocation,
     workspace_allocation: *alloc.Allocation,
     region_allocation: *alloc.Allocation,
-    // Add compressor and heightmap allocations
+    // Add compressor context allocation
     compressor_context_allocation: *alloc.Allocation,
-    heightmap_allocation: *alloc.Allocation,
     // Add staging pass
     staging_pass: ?*task.Pass,
     // Add workspace raw allocation
     workspace_raw_allocation: *alloc.Allocation,
     // Add palette offsets allocation
     palette_offsets_allocation: *alloc.Allocation,
+    // Add face tracking allocation
+    face_tracking_allocation: *alloc.Allocation,
     generated: bool = false,
 
     fn init(surface: *Surface) !?*Renderer {
@@ -468,6 +672,23 @@ const Renderer = struct {
         };
         logger.info("Pipeline compiler initialized", .{});
 
+        _ = renderer.pipeline.createGraphicsPipeline("face", .{
+            .vertex_shader = .{ .path = "src/gfx/src/vk/face.glsl", .shader_type = .Vertex },
+            .fragment_shader = .{ .path = "src/gfx/src/vk/facef.glsl", .shader_type = .Fragment },
+            .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Unorm},
+            // Add push constant range for the camera device address and model matrix
+            .push_constant_size = @sizeOf(struct {
+                heap_address: u64,
+                camera_offset: u64,
+                heightmap_offset: u64,
+            }),
+            .cull_mode = vk.CULL_MODE_NONE, // Set cull mode to none
+            .depth_write_enable = true,
+            .depth_test_enable = true,
+        }) catch |err| {
+            logger.err("Failed to create bindless graphics pipeline: {s}", .{@errorName(err)});
+            return null;
+        };
         logger.info("Creating bindless triangle graphics pipeline...", .{});
         _ = renderer.pipeline.createGraphicsPipeline("bindless_triangle", .{
             .vertex_shader = .{ .path = "src/gfx/src/vk/heightmap.glsl", .shader_type = .Vertex },
@@ -479,6 +700,9 @@ const Renderer = struct {
                 camera_offset: u64,
                 heightmap_offset: u64,
             }),
+            .cull_mode = vk.CULL_MODE_NONE, // Set cull mode to none
+            .depth_write_enable = true,
+            .depth_test_enable = true,
         }) catch |err| {
             logger.err("Failed to create bindless graphics pipeline: {s}", .{@errorName(err)});
             return null;
@@ -554,7 +778,6 @@ const Renderer = struct {
             .push_constant_size = @sizeOf(struct {
                 heap_address: u64,
                 region_offset: u64,
-                heightmap_offset: u64,
             }),
             .phase = 0,
         }) catch |err| {
@@ -563,26 +786,21 @@ const Renderer = struct {
         };
 
         // Create generate heightmap phase 2 compute pipeline
-        logger.info("Creating generate heightmap phase 2 compute pipeline...", .{});
-        _ = renderer.pipeline.createComputePipeline("generate_heightmap_phase2", .{
-            .shader = .{ .path = "src/gfx/src/vk/070_generate_heightmap.glsl", .shader_type = .Compute },
+        logger.info("Creating generate mesh compute pipeline...", .{});
+
+        // Create the compute pipeline with the subgroup size as the local workgroup size
+        _ = renderer.pipeline.createComputePipeline("generate_mesh", .{
+            .shader = .{ .path = "src/gfx/src/vk/080_greedy_mesh.glsl", .shader_type = .Compute },
             .push_constant_size = @sizeOf(struct {
                 heap_address: u64,
                 region_offset: u64,
-                heightmap_offset: u64,
+                face_tracking_offset: u64,
             }),
-            .phase = 1,
+            .phase = 0,
         }) catch |err| {
-            logger.err("Failed to create generate heightmap phase 2 compute pipeline: {s}", .{@errorName(err)});
+            logger.err("Failed to create generate mesh compute pipeline: {s}", .{@errorName(err)});
             return null;
         };
-
-        // Create resources for phase synchronization
-        const phase1CompleteResource = task.Resource.init(&renderAllocator, "phase1_complete", .Buffer, renderer.renderer_heap.buffer) catch |err| {
-            logger.err("Failed to create phase 1 completion resource: {s}", .{@errorName(err)});
-            return null;
-        };
-        try renderer.graph.addResource(phase1CompleteResource);
 
         // Create the noise pass
         logger.info("Creating noise pass...", .{});
@@ -833,33 +1051,31 @@ const Renderer = struct {
             return null;
         };
 
-        // Allocate heightmap
-        logger.info("Allocating heightmap...", .{});
-        const TOTAL_HEIGHTMAP_POINTS = 4096; // 64 points per chunk * 64 chunks
-        renderer.heightmap_allocation = renderer.allocator.alloc(TOTAL_HEIGHTMAP_POINTS * @sizeOf(u32)) catch |err| {
-            logger.err("Failed to allocate heightmap: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Heightmap allocation successful at offset: {}", .{renderer.heightmap_allocation.heap_offset});
-
-        // Initialize heightmap with zeros
-        const workspace = Workspace{
-            .offsetRaw = renderer.workspace_raw_allocation.heap_offset,
-            .size = math.uv3(64, 64, 64),
-        };
-        _ = renderer.workspace_allocation.write(std.mem.asBytes(&workspace)) catch |err| {
-            logger.err("Failed to write workspace: {s}", .{@errorName(err)});
-            return null;
-        };
-        renderer.workspace_allocation.flush() catch |err| {
-            logger.err("Failed to flush workspace: {s}", .{@errorName(err)});
-            return null;
-        };
-
         // Initialize region allocation
-        logger.info("Allocating region...", .{});
+        logger.info("Allocating chunks...", .{});
         renderer.region_allocation = renderer.allocator.alloc(@sizeOf(Region)) catch |err| {
             logger.err("Failed to allocate region: {s}", .{@errorName(err)});
+            return null;
+        };
+
+        // Allocate face tracking buffer
+        logger.info("Allocating face tracking buffer...", .{});
+        // Size: 3 axes * 4096 indices * 8 bytes (uint64_t)
+        const FACE_TRACKING_SIZE = 3 * 4096 * @sizeOf(u64);
+        renderer.face_tracking_allocation = renderer.allocator.alloc(FACE_TRACKING_SIZE) catch |err| {
+            logger.err("Failed to allocate face tracking buffer: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Face tracking allocation successful at offset: {}", .{renderer.face_tracking_allocation.heap_offset});
+
+        // Initialize face tracking buffer to zero
+        const zero_data = [_]u8{0} ** FACE_TRACKING_SIZE;
+        _ = renderer.face_tracking_allocation.write(&zero_data) catch |err| {
+            logger.err("Failed to initialize face tracking buffer: {s}", .{@errorName(err)});
+            return null;
+        };
+        renderer.face_tracking_allocation.flush() catch |err| {
+            logger.err("Failed to flush face tracking buffer: {s}", .{@errorName(err)});
             return null;
         };
 
@@ -872,11 +1088,59 @@ const Renderer = struct {
         };
         logger.info("Palette offsets allocation successful at offset: {}", .{renderer.palette_offsets_allocation.heap_offset});
 
-        const region = Region{
-            .offsetPalette = renderer.palette_offsets_allocation.heap_offset,
-            .offsetCompressed = 1024 * 1024 * 700, // Will be set by compression pass
-            .size = math.uv3(64, 64, 64),
+        const heightmap_allocation = renderer.allocator.alloc(@sizeOf(u64) * HEIGHTMAP_POINTS_PER_CHUNK * 3) catch |err| {
+            logger.err("Failed to allocate heightmap: {s}", .{@errorName(err)});
+            return null;
         };
+        const mesh_allocation = renderer.allocator.alloc(@sizeOf(u64) * 2048 * 8) catch |err| {
+            logger.err("Failed to allocate mesh: {s}", .{@errorName(err)});
+            return null;
+        };
+        var region = Region{
+            .offsetHeightmap = heightmap_allocation.heap_offset,
+            .offsetMesh = mesh_allocation.heap_offset,
+            .faceCount = 0,
+            .chunkOffsets = [_]u64{0} ** 512,
+        };
+
+        // Initialize all chunk offsets in the region
+        for (0..512) |i| {
+            const chunkAllocation = renderer.allocator.alloc(@sizeOf(Chunk)) catch |err| {
+                logger.err("Failed to allocate chunk: {s}", .{@errorName(err)});
+                return null;
+            };
+            const chunkPaletteAllocation = renderer.allocator.alloc(@sizeOf(u64) * 256) catch |err| {
+                logger.err("Failed to allocate chunk palette: {s}", .{@errorName(err)});
+                return null;
+            };
+            const chunkCompressedAllocation = renderer.allocator.alloc(@sizeOf(u64) * 512 * 512) catch |err| {
+                logger.err("Failed to allocate chunk compressed: {s}", .{@errorName(err)});
+                return null;
+            };
+            // Allocate heightmap for this chunk (8x8 grid of floats)
+            const chunkHeightmapAllocation = renderer.allocator.alloc(@sizeOf(f32) * HEIGHTMAP_POINTS_PER_CHUNK) catch |err| {
+                logger.err("Failed to allocate chunk heightmap: {s}", .{@errorName(err)});
+                return null;
+            };
+
+            // Set the chunk offset in the region
+            region.chunkOffsets[i] = chunkAllocation.heap_offset;
+
+            const chunk = Chunk{
+                .countPalette = 0,
+                .offsetPalette = chunkPaletteAllocation.heap_offset,
+                .offsetCompressed = chunkCompressedAllocation.heap_offset,
+                .offsetHeightmap = chunkHeightmapAllocation.heap_offset,
+            };
+            _ = chunkAllocation.write(std.mem.asBytes(&chunk)) catch |err| {
+                logger.err("Failed to write chunk: {s}", .{@errorName(err)});
+                return null;
+            };
+            chunkAllocation.flush() catch |err| {
+                logger.err("Failed to flush chunk: {s}", .{@errorName(err)});
+                return null;
+            };
+        }
         _ = renderer.region_allocation.write(std.mem.asBytes(&region)) catch |err| {
             logger.err("Failed to write region: {s}", .{@errorName(err)});
             return null;
@@ -920,7 +1184,7 @@ const Renderer = struct {
         };
 
         // Add workspace and region as inputs to terrain pass
-        terrainPass.addInput(workspace_resource, task.ResourceState{
+        terrainPass.addOutput(workspace_resource, task.ResourceState{
             .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         }, .{
@@ -928,17 +1192,6 @@ const Renderer = struct {
             .size = @sizeOf(Workspace),
         }) catch |err| {
             logger.err("Failed to add workspace to terrain pass: {s}", .{@errorName(err)});
-            return null;
-        };
-
-        terrainPass.addInput(region_resource, task.ResourceState{
-            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
-            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        }, .{
-            .offset = renderer.region_allocation.heap_offset,
-            .size = @sizeOf(Region),
-        }) catch |err| {
-            logger.err("Failed to add region to terrain pass: {s}", .{@errorName(err)});
             return null;
         };
 
@@ -975,7 +1228,7 @@ const Renderer = struct {
         const look_target = math.v3(0.0, 0.0, -2.0); // Look at where the triangle is positioned
         const initial_view = math.m4LookAt(initial_position, look_target, math.v3Z() // Using Z as up vector as requested
         );
-        const initial_projection = math.m4Persp(math.rad(45.0), @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)), 0.1, 1000.0);
+        const initial_projection = math.m4Persp(math.rad(90.0), @as(f32, @floatFromInt(renderer.frame.width)) / @as(f32, @floatFromInt(renderer.frame.height)), 0.1, 1000.0);
 
         _ = renderer.camera.?.update(initial_view, initial_projection) catch |err| {
             logger.warn("Failed to set initial camera: {s}", .{@errorName(err)});
@@ -1026,6 +1279,14 @@ const Renderer = struct {
             .size = @sizeOf(Region),
         });
 
+        try compressVoxelPass1.addOutput(region_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
+        });
+
         try compressVoxelPass1.addInput(compressor_context_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -1040,6 +1301,38 @@ const Renderer = struct {
             logger.err("Failed to create compress voxel phase 2 pass: {s}", .{@errorName(err)});
             return null;
         };
+        // Add resources to compress voxel phase 1 pass
+        try compressVoxelPass2.addInput(workspace_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.workspace_allocation.heap_offset,
+            .size = @sizeOf(Workspace),
+        });
+
+        try compressVoxelPass2.addInput(region_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
+        });
+
+        try compressVoxelPass2.addOutput(region_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
+        });
+
+        try compressVoxelPass2.addInput(compressor_context_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.compressor_context_allocation.heap_offset,
+            .size = @sizeOf(struct { faceCount: u64 }),
+        });
         compressVoxelPass2.userData = renderer;
 
         // Create the generate heightmap phase 1 pass
@@ -1051,12 +1344,12 @@ const Renderer = struct {
         generateHeightmapPass1.userData = renderer;
 
         // Create the generate heightmap phase 2 pass
-        logger.info("Creating generate heightmap phase 2 pass...", .{});
-        const generateHeightmapPass2 = Pass.init(&renderAllocator, "generate_heightmap_phase2", generateHeightmapPhase2PassFn) catch |err| {
-            logger.err("Failed to create generate heightmap phase 2 pass: {s}", .{@errorName(err)});
+        logger.info("Creating generate mesh pass...", .{});
+        const generateMeshPass = Pass.init(&renderAllocator, "generate_mesh", greedyMeshPassFn) catch |err| {
+            logger.err("Failed to create generate mesh pass: {s}", .{@errorName(err)});
             return null;
         };
-        generateHeightmapPass2.userData = renderer;
+        generateMeshPass.userData = renderer;
 
         // Create heightmap resource
         logger.info("Creating heightmap resource...", .{});
@@ -1067,7 +1360,7 @@ const Renderer = struct {
         try renderer.graph.addResource(heightmap_resource);
         logger.info("Heightmap resource created and added to graph", .{});
 
-        // Add resources to generate heightmap phase 1 pass
+        // Add resources to generate heightmap phase 1 pass with proper write access
         try generateHeightmapPass1.addInput(region_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
@@ -1076,16 +1369,16 @@ const Renderer = struct {
             .size = @sizeOf(Region),
         });
 
-        try generateHeightmapPass1.addInput(heightmap_resource, .{
-            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
+        try generateHeightmapPass1.addOutput(region_resource, .{
+            .accessMask = vk.ACCESS_SHADER_WRITE_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         }, .{
-            .offset = renderer.heightmap_allocation.heap_offset,
-            .size = TOTAL_HEIGHTMAP_POINTS * @sizeOf(u32),
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
         });
 
         // Add resources to generate heightmap phase 2 pass
-        try generateHeightmapPass2.addInput(region_resource, .{
+        try generateMeshPass.addInput(region_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         }, .{
@@ -1093,29 +1386,20 @@ const Renderer = struct {
             .size = @sizeOf(Region),
         });
 
-        try generateHeightmapPass2.addInput(heightmap_resource, .{
-            .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
-            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        }, .{
-            .offset = renderer.heightmap_allocation.heap_offset,
-            .size = TOTAL_HEIGHTMAP_POINTS * @sizeOf(u32),
-        });
-
-        // Add resources to passes with proper synchronization
-        try compressVoxelPass1.addOutput(phase1CompleteResource, .{
-            .accessMask = vk.ACCESS_SHADER_WRITE_BIT,
-            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        }, .{
-            .offset = 0,
-            .size = @sizeOf(u64),
-        });
-
-        try compressVoxelPass2.addInput(phase1CompleteResource, .{
+        try generateMeshPass.addInput(region_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         }, .{
-            .offset = 0,
-            .size = @sizeOf(u64),
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
+        });
+
+        try generateMeshPass.addOutput(region_resource, .{
+            .accessMask = vk.ACCESS_SHADER_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        }, .{
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
         });
 
         // Add the passes to the graph in sequence with synchronization
@@ -1132,11 +1416,14 @@ const Renderer = struct {
             logger.err("Failed to add generate heightmap phase 1 pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-        renderer.graph.addPass(generateHeightmapPass2) catch |err| {
-            logger.err("Failed to add generate heightmap phase 2 pass to graph: {s}", .{@errorName(err)});
+        renderer.graph.addPass(generateMeshPass) catch |err| {
+            logger.err("Failed to add generate mesh pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-
+        const camera_resource = task.Resource.init(&renderAllocator, "camera", .Buffer, renderer.renderer_heap.buffer) catch |err| {
+            logger.err("Failed to create camera resource: {s}", .{@errorName(err)});
+            return null;
+        };
         // Create the triangle pass
         logger.info("Creating triangle pass...", .{});
         const trianglePass = Pass.init(&renderAllocator, "triangle", trianglePassFn) catch |err| {
@@ -1145,10 +1432,7 @@ const Renderer = struct {
         };
         trianglePass.userData = renderer;
         // Add camera resource as input to triangle pass
-        const camera_resource = task.Resource.init(&renderAllocator, "camera", .Buffer, renderer.renderer_heap.buffer) catch |err| {
-            logger.err("Failed to create camera resource: {s}", .{@errorName(err)});
-            return null;
-        };
+
         try renderer.graph.addResource(camera_resource); // Add this line to register the camera resource
         try trianglePass.addInput(camera_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT,
@@ -1160,15 +1444,16 @@ const Renderer = struct {
             }),
         });
         logger.info("Added camera resource as input to triangle pass", .{});
-        // Add heightmap resource as input to triangle pass
-        try trianglePass.addInput(heightmap_resource, .{
+
+        // Add region resource as input to triangle pass (for accessing chunk heightmaps)
+        try trianglePass.addInput(region_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT,
             .stageMask = vk.PIPELINE_STAGE_VERTEX_SHADER_BIT,
         }, .{
-            .offset = renderer.heightmap_allocation.heap_offset,
-            .size = TOTAL_HEIGHTMAP_POINTS * @sizeOf(u32),
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
         });
-        logger.info("Added heightmap resource as input to triangle pass", .{});
+        logger.info("Added region resource as input to triangle pass", .{});
 
         // Add swapchain image as output to triangle pass
         try trianglePass.addOutput(renderer.swapchainImageResource, .{
@@ -1178,12 +1463,74 @@ const Renderer = struct {
         }, null);
         logger.info("Added swapchain image as output to triangle pass", .{});
 
+        // Add depth buffer as attachment to triangle pass
+        const depth_resource = task.Resource.init(&renderAllocator, "depth_buffer", .Image, null) catch |err| {
+            logger.err("Failed to create depth buffer resource: {s}", .{@errorName(err)});
+            return null;
+        };
+        try trianglePass.addOutput(depth_resource, .{
+            .accessMask = vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        }, null);
+        logger.info("Added depth buffer as attachment to triangle pass", .{});
+
         // Add the triangle pass to the graph
         renderer.graph.addPass(trianglePass) catch |err| {
             logger.err("Failed to add triangle pass to graph: {s}", .{@errorName(err)});
             return null;
         };
-        logger.info("Triangle pass added to graph", .{});
+        logger.info("Creating face pass...", .{});
+        const facePass = Pass.init(&renderAllocator, "face", facePassFn) catch |err| {
+            logger.err("Failed to create face pass: {s}", .{@errorName(err)});
+            return null;
+        };
+        facePass.userData = renderer;
+        // Add camera resource as input to triangle pass
+
+        try renderer.graph.addResource(camera_resource); // Add this line to register the camera resource
+        try facePass.addInput(camera_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT,
+            .stageMask = vk.PIPELINE_STAGE_VERTEX_SHADER_BIT,
+        }, .{
+            .offset = renderer.camera.?.camera_allocation.?.heap_offset,
+            .size = @sizeOf(struct {
+                viewProjection: math.Mat4,
+            }),
+        });
+        logger.info("Added camera resource as input to triangle pass", .{});
+
+        // Add region resource as input to triangle pass (for accessing chunk heightmaps)
+        try facePass.addInput(region_resource, .{
+            .accessMask = vk.ACCESS_SHADER_READ_BIT,
+            .stageMask = vk.PIPELINE_STAGE_VERTEX_SHADER_BIT,
+        }, .{
+            .offset = renderer.region_allocation.heap_offset,
+            .size = @sizeOf(Region),
+        });
+        logger.info("Added region resource as input to face pass", .{});
+
+        // Add swapchain image as output to triangle pass
+        try facePass.addOutput(renderer.swapchainImageResource, .{
+            .accessMask = vk.ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .layout = vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        }, null);
+        logger.info("Added swapchain image as output to face pass", .{});
+
+        try facePass.addOutput(depth_resource, .{
+            .accessMask = vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | vk.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .stageMask = vk.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | vk.PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .layout = vk.IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        }, null);
+        logger.info("Added depth buffer as attachment to face pass", .{});
+
+        // Add the triangle pass to the graph
+        renderer.graph.addPass(facePass) catch |err| {
+            logger.err("Failed to add face pass to graph: {s}", .{@errorName(err)});
+            return null;
+        };
+        logger.info("Face pass added to graph", .{});
         var submitPass = task.getPassSubmit(renderer);
         submitPass.userData = renderer;
         renderer.graph.addPass(submitPass) catch |err| {
@@ -1406,7 +1753,7 @@ pub export fn setCamera(handle: ?*include.render.Renderer, camera: *const includ
     const rotation = camera.rotation;
     const translationMatrix = math.m4TransV3(position);
     const rotationMatrix = math.qToM4(rotation);
-    const transform = math.m4Mul(translationMatrix, rotationMatrix);
+    const transform = math.m4Mul(math.m4RotX(math.PI), math.m4Mul(translationMatrix, rotationMatrix));
     const view = math.m4Inv(transform);
     // If the camera system is available, update it
     if (renderer.camera != null) {
@@ -1438,7 +1785,6 @@ const compressVoxelPhase1PassFn = struct {
             heap_address: u64,
             workspace_offset: u64,
             region_offset: u64,
-            compressor_context_offset: u64,
         }{
             .heap_address = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
                 logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
@@ -1446,7 +1792,6 @@ const compressVoxelPhase1PassFn = struct {
             },
             .workspace_offset = taskRenderer.workspace_allocation.heap_offset,
             .region_offset = taskRenderer.region_allocation.heap_offset,
-            .compressor_context_offset = taskRenderer.compressor_context_allocation.heap_offset,
         };
         logger.info("Push constants: {any}", .{pushConstants});
 
@@ -1468,11 +1813,11 @@ const compressVoxelPhase1PassFn = struct {
         vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
         logger.info("Compress voxel phase 0 pipeline bound successfully", .{});
 
-        // Calculate grid size based on chunk size (8x8x8)
+        // Calculate grid size based on region size (64x64x64)
         const noise_workgroup_size = math.uv3Splat(64);
         logger.info("Maximum workgroup size: {any}", .{noise_workgroup_size});
 
-        // Calculate grid size based on noise texture dimensions (64x64x64)
+        // Each threadgroup handles one chunk (8x8x8)
         const threadgroup_size = math.uv3Splat(8);
 
         const grid_size = math.uv3Div(noise_workgroup_size, threadgroup_size);
@@ -1505,7 +1850,6 @@ const compressVoxelPhase2PassFn = struct {
             heap_address: u64,
             workspace_offset: u64,
             region_offset: u64,
-            compressor_context_offset: u64,
         }{
             .heap_address = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
                 logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
@@ -1513,7 +1857,6 @@ const compressVoxelPhase2PassFn = struct {
             },
             .workspace_offset = taskRenderer.workspace_allocation.heap_offset,
             .region_offset = taskRenderer.region_allocation.heap_offset,
-            .compressor_context_offset = taskRenderer.compressor_context_allocation.heap_offset,
         };
         logger.info("Push constants: {any}", .{pushConstants});
 
@@ -1535,11 +1878,11 @@ const compressVoxelPhase2PassFn = struct {
         vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
         logger.info("Compress voxel phase 1 pipeline bound successfully", .{});
 
-        // Calculate grid size based on chunk size (8x8x8)
+        // Calculate grid size based on region size (64x64x64)
         const noise_workgroup_size = math.uv3Splat(64);
         logger.info("Maximum workgroup size: {any}", .{noise_workgroup_size});
 
-        // Calculate grid size based on noise texture dimensions (64x64x64)
+        // Each threadgroup handles one chunk (8x8x8)
         const threadgroup_size = math.uv3Splat(8);
 
         const grid_size = math.uv3Div(noise_workgroup_size, threadgroup_size);
@@ -1570,14 +1913,12 @@ const generateHeightmapPhase1PassFn = struct {
         const pushConstants = struct {
             heap_address: u64,
             region_offset: u64,
-            heightmap_offset: u64,
         }{
             .heap_address = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
                 logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
                 return;
             },
             .region_offset = taskRenderer.region_allocation.heap_offset,
-            .heightmap_offset = taskRenderer.heightmap_allocation.heap_offset,
         };
         logger.info("Push constants: {any}", .{pushConstants});
 
@@ -1599,11 +1940,11 @@ const generateHeightmapPhase1PassFn = struct {
         vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
         logger.info("Generate heightmap phase 1 pipeline bound successfully", .{});
 
-        // Calculate grid size based on chunk size (8x8x1)
+        // Calculate grid size based on region size (64x64x64)
         const noise_workgroup_size = math.uv3Splat(64);
         logger.info("Maximum workgroup size: {any}", .{noise_workgroup_size});
 
-        // Calculate grid size based on noise texture dimensions (64x64x64)
+        // Each threadgroup handles one chunk (8x8x8)
         const threadgroup_size = math.uv3Splat(8);
 
         const grid_size = math.uv3Div(noise_workgroup_size, threadgroup_size);
@@ -1624,24 +1965,24 @@ const generateHeightmapPhase2PassFn = struct {
             return;
         }
         // Get the compute pipeline for generate heightmap phase 2
-        const pipeline = taskRenderer.pipeline.getPipeline("generate_heightmap_phase2") catch |err| {
-            logger.err("Failed to get generate heightmap phase 2 pipeline: {s}", .{@errorName(err)});
+        const pipeline = taskRenderer.pipeline.getPipeline("generate_mesh") catch |err| {
+            logger.err("Failed to get generate mesh pipeline: {s}", .{@errorName(err)});
             return;
         };
-        logger.info("Generate heightmap phase 2 pipeline obtained successfully", .{});
+        logger.info("Generate mesh pipeline obtained successfully", .{});
 
         // Set push constants
         const pushConstants = struct {
             heap_address: u64,
             region_offset: u64,
-            heightmap_offset: u64,
+            face_tracking_offset: u64,
         }{
             .heap_address = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
                 logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
                 return;
             },
             .region_offset = taskRenderer.region_allocation.heap_offset,
-            .heightmap_offset = taskRenderer.heightmap_allocation.heap_offset,
+            .face_tracking_offset = taskRenderer.face_tracking_allocation.heap_offset,
         };
         logger.info("Push constants: {any}", .{pushConstants});
 
@@ -1661,19 +2002,90 @@ const generateHeightmapPhase2PassFn = struct {
 
         // Bind the compute pipeline
         vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
-        logger.info("Generate heightmap phase 2 pipeline bound successfully", .{});
+        logger.info("Generate mesh pipeline bound successfully", .{});
 
-        // Calculate grid size based on chunk size (8x8x1)
+        // Calculate grid size based on region size (64x64x64)
         const noise_workgroup_size = math.uv3Splat(64);
         logger.info("Maximum workgroup size: {any}", .{noise_workgroup_size});
 
-        // Calculate grid size based on noise texture dimensions (64x64x64)
+        // Each threadgroup handles one chunk (8x8x8)
         const threadgroup_size = math.uv3Splat(8);
 
         const grid_size = math.uv3Div(noise_workgroup_size, threadgroup_size);
 
         // Dispatch compute shader
         vk.cmdDispatch(passCtx.cmd, grid_size.x, grid_size.y, grid_size.z);
-        logger.info("Generate heightmap phase 2 dispatch complete", .{});
+        logger.info("Generate mesh dispatch complete", .{});
+    }
+}.execute;
+
+const greedyMeshPassFn = struct {
+    fn execute(passCtx: PassContext) void {
+        const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(passCtx.userData)));
+        logger.info("Executing greedy mesh pass...", .{});
+
+        // Clear the face tracking buffer before processing
+        const FACE_TRACKING_SIZE = 3 * 4096 * @sizeOf(u64);
+        const zero_data = [_]u8{0} ** FACE_TRACKING_SIZE;
+        _ = taskRenderer.face_tracking_allocation.write(&zero_data) catch |err| {
+            logger.err("Failed to clear face tracking buffer: {s}", .{@errorName(err)});
+            return;
+        };
+        taskRenderer.face_tracking_allocation.flush() catch |err| {
+            logger.err("Failed to flush face tracking buffer: {s}", .{@errorName(err)});
+            return;
+        };
+        logger.info("Face tracking buffer cleared", .{});
+
+        if (taskRenderer.generated) {
+            logger.info("Greedy mesh pass already generated, skipping", .{});
+            return;
+        }
+
+        // Get the compute pipeline for greedy mesh
+        const pipeline = taskRenderer.pipeline.getPipeline("generate_mesh") catch |err| {
+            logger.err("Failed to get greedy mesh pipeline: {s}", .{@errorName(err)});
+            return;
+        };
+        logger.info("Greedy mesh pipeline obtained successfully", .{});
+
+        // Set push constants
+        const pushConstants = struct {
+            heap_address: u64,
+            region_offset: u64,
+            face_tracking_offset: u64,
+        }{
+            .heap_address = taskRenderer.renderer_heap.getDeviceAddress() catch |err| {
+                logger.err("Failed to get heap device address: {s}", .{@errorName(err)});
+                return;
+            },
+            .region_offset = taskRenderer.region_allocation.heap_offset,
+            .face_tracking_offset = taskRenderer.face_tracking_allocation.heap_offset,
+        };
+        logger.info("Push constants: {any}", .{pushConstants});
+
+        // Get the pipeline layout
+        const pipelineLayout = pipeline.asCompute().?.base.layout;
+
+        // Push the constants to the shader
+        vk.cmdPushConstants(
+            passCtx.cmd,
+            pipelineLayout,
+            vk.SHADER_STAGE_COMPUTE,
+            0,
+            @sizeOf(@TypeOf(pushConstants)),
+            &pushConstants,
+        );
+        logger.info("Push constants sent to shader", .{});
+
+        // Bind the compute pipeline
+        vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
+        logger.info("Greedy mesh pipeline bound successfully", .{});
+
+        // Calculate the number of workgroups needed
+        // For a 64x64x64 region, we need to divide by the subgroup size
+
+        // Dispatch compute shader with the calculated workgroup count
+        vk.cmdDispatch(passCtx.cmd, 64 / 8, 64 / 8, 1);
     }
 }.execute;

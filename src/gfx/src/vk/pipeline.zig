@@ -4,6 +4,7 @@ const compiler = @import("compiler.zig");
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
 const ShaderCompiler = compiler.ShaderCompiler;
+const UVec3 = @import("math").UVec3;
 
 pub const PipelineError = error{
     LibraryNotFound,
@@ -147,6 +148,7 @@ pub const ComputePipelineConfig = struct {
     push_constant_size: u32 = 0,
     descriptor_set_layouts: []const vk.DescriptorSetLayout = &[_]vk.DescriptorSetLayout{},
     specialization_info: ?*const vk.SpecializationInfo = null,
+    local_size: ?UVec3 = null,
     phase: u32 = 0,
 };
 
@@ -167,7 +169,7 @@ pub const GraphicsPipelineConfig = struct {
     vertex_attributes: ?[]const vk.VertexInputAttributeDescription = null,
     topology: vk.PrimitiveTopology = vk.TRIANGLE_LIST,
     cull_mode: vk.CullModeFlags = vk.CULL_MODE_BACK,
-    front_face: vk.FrontFace = vk.CLOCKWISE,
+    front_face: vk.FrontFace = vk.COUNTER_CLOCKWISE,
     blend_enable: bool = false,
     depth_test_enable: bool = true,
     depth_write_enable: bool = true,
@@ -273,20 +275,45 @@ pub const PipelineCompiler = struct {
         // Compile or get cached compute shader
         const shader_module = try self.shader_compiler.compileShaderFile(config.shader.path, config.shader.shader_type);
 
-        // Create specialization map entry for phase
-        const phase_map_entry = vk.SpecializationMapEntry{
+        // Create specialization map entries
+        var map_entries = std.ArrayList(vk.SpecializationMapEntry).init(allocator);
+        defer map_entries.deinit();
+
+        // Add phase specialization
+        try map_entries.append(.{
             .constantID = 0,
             .offset = 0,
             .size = @sizeOf(u32),
-        };
+        });
 
-        // Create specialization data for phase
+        // Add local size specialization if provided
+        if (config.local_size) |_| {
+            try map_entries.append(.{
+                .constantID = 1,
+                .offset = @sizeOf(u32),
+                .size = @sizeOf(UVec3),
+            });
+        }
+
+        // Create specialization data
+        var specialization_data = std.ArrayList(u8).init(allocator);
+        defer specialization_data.deinit();
+
+        // Add phase data
         var phase_data: u32 = config.phase;
-        const phase_info = vk.SpecializationInfo{
-            .mapEntryCount = 1,
-            .pMapEntries = &phase_map_entry,
-            .dataSize = @sizeOf(u32),
-            .pData = &phase_data,
+        try specialization_data.appendSlice(std.mem.asBytes(&phase_data));
+
+        // Add local size data if provided
+        if (config.local_size) |local_size| {
+            try specialization_data.appendSlice(std.mem.asBytes(&local_size));
+        }
+
+        // Create specialization info
+        const specialization_info = vk.SpecializationInfo{
+            .mapEntryCount = @intCast(map_entries.items.len),
+            .pMapEntries = map_entries.items.ptr,
+            .dataSize = specialization_data.items.len,
+            .pData = specialization_data.items.ptr,
         };
 
         // Create pipeline layout
@@ -326,7 +353,7 @@ pub const PipelineCompiler = struct {
                 .stage = vk.SHADER_STAGE_COMPUTE,
                 .module = shader_module,
                 .pName = config.shader.entry_point.ptr,
-                .pSpecializationInfo = &phase_info,
+                .pSpecializationInfo = &specialization_info,
             },
             .layout = pipeline_layout,
             .basePipelineHandle = null,

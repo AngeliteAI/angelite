@@ -9,6 +9,7 @@ const Binding = mapping.Binding;
 const Action = mapping.Action;
 const ButtonBinding = mapping.ButtonBinding;
 const AxisBinding = mapping.AxisBinding;
+const GamepadBinding = mapping.GamepadBinding;
 
 fn array_contains(comptime T: type, haystack: []T, needle: T) bool {
     for (haystack) |element| {
@@ -310,62 +311,54 @@ fn triggerBinding(input_state: *InputStateMap, binding: Binding, is_down: bool) 
         if (!array_contains(Binding, entry.value_ptr.*.bindings.items, binding)) {
             continue;
         }
-        std.debug.print("DEBUG: Found matching binding with {d} inputs\n", .{entry.value_ptr.items.len});
+        std.debug.print("DEBUG: Found matching binding\n", .{});
 
-        for (entry.value_ptr.items, 0..) |*input, i| {
-            if (input.threshold.ty == .Button) {
-                std.debug.print("DEBUG: Processing input {d} with Button type\n", .{i});
-
-                // Create a new control state based on the threshold
-                var new_control = input.threshold;
-
-                // Set the button action based on state
-                if (is_down) {
-                    new_control.data.Button.action = .Activate;
-                } else {
-                    new_control.data.Button.action = .Deactivate;
-                }
-
-                // Only add to active actions if state changed
-                if (new_control.data.Button.action != input.last_state.data.Button.action) {
-                    std.debug.print("DEBUG: Button state changed, adding to active actions\n", .{});
-
-                    const newaction = Action{
-                        .control = new_control,
-                        .binding = binding,
-                        .user = input.user,
-                    };
-
-                    active_actions.append(newaction) catch |err| {
-                        std.debug.print("ERROR: Failed to append action: {s}\n", .{@errorName(err)});
-                        continue;
-                    };
-
-                    // Update the last state
-                    input.last_state = new_control;
-                    std.debug.print("DEBUG: Updated last state\n", .{});
-                } else {
-                    std.debug.print("DEBUG: No state change detected\n", .{});
-                }
-
-                // If continuous action is requested, always add it
-                if (is_down and input.threshold.data.Button.action == .Continuous) {
-                    std.debug.print("DEBUG: Adding continuous action\n", .{});
-
-                    const newaction = Action{
-                        .control = input.threshold,
-                        .binding = binding,
-                        .user = input.user,
-                    };
-
-                    active_actions.append(newaction) catch |err| {
-                        std.debug.print("ERROR: Failed to append continuous action: {s}\n", .{@errorName(err)});
-                    };
-                }
-            } else {
-                std.debug.print("DEBUG: Skipping non-Button input {d}\n", .{i});
-            }
+        // Create a new control state based on the threshold
+        var new_control = Control{
+            .ty = .Button,
+            .data = .{
+                .Button = .{
+                    .action = if (is_down) .Activate else .Deactivate,
+                },
+            },
+        };
+        // Set the button action based on state
+        if (is_down) {
+            new_control.data.Button.action = .Activate;
+        } else {
+            new_control.data.Button.action = .Deactivate;
         }
+
+        // Only add to active actions if state changed
+        std.debug.print("DEBUG: Button state changed, adding to active actions\n", .{});
+
+        const newaction = Action{
+            .control = new_control,
+            .binding = binding,
+            .user = entry.value_ptr.*.user_data,
+        };
+
+        active_actions.append(newaction) catch |err| {
+            std.debug.print("ERROR: Failed to append action: {s}\n", .{@errorName(err)});
+            continue;
+        };
+
+        // Update the last state
+        // input.last_state = new_control;
+        std.debug.print("DEBUG: Updated last state\n", .{});
+
+        // If continuous action is requested, always add it
+        std.debug.print("DEBUG: Adding continuous action\n", .{});
+
+        const continuous_action = Action{
+            .control = new_control,
+            .binding = binding,
+            .user = entry.value_ptr.*.user_data,
+        };
+
+        active_actions.append(continuous_action) catch |err| {
+            std.debug.print("ERROR: Failed to append continuous action: {s}\n", .{@errorName(err)});
+        };
     }
     std.debug.print("DEBUG: No matching binding found\n", .{});
 }
@@ -462,20 +455,42 @@ fn pollGamepads(input_state: *InputStateMap) void {
             }
 
             if ((curr_buttons & GamepadButtons.LEFT_SHOULDER) != (prev_buttons & GamepadButtons.LEFT_SHOULDER)) {
-                           const is_pressed = (curr_buttons & GamepadButtons.LEFT_SHOULDER) != 0;
-                           std.debug.print("DEBUG: Gamepad Left Shoulder button {s}\n", .{if (is_pressed) "pressed" else "released"});
-                           // Implementation would create a ButtonBinding and call triggerBinding
-                       }
+                const is_pressed = (curr_buttons & GamepadButtons.LEFT_SHOULDER) != 0;
+                std.debug.print("DEBUG: Gamepad Left Shoulder button {s}\n", .{if (is_pressed) "pressed" else "released"});
+                //Implement left shoulder trigger binding
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Left } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Left } } } }, is_pressed);
+                }
+            }
 
-                       // Check Right Shoulder button
-                       if ((curr_buttons & GamepadButtons.RIGHT_SHOULDER) != (prev_buttons & GamepadButtons.RIGHT_SHOULDER)) {
-                           const is_pressed = (curr_buttons & GamepadButtons.RIGHT_SHOULDER) != 0;
-                           std.debug.print("DEBUG: Gamepad Right Shoulder button {s}\n", .{if (is_pressed) "pressed" else "released"});
-                           // Implementation would create a ButtonBinding and call triggerBinding
-                       }
+            // Check Right Shoulder button
+            if ((curr_buttons & GamepadButtons.RIGHT_SHOULDER) != (prev_buttons & GamepadButtons.RIGHT_SHOULDER)) {
+                const is_pressed = (curr_buttons & GamepadButtons.RIGHT_SHOULDER) != 0;
+                std.debug.print("DEBUG: Gamepad Right Shoulder button {s}\n", .{if (is_pressed) "pressed" else "released"});
+                // Implementation would create a ButtonBinding and call triggerBinding
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Right } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Right } } } }, is_pressed);
+                }
+            }
 
             std.debug.print("DEBUG: state {any}\n", .{state});
 
+            if (@abs(state.Gamepad.bLeftTrigger) != 0) {
+                std.debug.print("DEBUG: Left trigger: {d}\n", .{state.Gamepad.bLeftTrigger});
+                const binding = Binding{ .ty = .Axis, .data = .{ .Axis = .{ .binding = AxisBinding{ .axis = .Z, .side = .Left, .ty = .Gamepad } } } };
+
+                triggerAxisMovement(input_state, binding, @as(f32, @floatFromInt(state.Gamepad.bLeftTrigger)) / 256.0);
+            }
+            if (@abs(state.Gamepad.bRightTrigger) != 0) {
+                std.debug.print("DEBUG: Right trigger: {d}\n", .{state.Gamepad.bRightTrigger});
+                const binding = Binding{ .ty = .Axis, .data = .{ .Axis = .{ .binding = AxisBinding{ .axis = .Z, .side = .Right, .ty = .Gamepad } } } };
+
+                triggerAxisMovement(input_state, binding, @as(f32, @floatFromInt(state.Gamepad.bRightTrigger)) / 256.0);
+            }
             // Simplified stick movement check for debug
             if (@abs(state.Gamepad.sThumbRX) > 300) {
                 std.debug.print("DEBUG: Left stick X: {d}\n", .{state.Gamepad.sThumbRX});

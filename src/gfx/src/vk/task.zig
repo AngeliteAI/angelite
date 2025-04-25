@@ -2,6 +2,7 @@ pub const vk = @import("vk.zig");
 pub const std = @import("std");
 const logger = @import("../logger.zig");
 pub const frame = @import("frame.zig");
+const log = std.log;
 
 // Type imports
 const Allocator = std.mem.Allocator;
@@ -495,15 +496,31 @@ pub const Graph = struct {
         var nonCmds = std.AutoHashMap(u64, DeferNonCmd).init(self.allocator.*); // Using StringHashMap instead
 
         logger.info("[TASK] Initializing resource states for all passes", .{});
-        for (executionOrder) |pass| {
-            const activePass = self.passes.items[pass];
-            logger.debug("[TASK] Initializing state for pass: {s}", .{activePass.name});
-            //loop through all resources in pass
-            for (activePass.inputs.items) |usage| {
-                usage.resource.currentState.firstUseInFrame = true;
+        // Only reset firstUseInFrame for the first pass
+        if (executionOrder.len > 0) {
+            const firstPass = self.passes.items[executionOrder[0]];
+            logger.debug("[TASK] Initializing first-use flags for first pass: {s}", .{firstPass.name});
+
+            // Create a set of all resources used in the graph to avoid duplicates
+            var resourceSet = std.AutoHashMap(*Resource, void).init(self.allocator.*);
+            defer resourceSet.deinit();
+
+            // Add all resources from all passes to the set
+            for (executionOrder) |pass| {
+                const activePass = self.passes.items[pass];
+                for (activePass.inputs.items) |usage| {
+                    try resourceSet.put(usage.resource, {});
+                }
+                for (activePass.outputs.items) |usage| {
+                    try resourceSet.put(usage.resource, {});
+                }
             }
-            for (activePass.outputs.items) |usage| {
-                usage.resource.currentState.firstUseInFrame = true;
+
+            // Reset firstUseInFrame for all resources
+            var resourceIt = resourceSet.iterator();
+            while (resourceIt.next()) |entry| {
+                entry.key_ptr.*.currentState.firstUseInFrame = true;
+                logger.debug("[TASK] Reset firstUseInFrame for resource: {s}", .{entry.key_ptr.*.name});
             }
         }
 
@@ -633,14 +650,14 @@ pub const Graph = struct {
             logger.debug("[TASK] Processing {d} input barriers for pass '{s}'", .{ pass.inputs.items.len, pass.name });
             for (pass.inputs.items, 0..) |input, i| {
                 logger.debug("[TASK] Processing input {d}/{d}: {s}", .{ i + 1, pass.inputs.items.len, input.resource.name });
-                try self.addBarrierIfNeededSync2(&imageBarriers, input);
+                try self.addBarrierIfNeededSync2(&imageBarriers, &bufferBarriers, input);
             }
 
             // Process outputs
             logger.debug("[TASK] Processing {d} output barriers for pass '{s}'", .{ pass.outputs.items.len, pass.name });
             for (pass.outputs.items, 0..) |output, i| {
                 logger.debug("[TASK] Processing output {d}/{d}: {s}", .{ i + 1, pass.outputs.items.len, output.resource.name });
-                try self.addBarrierIfNeededSync2(&imageBarriers, output);
+                try self.addBarrierIfNeededSync2(&imageBarriers, &bufferBarriers, output);
             }
 
             // If we have any barriers, insert them
@@ -705,7 +722,7 @@ pub const Graph = struct {
         }
     }
 
-    fn addBarrierIfNeededSync2(self: *Graph, imageBarriers: *std.ArrayList(vk.ImageMemoryBarrier2KHR), usage: ResourceUsage) !void {
+    fn addBarrierIfNeededSync2(self: *Graph, imageBarriers: *std.ArrayList(vk.ImageMemoryBarrier2KHR), bufferBarriers: *std.ArrayList(vk.BufferMemoryBarrier2KHR), usage: ResourceUsage) !void {
         const resource = usage.resource;
 
         // Skip if resource has no handle
@@ -722,17 +739,16 @@ pub const Graph = struct {
         // Check if the region being accessed overlaps with any modified regions
         var needsBarrier = false;
 
-        // If this is a read operation and a region is specified, check if it overlaps with any modified regions
-        if (!usage.isWrite) {
-            if (usage.region) |region| {
-                for (handleState.modifiedRegions.items) |modifiedRegion| {
-                    // Check for overlap
-                    if (region.offset < modifiedRegion.offset + modifiedRegion.size and
-                        region.offset + region.size > modifiedRegion.offset)
-                    {
-                        needsBarrier = true;
-                        break;
-                    }
+        // If a region is specified, check if it overlaps with any modified regions
+        // This applies to both read and write operations
+        if (usage.region) |region| {
+            for (handleState.modifiedRegions.items) |modifiedRegion| {
+                // Check for overlap
+                if (region.offset < modifiedRegion.offset + modifiedRegion.size and
+                    region.offset + region.size > modifiedRegion.offset)
+                {
+                    needsBarrier = true;
+                    break;
                 }
             }
         }
@@ -825,8 +841,74 @@ pub const Graph = struct {
                 logger.debug("[BARRIER] Updated current state for '{s}'", .{resource.name});
             },
             .Buffer => {
-                // Similar changes for buffer barriers...
-                logger.debug("[BARRIER] Buffer barriers not yet implemented for '{s}'", .{resource.name});
+                if (resource.handle == null) {
+                    logger.err("[BARRIER] Invalid resource handle for buffer '{s}'", .{resource.name});
+                    return error.InvalidResourceHandle;
+                }
+
+                logger.debug("[BARRIER] Creating buffer barrier for '{s}'", .{resource.name});
+                logger.debug("[BARRIER] Current state: access=0x{x}, stage=0x{x}", .{ current.accessMask, current.stageMask });
+                logger.debug("[BARRIER] Required state: access=0x{x}, stage=0x{x}", .{ required.accessMask, required.stageMask });
+
+                // Determine source stage and access masks based on first use
+                const srcStageMask = if (handleState.firstUseInPass)
+                    vk.PIPELINE_STAGE_2_TOP_OF_PIPE_BIT_KHR
+                else
+                    current.stageMask;
+
+                const srcAccessMask = if (handleState.firstUseInPass)
+                    @as(vk.AccessFlags2KHR, 0)
+                else
+                    current.accessMask;
+
+                logger.debug("[BARRIER] Final barrier params for buffer '{s}': srcStage=0x{x}, srcAccess=0x{x}, dstStage=0x{x}, dstAccess=0x{x}", .{ resource.name, srcStageMask, srcAccessMask, required.stageMask, required.accessMask });
+
+                // Create buffer memory barrier
+                const bufferBarrier = vk.BufferMemoryBarrier2KHR{
+                    .sType = vk.sTy(vk.StructureType.BufferMemoryBarrier2KHR),
+                    .srcStageMask = srcStageMask,
+                    .srcAccessMask = srcAccessMask,
+                    .dstStageMask = required.stageMask,
+                    .dstAccessMask = required.accessMask,
+                    .srcQueueFamilyIndex = current.queueFamilyIndex,
+                    .dstQueueFamilyIndex = required.queueFamilyIndex,
+                    .buffer = resource.handle.?.buffer,
+                    .offset = if (usage.region) |region| region.offset else 0,
+                    .size = if (usage.region) |region| region.size else vk.WHOLE_SIZE,
+                };
+
+                // Log detailed buffer barrier information
+                log.debug(
+                    "Adding buffer barrier for resource '{s}':\n" ++
+                        "  Buffer: {*}\n" ++
+                        "  Region: offset={}, size={}\n" ++
+                        "  Stages: src={}, dst={}\n" ++
+                        "  Access: src={}, dst={}\n" ++
+                        "  Queue: src={}, dst={}",
+                    .{
+                        resource.name,
+                        resource.handle.?.buffer,
+                        bufferBarrier.offset,
+                        bufferBarrier.size,
+                        srcStageMask,
+                        required.stageMask,
+                        srcAccessMask,
+                        required.accessMask,
+                        current.queueFamilyIndex,
+                        required.queueFamilyIndex,
+                    },
+                );
+
+                try bufferBarriers.append(bufferBarrier);
+                logger.debug("[BARRIER] Added buffer barrier for '{s}'", .{resource.name});
+
+                // Mark that this resource has been used
+                handleState.firstUseInPass = false;
+                handleState.firstUseInFrame = false;
+
+                // Update the current state to match the required state
+                handleState.state = required;
+                logger.debug("[BARRIER] Updated current state for '{s}'", .{resource.name});
             },
         }
     }
@@ -847,17 +929,16 @@ pub const Graph = struct {
         // Check if the region being accessed overlaps with any modified regions
         var needsBarrier = false;
 
-        // If this is a read operation and a region is specified, check if it overlaps with any modified regions
-        if (!usage.isWrite) {
-            if (usage.region) |region| {
-                for (handleState.modifiedRegions.items) |modifiedRegion| {
-                    // Check for overlap
-                    if (region.offset < modifiedRegion.offset + modifiedRegion.size and
-                        region.offset + region.size > modifiedRegion.offset)
-                    {
-                        needsBarrier = true;
-                        break;
-                    }
+        // If a region is specified, check if it overlaps with any modified regions
+        // This applies to both read and write operations
+        if (usage.region) |region| {
+            for (handleState.modifiedRegions.items) |modifiedRegion| {
+                // Check for overlap
+                if (region.offset < modifiedRegion.offset + modifiedRegion.size and
+                    region.offset + region.size > modifiedRegion.offset)
+                {
+                    needsBarrier = true;
+                    break;
                 }
             }
         }

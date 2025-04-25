@@ -54,6 +54,26 @@ fn main() {
     // Set up action manager for controller input
     let action_manager = ActionManager::new().unwrap();
 
+    let left_trigger_id = action_manager.create_action("left_trigger").unwrap();
+    let left_trigger = action_manager.get_action(left_trigger_id).unwrap();
+    left_trigger
+        .add_joystick_binding(Axis::Z, Side::Left, DEADZONE)
+        .unwrap();
+
+    let left_shoulder_id = action_manager.create_action("left_shoulder").unwrap();
+    let left_shoulder = action_manager.get_action(left_shoulder_id).unwrap();
+    left_shoulder
+        .add_gamepad_button_binding(GamepadButton::LeftShoulder, ButtonAction::Continuous)
+        .unwrap();
+
+    let right_trigger_id = action_manager.create_action("right_trigger").unwrap();
+    let right_trigger = action_manager.get_action(right_trigger_id).unwrap();
+    right_trigger
+        .add_joystick_binding(Axis::Z, Side::Right, DEADZONE)
+        .unwrap();
+        
+        
+
     // Define navigation actions (Space Engineers style)
     let move_forward_id = action_manager.create_action("move_forward").unwrap();
     let move_forward = action_manager.get_action(move_forward_id).unwrap();
@@ -152,11 +172,11 @@ fn main() {
                             crate::ffi::input::state::InputType::Gamepad => {
                                 let button = button_data.binding.code.gamepad.button;
                                 if button == GamepadButton::RightShoulder {
-                                    // Move up
-                                    movement.y += MOVE_SPEED;
+                                    // Roll left    
+                                    rotation.z -= 0.1;
                                 } else if button == GamepadButton::LeftShoulder {
-                                    // Move down
-                                    movement.y -= MOVE_SPEED;
+                                    // Roll right
+                                    rotation.z += 0.1;
                                 }
                             }
                             crate::ffi::input::state::InputType::Keyboard => {
@@ -180,7 +200,10 @@ fn main() {
                                         movement.x += axis_movement * MOVE_SPEED;
                                     } else if axis_data.binding.axis == Axis::Y {
                                         // Move forward/backward
-                                        movement.z -= axis_movement * MOVE_SPEED;
+                                        movement.y -= axis_movement * MOVE_SPEED;
+                                    } else if axis_data.binding.axis == Axis::Z {
+                                        // Move up/down
+                                        movement.z += axis_movement * MOVE_SPEED;
                                     }
                                 }
                                 Side::Right => {

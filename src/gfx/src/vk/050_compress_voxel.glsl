@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_atomic_float : require
 #extension GL_ARB_gpu_shader_int64 : require
@@ -17,32 +18,28 @@ layout(constant_id = 0) const uint PHASE = 0; // 0 = palette creation, 1 = data 
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
-layout(buffer_reference, scalar, align = 16) buffer HeapBufferRef {
+layout(buffer_reference, scalar) buffer HeapBufferRef {
     uint64_t data[];
 };
 
-layout(push_constant) uniform PushConstants {
+layout(push_constant, scalar) uniform PushConstants {
     uint64_t heapAddress;        // Device address of the heap
     uint64_t workspaceOffset; // Offset to noise context
     uint64_t regionOffset;
-    uint64_t compressorContextOffset;
 } pushConstants;
 
 
-layout(buffer_reference, scalar, align = 16) buffer CompressorContextRef {
-    uint64_t faceCount;
-};
-
-layout(buffer_reference, scalar, align = 16) buffer WorkspaceRef {
+layout(buffer_reference, scalar) buffer WorkspaceRef {
     uint64_t offsetRaw;
     uvec3 size;
 };
 
-layout(buffer_reference, scalar, align = 16) buffer RegionRef {
+layout(buffer_reference, scalar) buffer RegionRef {
+    uint64_t offsetBitmap;
     uint64_t chunkOffsets[512];
 };
 
-layout(buffer_reference, scalar, align = 16) buffer ChunkRef {
+layout(buffer_reference, scalar) buffer ChunkRef {
     uint64_t countPalette;
     uint64_t offsetPalette;
     uint64_t offsetCompressed;
@@ -64,7 +61,7 @@ uint calculateChunkIndex(uvec3 threadPos) {
 
 // Helper function to get chunk reference
 ChunkRef getChunkRef(RegionRef region, uint chunkIndex) {
-    return ChunkRef(region.chunkOffsets[chunkIndex]);
+    return ChunkRef(pushConstants.heapAddress + region.chunkOffsets[chunkIndex]);
 }
 
 // Phase 1: Create the palette of unique block types
@@ -72,8 +69,16 @@ void createPalette() {
     // Get global thread index
     uvec3 threadPos = gl_GlobalInvocationID.xyz;
     
+    // Debug print when x is 0
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 1 - Thread: (%d, %d, %d)\n", threadPos.x, threadPos.y, threadPos.z);
+    }
+    
     // Check if we're within workspace bounds (64^3)
     if (any(greaterThanEqual(threadPos, uvec3(64)))) {
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 1 - Out of bounds: (%d, %d, %d)\n", threadPos.x, threadPos.y, threadPos.z);
+        }
         return;
     }
     
@@ -83,6 +88,10 @@ void createPalette() {
     
     // Check if we're within region bounds
     if (any(greaterThanEqual(regionPos, uvec3(REGION_SIZE)))) {
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 1 - Region out of bounds: (%d, %d, %d), regionPos: (%d, %d, %d)\n", 
+                          threadPos.x, threadPos.y, threadPos.z, regionPos.x, regionPos.y, regionPos.z);
+        }
         return;
     }
     
@@ -93,19 +102,33 @@ void createPalette() {
     uint localIndex = localPos.x + CHUNK_SIZE * (localPos.y + CHUNK_SIZE * localPos.z);
     
     // Get buffer references
-    RegionRef region = RegionRef(pushConstants.regionOffset);
-    WorkspaceRef workspace = WorkspaceRef(pushConstants.workspaceOffset);
-    CompressorContextRef compressor = CompressorContextRef(pushConstants.compressorContextOffset);
-    HeapBufferRef heap = HeapBufferRef(pushConstants.heapAddress);
+    RegionRef region = RegionRef(pushConstants.heapAddress + pushConstants.regionOffset);
+    WorkspaceRef workspace = WorkspaceRef(pushConstants.heapAddress + pushConstants.workspaceOffset);
     
     // Get chunk reference
     ChunkRef chunk = getChunkRef(region, chunkIndex);
+    HeapBufferRef palette = HeapBufferRef(pushConstants.heapAddress + chunk.offsetPalette);
+    HeapBufferRef compressed = HeapBufferRef(pushConstants.heapAddress + chunk.offsetCompressed);
+    
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 1 - Chunk info - countPalette: %llu, offsetPalette: %llu, offsetCompressed: %llu\n", 
+                      chunk.countPalette, chunk.offsetPalette, chunk.offsetCompressed);
+    }
     
     // Calculate global index in workspace
     uint globalIndex = threadPos.x + 64 * (threadPos.y + 64 * threadPos.z);
     
     // Get the block ID from raw data
-    uint64_t blockID = heap.data[uint(workspace.offsetRaw + globalIndex)];
+    HeapBufferRef rawData = HeapBufferRef(pushConstants.heapAddress + workspace.offsetRaw);
+    uint64_t blockID = rawData.data[globalIndex];
+
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 1 - BlockID: %llu, chunkIndex: %u, localIndex: %u, globalIndex: %u\n", 
+                      blockID, chunkIndex, localIndex, globalIndex);
+    }
+
+
+    barrier();
 
     // -------------------------------
     // STEP 1: Palette Creation
@@ -118,13 +141,21 @@ void createPalette() {
     while (!added) {
         // Get current palette count
         uint64_t currentCount = atomicOr(chunk.countPalette, 0);
+        memoryBarrier();
+
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 1 - Current palette count: %llu\n", currentCount);
+        }
 
         // Check if blockID is already in the palette
         for (uint64_t i = 0; i < currentCount; i++) {
-            if (heap.data[uint(chunk.offsetPalette + i)] == blockID) {
+            if (palette.data[uint(i)] == blockID) {
                 paletteIndex = i;
                 found = true;
                 added = true;
+                if (threadPos.x == 0) {
+                    debugPrintfEXT("Phase 1 - Found blockID at palette index: %llu\n", i);
+                }
                 break;
             }
         }
@@ -145,9 +176,13 @@ void createPalette() {
 
             if (originalCount == currentCount) {
                 // Our CAS succeeded - we reserved palette[currentCount]
-                heap.data[uint(chunk.offsetPalette + currentCount)] = blockID;
+                palette.data[uint(currentCount)] = blockID;
+                memoryBarrier();
                 paletteIndex = currentCount;
                 added = true;
+                if (threadPos.x == 0) {
+                    debugPrintfEXT("Phase 1 - Added blockID to palette at index: %llu\n", currentCount);
+                }
             }
             // If CAS failed, another thread modified count - we'll loop and try again
         } else {
@@ -155,6 +190,9 @@ void createPalette() {
             // Just use the first entry as fallback (this is a limitation)
             paletteIndex = 0;
             added = true;
+            if (threadPos.x == 0) {
+                debugPrintfEXT("Phase 1 - Palette full, using fallback index 0\n");
+            }
         }
     }
 }
@@ -164,8 +202,16 @@ void compressData() {
     // Get global thread index
     uvec3 threadPos = gl_GlobalInvocationID.xyz;
     
+    // Debug print when x is 0
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 2 - Thread: (%d, %d, %d)\n", threadPos.x, threadPos.y, threadPos.z);
+    }
+    
     // Check if we're within workspace bounds (64^3)
     if (any(greaterThanEqual(threadPos, uvec3(64)))) {
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Out of bounds: (%d, %d, %d)\n", threadPos.x, threadPos.y, threadPos.z);
+        }
         return;
     }
     
@@ -175,6 +221,10 @@ void compressData() {
     
     // Check if we're within region bounds
     if (any(greaterThanEqual(regionPos, uvec3(REGION_SIZE)))) {
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Region out of bounds: (%d, %d, %d), regionPos: (%d, %d, %d)\n", 
+                          threadPos.x, threadPos.y, threadPos.z, regionPos.x, regionPos.y, regionPos.z);
+        }
         return;
     }
     
@@ -185,29 +235,50 @@ void compressData() {
     uint localIndex = localPos.x + CHUNK_SIZE * (localPos.y + CHUNK_SIZE * localPos.z);
     
     // Get buffer references
-    RegionRef region = RegionRef(pushConstants.regionOffset);
-    WorkspaceRef workspace = WorkspaceRef(pushConstants.workspaceOffset);
-    CompressorContextRef compressor = CompressorContextRef(pushConstants.compressorContextOffset);
-    HeapBufferRef heap = HeapBufferRef(pushConstants.heapAddress);
+    RegionRef region = RegionRef(pushConstants.heapAddress + pushConstants.regionOffset);
+    WorkspaceRef workspace = WorkspaceRef(pushConstants.heapAddress + pushConstants.workspaceOffset);
     
     // Get chunk reference
     ChunkRef chunk = getChunkRef(region, chunkIndex);
+    HeapBufferRef palette = HeapBufferRef(pushConstants.heapAddress + chunk.offsetPalette);
+    HeapBufferRef compressed = HeapBufferRef(pushConstants.heapAddress + chunk.offsetCompressed);
+    
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 2 - Chunk info - countPalette: %llu, offsetPalette: %llu, offsetCompressed: %llu\n", 
+                      chunk.countPalette, chunk.offsetPalette, chunk.offsetCompressed);
+    }
     
     // Calculate global index in workspace
     uint globalIndex = threadPos.x + 64 * (threadPos.y + 64 * threadPos.z);
     
     // Get the block ID from raw data
-    uint64_t blockID = heap.data[uint(workspace.offsetRaw + globalIndex)];
+    HeapBufferRef rawData = HeapBufferRef(pushConstants.heapAddress + workspace.offsetRaw);
+    uint64_t blockID = rawData.data[globalIndex];
+    
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 2 - BlockID: %llu, chunkIndex: %u, localIndex: %u, globalIndex: %u\n", 
+                      blockID, chunkIndex, localIndex, globalIndex);
+    }
     
     // Find this block ID in the palette to get its index
     uint64_t paletteIndex = 0;
     uint64_t countPalette = atomicOr(chunk.countPalette, 0);
+    if (countPalette <= 1) {
+        return;
+    }
     bool found = false;
     
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 2 - Palette count: %llu\n", countPalette);
+    }
+    
     for (uint64_t i = 0; i < countPalette; i++) {
-        if (heap.data[uint(chunk.offsetPalette + i)] == blockID) {
+        if (palette.data[uint(i)] == blockID && palette.data[uint(i)] != 0xDEADBEEF) {
             paletteIndex = i;
             found = true;
+            if (threadPos.x == 0) {
+                debugPrintfEXT("Phase 2 - Found blockID at palette index: %llu\n", i);
+            }
             break;
         }
     }
@@ -215,99 +286,94 @@ void compressData() {
     // If not found, use 0 as fallback
     if (!found) {
         paletteIndex = 0;
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - BlockID not found in palette, using fallback index 0\n");
+        }
     }
 
     // Calculate how many bits are needed for palette indices
-    uint bits = max(1u, uint(ceil(log2(float(countPalette)))));
+    uint bits = uint(ceil(log2(float(countPalette))));
+    
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 2 - Bits needed for palette indices: %u\n", bits);
+    }
 
     // Calculate bit positions for this voxel's palette index
     uint bitCursor = localIndex * bits;
     uint wordOffset = bitCursor / HEAP_BITS;
     uint bitOffset = bitCursor % HEAP_BITS;
+    
+    if (threadPos.x == 0) {
+        debugPrintfEXT("Phase 2 - Bit cursor: %u, word offset: %u, bit offset: %u\n", 
+                      bitCursor, wordOffset, bitOffset);
+    }
 
     // Create mask for the bits we need
     uint64_t mask = (uint64_t(1u) << bits) - uint64_t(1u);
 
     if (bits <= (HEAP_BITS - bitOffset)) {
         // Case 1: Palette index fits in a single word
-        uint64_t oldVal, newVal;
-        bool success = false;
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Case 1: Palette index fits in a single word\n");
+        }
 
-        // Ensure proper alignment for atomic operations
-        uint alignedOffset = uint((chunk.offsetCompressed + wordOffset) & ~7u); // Align to 8 bytes
-        uint offsetInWord = uint((chunk.offsetCompressed + wordOffset) & 7u);
-
-        while (!success) {
-            // Read current value with proper alignment
-            oldVal = atomicOr(heap.data[alignedOffset], uint64_t(0));
-            
-            // Adjust bit offset based on alignment
-            uint adjustedBitOffset = bitOffset + (offsetInWord * 8);
-            
-            // Clear bits and set new bits
-            newVal = (oldVal & ~(mask << adjustedBitOffset)) | ((paletteIndex & mask) << adjustedBitOffset);
-
-            // Try to update with proper alignment
-            uint64_t result = atomicCompSwap(
-                heap.data[alignedOffset],
-                oldVal,
-                newVal
-            );
-
-            success = (result == oldVal);
+        // Calculate the offset in the heap buffer (in uint64_t units)
+        uint heapOffset = uint(chunk.offsetCompressed / 8) + wordOffset;
+        
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Heap offset: %u\n", heapOffset);
+        }
+        
+        // Create a mask with 1s in the positions we want to set
+        uint64_t setMask = (paletteIndex & mask) << bitOffset;
+        
+        // Use atomicOr to set the bits
+        atomicOr(compressed.data[wordOffset], setMask);
+        
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Successfully wrote palette index to compressed data using atomicOr\n");
         }
     } else {
         // Case 2: Palette index spans two words
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Case 2: Palette index spans two words\n");
+        }
+        
         uint bitsInCurrent = HEAP_BITS - bitOffset;
         uint bitsInNext = bits - bitsInCurrent;
 
         // Create masks for each part
         uint64_t maskCurrent = (uint64_t(1u) << bitsInCurrent) - uint64_t(1u);
         uint64_t maskNext = (uint64_t(1u) << bitsInNext) - uint64_t(1u);
-
-        // Ensure proper alignment for first word
-        uint alignedOffset1 = uint((chunk.offsetCompressed + wordOffset) & ~7u);
-        uint offsetInWord1 = uint((chunk.offsetCompressed + wordOffset) & 7u);
         
-        // Process first word
-        uint64_t oldVal1, newVal1;
-        bool success1 = false;
-
-        while (!success1) {
-            oldVal1 = atomicOr(heap.data[alignedOffset1], uint64_t(0));
-            uint adjustedBitOffset1 = bitOffset + (offsetInWord1 * 8);
-            newVal1 = (oldVal1 & ~(maskCurrent << adjustedBitOffset1)) |
-                      ((paletteIndex & maskCurrent) << adjustedBitOffset1);
-
-            uint64_t result = atomicCompSwap(
-                heap.data[alignedOffset1],
-                oldVal1,
-                newVal1
-            );
-
-            success1 = (result == oldVal1);
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Bits in current word: %u, bits in next word: %u\n", 
+                          bitsInCurrent, bitsInNext);
         }
 
-        // Ensure proper alignment for second word
-        uint alignedOffset2 = uint((chunk.offsetCompressed + wordOffset + 1) & ~7u);
-        uint offsetInWord2 = uint((chunk.offsetCompressed + wordOffset + 1) & 7u);
+        // Calculate offsets in the heap buffer (in uint64_t units)
+        uint heapOffset1 = uint(chunk.offsetCompressed / 8) + wordOffset;
+        uint heapOffset2 = heapOffset1 + 1;
+        
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Heap offset1: %u, heap offset2: %u\n", 
+                          heapOffset1, heapOffset2);
+        }
+        
+        // Process first word
+        uint64_t setMask1 = (paletteIndex & maskCurrent) << bitOffset;
+        
+        // Use atomicOr for the first word
+        atomicOr(compressed.data[wordOffset], setMask1);
         
         // Process second word
-        uint64_t oldVal2, newVal2;
-        bool success2 = false;
-
-        while (!success2) {
-            oldVal2 = atomicOr(heap.data[alignedOffset2], uint64_t(0));
-            uint adjustedBitOffset2 = offsetInWord2 * 8;
-            newVal2 = (oldVal2 & ~maskNext) | ((paletteIndex >> bitsInCurrent) & maskNext);
-
-            uint64_t result = atomicCompSwap(
-                heap.data[alignedOffset2],
-                oldVal2,
-                newVal2
-            );
-
-            success2 = (result == oldVal2);
+        uint64_t setMask2 = ((paletteIndex >> bitsInCurrent) & maskNext);
+        
+        // Use atomicOr for the second word
+        atomicOr(compressed.data[wordOffset + 1], setMask2);
+        
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 2 - Successfully wrote palette index to compressed data (two words) using atomicOr\n");
         }
     }
 }

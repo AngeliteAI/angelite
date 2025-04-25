@@ -41,6 +41,10 @@ pub const Context = struct {
     render_finished_semaphores: []vk.Semaphore,
     in_flight_fences: []vk.Fence,
     images_in_flight: []vk.Fence,
+    depthImage: vk.Image,
+    depthImageMemory: vk.DeviceMemory,
+    depthImageView: vk.ImageView,
+    depthFormat: vk.Format,
 
     const InstanceExtensions = [_][*:0]const u8{ vk.GENERIC_SURFACE_EXTENSION_NAME, vk.PLATFORM_SURFACE_EXTENSION_NAME };
 
@@ -232,6 +236,9 @@ pub const Context = struct {
         context.in_flight_fences = in_flight_fences;
         context.images_in_flight = images_in_flight;
 
+        // Create depth resources
+        try context.createDepthResources();
+
         logger.info("Vulkan context initialization complete. Returning context: {*}", .{context});
         return context;
     }
@@ -240,6 +247,11 @@ pub const Context = struct {
     pub fn deinit(self: *Context) void {
         // Wait for the device to be idle before destroying resources
         _ = vk.deviceWaitIdle(self.device);
+
+        // Clean up depth resources
+        vk.destroyImageView(self.device, self.depthImageView, null);
+        vk.destroyImage(self.device, self.depthImage, null);
+        vk.freeMemory(self.device, self.depthImageMemory, null);
 
         // Clean up synchronization objects
         for (0..MAX_FRAMES_IN_FLIGHT) |i| {
@@ -349,6 +361,14 @@ pub const Context = struct {
         for (0..self.swapchainImages.len) |i| {
             self.images_in_flight[i] = null;
         }
+
+        // Clean up old depth resources
+        vk.destroyImageView(self.device, self.depthImageView, null);
+        vk.destroyImage(self.device, self.depthImage, null);
+        vk.freeMemory(self.device, self.depthImageMemory, null);
+
+        // Create new depth resources
+        try self.createDepthResources();
 
         logger.info("Swapchain recreated successfully.", .{});
     }
@@ -652,6 +672,7 @@ pub const Context = struct {
         var device_features = vk.PhysicalDeviceFeatures{};
         device_features.samplerAnisotropy = vk.TRUE;
         device_features.shaderInt64 = vk.TRUE;
+        device_features.shaderFloat64 = vk.TRUE;
 
         // Enable shader atomic int64 features
         var shader_atomic_int64_features = vk.PhysicalDeviceShaderAtomicInt64Features{
@@ -861,5 +882,159 @@ pub const Context = struct {
         }
 
         return result.?[0];
+    }
+
+    // Find a suitable depth format
+    fn findDepthFormat(physical_device: vk.PhysicalDevice) vk.Format {
+        const candidates = [_]vk.Format{
+            vk.Format.D32Sfloat,
+            vk.Format.D32SfloatS8Uint,
+            vk.Format.D24UnormS8Uint,
+        };
+        return findSupportedFormat(
+            physical_device,
+            &candidates,
+            vk.IMAGE_TILING_OPTIMAL,
+            vk.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        ) orelse vk.Format.D32Sfloat;
+    }
+
+    // Find a supported format from a list of candidates
+    fn findSupportedFormat(
+        physical_device: vk.PhysicalDevice,
+        candidates: []const vk.Format,
+        tiling: vk.ImageTiling,
+        features: vk.FormatFeatureFlags,
+    ) ?vk.Format {
+        for (candidates) |format| {
+            var props: vk.FormatProperties = undefined;
+            vk.getPhysicalDeviceFormatProperties(physical_device, @intFromEnum(format), &props);
+
+            if (tiling == vk.IMAGE_TILING_LINEAR and (props.linearTilingFeatures & features) == features) {
+                return format;
+            } else if (tiling == vk.IMAGE_TILING_OPTIMAL and (props.optimalTilingFeatures & features) == features) {
+                return format;
+            }
+        }
+        return null;
+    }
+
+    // Create depth resources
+    fn createDepthResources(self: *Context) !void {
+        const depthFormat = Context.findDepthFormat(self.physicalDevice);
+
+        // Get surface capabilities to determine the proper size
+        var capabilities: vk.SurfaceCapabilitiesKHR = undefined;
+        const result = vk.getPhysicalDeviceSurfaceCapabilitiesKHR(self.physicalDevice, self.surface.?, &capabilities);
+        if (result != vk.SUCCESS) {
+            logger.err("Failed to get surface capabilities: {}", .{result});
+            return error.SurfaceCapabilitiesQueryFailed;
+        }
+
+        // Use the current extent from surface capabilities
+        var width = capabilities.currentExtent.width;
+        var height = capabilities.currentExtent.height;
+
+        // Check if the surface dimensions are valid
+        if (width == std.math.maxInt(u32) or height == std.math.maxInt(u32)) {
+            logger.warn("Surface dimensions are undefined, using fallback values", .{});
+            width = 800; // Default width
+            height = 600; // Default height
+        }
+
+        // Create depth image
+        const imageInfo = vk.ImageCreateInfo{
+            .sType = vk.sTy(vk.StructureType.ImageCreateInfo),
+            .imageType = vk.IMAGE_TYPE_2D,
+            .extent = .{
+                .width = width,
+                .height = height,
+                .depth = 1,
+            },
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .format = @intFromEnum(depthFormat),
+            .tiling = vk.IMAGE_TILING_OPTIMAL,
+            .initialLayout = vk.IMAGE_LAYOUT_UNDEFINED,
+            .usage = vk.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+            .sharingMode = vk.SHARING_MODE_EXCLUSIVE,
+            .samples = vk.SAMPLE_COUNT_1_BIT,
+        };
+
+        var depthImage: vk.Image = undefined;
+        const imageResult = vk.createImage(self.device, &imageInfo, null, &depthImage);
+        if (imageResult != vk.SUCCESS) {
+            return error.DepthImageCreationFailed;
+        }
+
+        // Get memory requirements
+        var memRequirements: vk.MemoryRequirements = undefined;
+        vk.getImageMemoryRequirements(self.device, depthImage, &memRequirements);
+
+        // Find memory type
+        const memoryTypeIndex = findMemoryType(
+            self.physicalDevice,
+            memRequirements.memoryTypeBits,
+            vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        ) orelse return error.NoSuitableMemoryType;
+
+        // Allocate memory
+        const allocInfo = vk.MemoryAllocateInfo{
+            .sType = vk.sTy(vk.StructureType.MemoryAllocateInfo),
+            .allocationSize = memRequirements.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+
+        var depthImageMemory: vk.DeviceMemory = undefined;
+        const allocResult = vk.allocateMemory(self.device, &allocInfo, null, &depthImageMemory);
+        if (allocResult != vk.SUCCESS) {
+            vk.destroyImage(self.device, depthImage, null);
+            return error.DepthMemoryAllocationFailed;
+        }
+
+        _ = vk.bindImageMemory(self.device, depthImage, depthImageMemory, 0);
+
+        // Create depth image view
+        const viewInfo = vk.ImageViewCreateInfo{
+            .sType = vk.sTy(vk.StructureType.ImageViewCreateInfo),
+            .image = depthImage,
+            .viewType = vk.IMAGE_VIEW_TYPE_2D,
+            .format = @intFromEnum(depthFormat),
+            .subresourceRange = .{
+                .aspectMask = vk.IMAGE_ASPECT_DEPTH_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        var depthImageView: vk.ImageView = undefined;
+        const viewResult = vk.createImageView(self.device, &viewInfo, null, &depthImageView);
+        if (viewResult != vk.SUCCESS) {
+            vk.destroyImage(self.device, depthImage, null);
+            vk.freeMemory(self.device, depthImageMemory, null);
+            return error.DepthImageViewCreationFailed;
+        }
+
+        self.depthImage = depthImage;
+        self.depthImageMemory = depthImageMemory;
+        self.depthImageView = depthImageView;
+        self.depthFormat = depthFormat;
+    }
+
+    // Helper function to find memory type
+    fn findMemoryType(physical_device: vk.PhysicalDevice, typeFilter: u32, properties: vk.MemoryPropertyFlags) ?u32 {
+        var memProperties: vk.PhysicalDeviceMemoryProperties = undefined;
+        vk.getPhysicalDeviceMemoryProperties(physical_device, &memProperties);
+
+        for (0..memProperties.memoryTypeCount) |i| {
+            if ((typeFilter & (@as(u32, 1) << @as(u5, @intCast(i)))) != 0 and
+                (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+            {
+                return @intCast(i);
+            }
+        }
+        return null;
     }
 };

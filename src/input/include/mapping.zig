@@ -5,11 +5,11 @@ pub const Key = enum(c_int) { A = 0, B = 1, C = 2, D = 3, E = 4, F = 5, G = 6, H
 
 pub const MouseButton = enum(c_int) { Left = 0, Right = 1, Middle = 2, _ };
 
-pub const GamepadButton = enum(c_int) { A = 0, B = 1, X = 2, Y = 3, LeftShoulder = 4, RightShoulder = 5, LeftStick = 6, RightStick = 7, DPadUp = 8, DPadDown = 9, DPadLeft = 10, DPadRight = 11, Start = 12, Back = 13, _ };
+pub const GamepadButton = enum(c_int) { A = 0, B = 1, X = 2, Y = 3, Shoulder = 4, Trigger = 5, Stick = 6, DPad = 7, Start = 8, Back = 9, _ };
 
 pub const Axis = enum(c_int) { X = 0, Y = 1, Z = 2, _ };
 
-pub const Side = enum(c_int) { Left = 0, Right = 1, None = 2, _ };
+pub const Side = enum(c_int) { Left = 0, Right = 1, Up = 2, Down = 3, None = 4, _ };
 
 pub const InputType = enum(c_int) { Keyboard = 0, Mouse = 1, Gamepad = 2, Joystick = 3, Trigger = 4, _ };
 
@@ -78,6 +78,12 @@ pub const BindingType = enum(c_int) { Button = 0, Axis = 1, _ };
 pub const BindingData = extern union {
     Button: extern struct { binding: ButtonBinding },
     Axis: extern struct { binding: AxisBinding },
+    Gamepad: extern struct { binding: GamepadBinding },
+};
+
+pub const GamepadBinding = extern struct {
+    button: GamepadButton,
+    side: Side,
 };
 
 pub const Binding = extern struct {

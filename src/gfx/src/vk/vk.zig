@@ -78,7 +78,6 @@ pub const PLATFORM_SURFACE_EXTENSION_NAME = blk: {
         break :blk "VK_KHR_xcb_surface";
     }
 };
-pub const ImageMemoryBarrier = c.VkImageMemoryBarrier;
 pub const BufferMemoryBarrier = c.VkBufferMemoryBarrier;
 pub const COPY = c.VK_LOGIC_OP_COPY;
 pub const VIEWPORT = c.VK_DYNAMIC_STATE_VIEWPORT;
@@ -112,7 +111,7 @@ pub const StructureType = enum(c_uint) {
     XcbSurfaceCreateInfoKHR = c.VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR,
     ImageMemoryBarrier = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
     BufferMemoryBarrier = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-
+    ImageCreateInfo = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
     // Pipeline-related structure types
     GraphicsPipelineCreateInfo = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
     PipelineViewportStateCreateInfo = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -141,8 +140,9 @@ pub const StructureType = enum(c_uint) {
     PhysicalDeviceDescriptorIndexingFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT,
     PhysicalDeviceBufferDeviceAddressFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
     PhysicalDeviceScalarBlockLayoutFeatures = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES_EXT,
+    PhysicalDeviceSubgroupProperties = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES,
     PhysicalDeviceShaderAtomicInt64Features = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES_KHR,
-
+    PhysicalDeviceProperties2 = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR,
     // Synchronization-related structure types
     FenceCreateInfo = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     SemaphoreCreateInfo = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -150,6 +150,10 @@ pub const StructureType = enum(c_uint) {
     MemoryAllocateInfo = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 };
 
+pub const PhysicalDeviceProperties2 = c.VkPhysicalDeviceProperties2;
+pub const FormatFeatureFlags = c.VkFormatFeatureFlags;
+pub const SAMPLE_COUNT_1_BIT = c.VK_SAMPLE_COUNT_1_BIT;
+pub const getPhysicalDeviceProperties2 = c.vkGetPhysicalDeviceProperties2;
 pub const NULL = c.VK_NULL_HANDLE;
 pub const SpecializationMapEntry = c.VkSpecializationMapEntry;
 
@@ -170,6 +174,8 @@ pub const InstanceCreateInfo = c.VkInstanceCreateInfo;
 pub const DeviceQueueCreateInfo = c.VkDeviceQueueCreateInfo;
 pub const DeviceCreateInfo = c.VkDeviceCreateInfo;
 pub const enumerateInstanceLayerProperties = c.vkEnumerateInstanceLayerProperties;
+pub const enumerateInstanceExtensionProperties = c.vkEnumerateInstanceExtensionProperties;
+pub const ImageTiling = c.VkImageTiling;
 pub const MemoryAllocateFlagsInfo = c.VkMemoryAllocateFlagsInfo;
 pub const Result = c.VkResult;
 pub const Instance = c.VkInstance;
@@ -202,10 +208,7 @@ pub const destroyInstance = c.vkDestroyInstance;
 pub const getSwapchainImages = c.vkGetSwapchainImagesKHR;
 pub const PIPELINE_STAGE_COMPUTE_SHADER_BIT = c.VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 pub const ACCESS_SHADER_WRITE_BIT = c.VK_ACCESS_SHADER_WRITE_BIT;
-pub const createImageView = c.vkCreateImageView;
 pub const DeviceSize = c.VkDeviceSize;
-pub const destroyImageView = c.vkDestroyImageView;
-pub const enumerateInstanceExtensionProperties = c.vkEnumerateInstanceExtensionProperties;
 pub const queuePresent = c.vkQueuePresentKHR;
 pub const resetFences = c.vkResetFences;
 pub const waitForFences = c.vkWaitForFences;
@@ -509,7 +512,6 @@ pub const destroySurfaceKHR = c.vkDestroySurfaceKHR;
 // Image/view-related types
 pub const Image = c.VkImage;
 pub const ImageView = c.VkImageView;
-pub const ImageViewCreateInfo = c.VkImageViewCreateInfo;
 pub const SwapchainCreateInfoKHR = c.VkSwapchainCreateInfoKHR;
 
 // Dynamic rendering types and constants
@@ -544,73 +546,15 @@ pub const COMMAND_BUFFER_LEVEL_PRIMARY = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 pub const RESOLVE_MODE_NONE_KHR = c.VK_RESOLVE_MODE_NONE_KHR;
 
 pub const RENDER_PASS_LOAD_OP_CLEAR = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
+pub const RENDER_PASS_LOAD_OP_LOAD = c.VK_ATTACHMENT_LOAD_OP_LOAD;
 pub const RENDER_PASS_STORE_OP_STORE = c.VK_ATTACHMENT_STORE_OP_STORE;
 pub const ClearValue = c.VkClearValue;
 pub const ClearColorValue = c.VkClearColorValue;
 
 pub const Rect2D = c.VkRect2D;
 pub const Offset2D = c.VkOffset2D;
-pub const Format = enum(c_uint) {
-    // Standard formats
-    Undefined = c.VK_FORMAT_UNDEFINED,
-
-    // 8-bit formats
-    R8Unorm = c.VK_FORMAT_R8_UNORM,
-    R8Snorm = c.VK_FORMAT_R8_SNORM,
-    R8Uint = c.VK_FORMAT_R8_UINT,
-    R8Sint = c.VK_FORMAT_R8_SINT,
-    R8G8Unorm = c.VK_FORMAT_R8G8_UNORM,
-    R8G8Snorm = c.VK_FORMAT_R8G8_SNORM,
-    R8G8Uint = c.VK_FORMAT_R8G8_UINT,
-    R8G8Sint = c.VK_FORMAT_R8G8_SINT,
-    R8G8B8Unorm = c.VK_FORMAT_R8G8B8_UNORM,
-    R8G8B8Snorm = c.VK_FORMAT_R8G8B8_SNORM,
-    R8G8B8Uint = c.VK_FORMAT_R8G8B8_UINT,
-    R8G8B8Sint = c.VK_FORMAT_R8G8B8_SINT,
-    R8G8B8A8Unorm = c.VK_FORMAT_R8G8B8A8_UNORM,
-    R8G8B8A8Snorm = c.VK_FORMAT_R8G8B8A8_SNORM,
-    R8G8B8A8Uint = c.VK_FORMAT_R8G8B8A8_UINT,
-    R8G8B8A8Sint = c.VK_FORMAT_R8G8B8A8_SINT,
-    R8G8B8A8Srgb = c.VK_FORMAT_R8G8B8A8_SRGB,
-    B8G8R8A8Unorm = c.VK_FORMAT_B8G8R8A8_UNORM,
-    B8G8R8A8Srgb = c.VK_FORMAT_B8G8R8A8_SRGB,
-
-    // 16-bit formats
-    R16Unorm = c.VK_FORMAT_R16_UNORM,
-    R16Snorm = c.VK_FORMAT_R16_SNORM,
-    R16Uint = c.VK_FORMAT_R16_UINT,
-    R16Sint = c.VK_FORMAT_R16_SINT,
-    R16Sfloat = c.VK_FORMAT_R16_SFLOAT,
-    R16G16Unorm = c.VK_FORMAT_R16G16_UNORM,
-    R16G16Snorm = c.VK_FORMAT_R16G16_SNORM,
-    R16G16Uint = c.VK_FORMAT_R16G16_UINT,
-    R16G16Sint = c.VK_FORMAT_R16G16_SINT,
-    R16G16Sfloat = c.VK_FORMAT_R16G16_SFLOAT,
-    R16G16B16Unorm = c.VK_FORMAT_R16G16B16_UNORM,
-    R16G16B16Snorm = c.VK_FORMAT_R16G16B16_SNORM,
-    R16G16B16Uint = c.VK_FORMAT_R16G16B16_UINT,
-    R16G16B16Sint = c.VK_FORMAT_R16G16B16_SINT,
-    R16G16B16Sfloat = c.VK_FORMAT_R16G16B16_SFLOAT,
-    R16G16B16A16Unorm = c.VK_FORMAT_R16G16B16A16_UNORM,
-    R16G16B16A16Snorm = c.VK_FORMAT_R16G16B16A16_SNORM,
-    R16G16B16A16Uint = c.VK_FORMAT_R16G16B16A16_UINT,
-    R16G16B16A16Sint = c.VK_FORMAT_R16G16B16A16_SINT,
-    R16G16B16A16Sfloat = c.VK_FORMAT_R16G16B16A16_SFLOAT,
-
-    // 32-bit formats
-    R32Uint = c.VK_FORMAT_R32_UINT,
-    R32Sint = c.VK_FORMAT_R32_SINT,
-    R32Sfloat = c.VK_FORMAT_R32_SFLOAT,
-    R32G32Uint = c.VK_FORMAT_R32G32_UINT,
-    R32G32Sint = c.VK_FORMAT_R32G32_SINT,
-    R32G32Sfloat = c.VK_FORMAT_R32G32_SFLOAT,
-    R32G32B32Uint = c.VK_FORMAT_R32G32B32_UINT,
-    R32G32B32Sint = c.VK_FORMAT_R32G32B32_SINT,
-    R32G32B32Sfloat = c.VK_FORMAT_R32G32B32_SFLOAT,
-    R32G32B32A32Uint = c.VK_FORMAT_R32G32B32A32_UINT,
-    R32G32B32A32Sint = c.VK_FORMAT_R32G32B32A32_SINT,
-    R32G32B32A32Sfloat = c.VK_FORMAT_R32G32B32A32_SFLOAT,
-};
+pub const ImageViewType = c.VkImageViewType;
+pub const ComponentMapping = c.VkComponentMapping;
 
 pub const Viewport = c.VkViewport;
 pub const FILL = c.VK_POLYGON_MODE_FILL;
@@ -620,9 +564,6 @@ pub var cmdBeginRenderingKHR: *const fn (CommandBuffer, *const RenderingInfoKHR)
 pub var cmdEndRenderingKHR: *const fn (CommandBuffer) callconv(.C) void = undefined;
 pub const PIPELINE_STAGE_TOP_OF_PIPE_BIT = c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 pub const PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT = c.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-pub const ImageViewType = c.VkImageViewType;
-pub const ComponentMapping = c.VkComponentMapping;
-pub const ImageSubresourceRange = c.VkImageSubresourceRange;
 
 pub fn loadDeviceExtensionFunctions(device: Device) void {
     // Function to load a device function pointer
@@ -760,6 +701,8 @@ pub const Buffer = c.VkBuffer;
 pub const AccessFlags = c.VkAccessFlags;
 pub const ImageLayout = c.VkImageLayout;
 pub const PIPELINE_STAGE_NONE = c.VK_PIPELINE_STAGE_NONE;
+pub const COUNTER_CLOCKWISE = c.VK_FRONT_FACE_COUNTER_CLOCKWISE;
+pub const CULL_MODE_NONE = c.VK_CULL_MODE_NONE;
 pub const IMAGE_LAYOUT_UNDEFINED = c.VK_IMAGE_LAYOUT_UNDEFINED;
 pub const QUEUE_FAMILY_IGNORED = c.VK_QUEUE_FAMILY_IGNORED;
 pub const ACCESS_COLOR_ATTACHMENT_WRITE_BIT = c.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -821,3 +764,132 @@ pub const cmdPushConstants = c.vkCmdPushConstants;
 
 // Add Windows-specific surface type definitions
 pub const Win32SurfaceCreateInfoKHR = c.VkWin32SurfaceCreateInfoKHR;
+pub const FormatProperties = c.VkFormatProperties;
+pub const ImageViewCreateInfo = c.VkImageViewCreateInfo;
+pub const ImageSubresourceRange = c.VkImageSubresourceRange;
+pub const ImageMemoryBarrier = c.VkImageMemoryBarrier;
+pub const PhysicalDeviceSubgroupProperties = c.VkPhysicalDeviceSubgroupProperties;
+
+// Add depth buffer-related formats to the Format enum
+pub const Format = enum(c_int) {
+    // Standard formats
+    Undefined = c.VK_FORMAT_UNDEFINED,
+
+    // 8-bit formats
+    R8Unorm = c.VK_FORMAT_R8_UNORM,
+    R8Snorm = c.VK_FORMAT_R8_SNORM,
+    R8Uint = c.VK_FORMAT_R8_UINT,
+    R8Sint = c.VK_FORMAT_R8_SINT,
+    R8G8Unorm = c.VK_FORMAT_R8G8_UNORM,
+    R8G8Snorm = c.VK_FORMAT_R8G8_SNORM,
+    R8G8Uint = c.VK_FORMAT_R8G8_UINT,
+    R8G8Sint = c.VK_FORMAT_R8G8_SINT,
+    R8G8B8Unorm = c.VK_FORMAT_R8G8B8_UNORM,
+    R8G8B8Snorm = c.VK_FORMAT_R8G8B8_SNORM,
+    R8G8B8Uint = c.VK_FORMAT_R8G8B8_UINT,
+    R8G8B8Sint = c.VK_FORMAT_R8G8B8_SINT,
+    R8G8B8A8Unorm = c.VK_FORMAT_R8G8B8A8_UNORM,
+    R8G8B8A8Snorm = c.VK_FORMAT_R8G8B8A8_SNORM,
+    R8G8B8A8Uint = c.VK_FORMAT_R8G8B8A8_UINT,
+    R8G8B8A8Sint = c.VK_FORMAT_R8G8B8A8_SINT,
+    R8G8B8A8Srgb = c.VK_FORMAT_R8G8B8A8_SRGB,
+    B8G8R8A8Unorm = c.VK_FORMAT_B8G8R8A8_UNORM,
+    B8G8R8A8Srgb = c.VK_FORMAT_B8G8R8A8_SRGB,
+
+    // 16-bit formats
+    R16Unorm = c.VK_FORMAT_R16_UNORM,
+    R16Snorm = c.VK_FORMAT_R16_SNORM,
+    R16Uint = c.VK_FORMAT_R16_UINT,
+    R16Sint = c.VK_FORMAT_R16_SINT,
+    R16Sfloat = c.VK_FORMAT_R16_SFLOAT,
+    R16G16Unorm = c.VK_FORMAT_R16G16_UNORM,
+    R16G16Snorm = c.VK_FORMAT_R16G16_SNORM,
+    R16G16Uint = c.VK_FORMAT_R16G16_UINT,
+    R16G16Sint = c.VK_FORMAT_R16G16_SINT,
+    R16G16Sfloat = c.VK_FORMAT_R16G16_SFLOAT,
+    R16G16B16Unorm = c.VK_FORMAT_R16G16B16_UNORM,
+    R16G16B16Snorm = c.VK_FORMAT_R16G16B16_SNORM,
+    R16G16B16Uint = c.VK_FORMAT_R16G16B16_UINT,
+    R16G16B16Sint = c.VK_FORMAT_R16G16B16_SINT,
+    R16G16B16Sfloat = c.VK_FORMAT_R16G16B16_SFLOAT,
+    R16G16B16A16Unorm = c.VK_FORMAT_R16G16B16A16_UNORM,
+    R16G16B16A16Snorm = c.VK_FORMAT_R16G16B16A16_SNORM,
+    R16G16B16A16Uint = c.VK_FORMAT_R16G16B16A16_UINT,
+    R16G16B16A16Sint = c.VK_FORMAT_R16G16B16A16_SINT,
+    R16G16B16A16Sfloat = c.VK_FORMAT_R16G16B16A16_SFLOAT,
+
+    // 32-bit formats
+    R32Uint = c.VK_FORMAT_R32_UINT,
+    R32Sint = c.VK_FORMAT_R32_SINT,
+    R32Sfloat = c.VK_FORMAT_R32_SFLOAT,
+    R32G32Uint = c.VK_FORMAT_R32G32_UINT,
+    R32G32Sint = c.VK_FORMAT_R32G32_SINT,
+    R32G32Sfloat = c.VK_FORMAT_R32G32_SFLOAT,
+    R32G32B32Uint = c.VK_FORMAT_R32G32B32_UINT,
+    R32G32B32Sint = c.VK_FORMAT_R32G32B32_SINT,
+    R32G32B32Sfloat = c.VK_FORMAT_R32G32B32_SFLOAT,
+    R32G32B32A32Uint = c.VK_FORMAT_R32G32B32A32_UINT,
+    R32G32B32A32Sint = c.VK_FORMAT_R32G32B32A32_SINT,
+    R32G32B32A32Sfloat = c.VK_FORMAT_R32G32B32A32_SFLOAT,
+
+    // Depth formats
+    D16Unorm = c.VK_FORMAT_D16_UNORM,
+    D16UnormS8Uint = c.VK_FORMAT_D16_UNORM_S8_UINT,
+    D24UnormS8Uint = c.VK_FORMAT_D24_UNORM_S8_UINT,
+    D32Sfloat = c.VK_FORMAT_D32_SFLOAT,
+    D32SfloatS8Uint = c.VK_FORMAT_D32_SFLOAT_S8_UINT,
+    S8Uint = c.VK_FORMAT_S8_UINT,
+};
+
+// Add depth buffer-related constants
+pub const IMAGE_ASPECT_DEPTH_BIT = c.VK_IMAGE_ASPECT_DEPTH_BIT;
+pub const IMAGE_ASPECT_STENCIL_BIT = c.VK_IMAGE_ASPECT_STENCIL_BIT;
+pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT = c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+pub const FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT = c.VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+// Add depth buffer-related image layouts
+pub const IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+pub const IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL = c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+
+// Add depth buffer-related access flags
+pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT = c.VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+// Add depth buffer-related pipeline stage flags
+pub const PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT = c.VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+pub const PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT = c.VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+
+// Add depth buffer-related image creation flags
+pub const IMAGE_TILING_OPTIMAL = c.VK_IMAGE_TILING_OPTIMAL;
+pub const IMAGE_TILING_LINEAR = c.VK_IMAGE_TILING_LINEAR;
+
+// Add depth buffer-related image types
+pub const IMAGE_TYPE_2D = c.VK_IMAGE_TYPE_2D;
+
+// Add depth buffer-related image view types
+
+// Add depth buffer-related image creation info
+pub const ImageCreateInfo = c.VkImageCreateInfo;
+
+// Add depth buffer-related image view creation info
+// pub const ImageViewCreateInfo = c.VkImageViewCreateInfo; // Duplicate removed
+
+// Add depth buffer-related image subresource range
+// pub const ImageSubresourceRange = c.VkImageSubresourceRange; // Duplicate removed
+
+// Add depth buffer-related image memory barrier
+// pub const ImageMemoryBarrier = c.VkImageMemoryBarrier; // Duplicate removed
+
+// Add depth buffer-related image layout transition functions
+// pub const cmdPipelineBarrier = c.vkCmdPipelineBarrier; // Duplicate removed
+
+// Add depth buffer-related image creation and destruction functions
+pub const createImage = c.vkCreateImage;
+pub const destroyImage = c.vkDestroyImage;
+pub const getImageMemoryRequirements = c.vkGetImageMemoryRequirements;
+pub const bindImageMemory = c.vkBindImageMemory;
+pub const createImageView = c.vkCreateImageView;
+pub const destroyImageView = c.vkDestroyImageView;
+
+// Add depth buffer-related format properties query function
+pub const getPhysicalDeviceFormatProperties = c.vkGetPhysicalDeviceFormatProperties;

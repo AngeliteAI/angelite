@@ -10,8 +10,8 @@
 #define CHUNK_SIZE 8
 #define REGION_SIZE 8
 #define MAX_PALETTE_SIZE 256
-#define HEIGHTMAP_POINTS_PER_CHUNK 64  // 8x8 voxels per chunk
-#define TOTAL_HEIGHTMAP_POINTS 4096     // 64 points per chunk * 64 chunks
+#define HEIGHTMAP_POINTS_PER_CHUNK 64  // 8x8 grid per chunk
+#define GRID_SIZE uint(64)
 
 struct Quad {
     uvec3 a;
@@ -20,36 +20,32 @@ struct Quad {
     uvec3 d;
 };
 
-layout(push_constant) uniform PushConstants {
+layout(push_constant, scalar) uniform PushConstants {
     uint64_t heapAddress; // Device address of the heap
     uint64_t regionOffset;
-    uint64_t heightmapOffset;
 } pushConstants;
 
-layout(buffer_reference, scalar, align = 16) buffer RegionRef {
+layout(buffer_reference, scalar) buffer RegionRef {
+    uint64_t offsetBitmap;  // New field for heightmap offset
     uint64_t chunkOffsets[512];
 };
 
-layout(buffer_reference, scalar, align = 16) buffer ChunkRef {
+layout(buffer_reference, scalar) buffer ChunkRef {
     uint64_t countPalette;
     uint64_t offsetPalette;
     uint64_t offsetCompressed;
 };
 
-layout(buffer_reference, scalar, align = 16) buffer HeightmapRef {
-    // We'll use the same memory location for both phases
-    // Phase 0: Store height mask as uint64_t
-    // Phase 1: Reinterpret as double for height value
-    uint64_t heights[TOTAL_HEIGHTMAP_POINTS];
+layout(buffer_reference, scalar) buffer BitmapRef {
+    uint64_t x[4096];  // 8x8 grid of floats
+    uint64_t y[4096];  // 8x8 grid of floats
+    uint64_t z[4096];  // 8x8 grid of floats
 };
 
-layout(buffer_reference, scalar, align = 16) buffer CompressedDataRef {
+layout(buffer_reference, scalar) buffer HeapBufferRef {
     uint64_t data[];
 };
 
-layout(buffer_reference, scalar, align = 16) buffer PaletteRef {
-    uint64_t entries[];
-};
 
 // Use a specialization constant to determine which phase we're in
 layout(constant_id = 0) const uint PHASE = 0; // 0 = palette creation, 1 = data compression
@@ -58,91 +54,62 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 // Helper function to get chunk reference
 ChunkRef getChunkRef(RegionRef region, uint chunkIndex) {
-    return ChunkRef(region.chunkOffsets[chunkIndex]);
+    return ChunkRef(pushConstants.heapAddress + region.chunkOffsets[chunkIndex]);
 }
 
 // Helper function to calculate heightmap index
-uint calculateHeightmapIndex(uvec3 threadPos) {
+uint calculateHeightmapIndex(uvec2 threadPos) {
     // Calculate region and chunk indices
-    uvec3 regionPos = threadPos / CHUNK_SIZE;
-    uvec3 localPos = threadPos % CHUNK_SIZE;
+    uint x = clamp(threadPos.x, 0, GRID_SIZE - 1);
+    uint y = clamp(threadPos.y, 0, GRID_SIZE - 1);
     
-    // Calculate chunk index within region
-    uint chunkIndex = regionPos.x + REGION_SIZE * (regionPos.y + REGION_SIZE * regionPos.z);
-    
-    // Calculate local index within chunk (in XY plane)
-    uint localIndex = localPos.x + CHUNK_SIZE * localPos.y;
-    
-    // Calculate global heightmap index
-    return chunkIndex * HEIGHTMAP_POINTS_PER_CHUNK + localIndex;
+    // Use the same index calculation as in 070_generate_heightmap.glsl
+    return x + y * GRID_SIZE;
 }
 
 void tessellateHeightmap() {
     // Get buffer references
     RegionRef regionRef = RegionRef(pushConstants.heapAddress + pushConstants.regionOffset);
-    HeightmapRef heightmapRef = HeightmapRef(pushConstants.heapAddress + pushConstants.heightmapOffset);
+    BitmapRef bitmapRef = BitmapRef(pushConstants.heapAddress + regionRef.offsetBitmap);
+}
 
-    // Only process XY plane (z=0)
-    if (gl_GlobalInvocationID.z > 0) {
-        return;
-    }
-    
-    // Get thread identification
-    uvec2 threadId = gl_LocalInvocationID.xy;
-    uint64_t threadIndex = uint64_t(threadId.x + threadId.y * gl_WorkGroupSize.x);
-    
-    // Check if we're within the total number of heightmap points
-    if (threadIndex >= TOTAL_HEIGHTMAP_POINTS) {
-        return;
-    }
-    
-    // Calculate position in heightmap
-    uint64_t heightMapIndex = threadIndex;
-    
-    // Add memory barrier before reading height mask
-    memoryBarrierBuffer();
-    
-    // Read the height mask
-    uint64_t heightMask = heightmapRef.heights[uint(heightMapIndex)];
-    
-    // Find the highest non-air block (position of most significant bit)
-    int64_t height = 0;
-    if (heightMask != 0) {
-        height = findMSB(heightMask);
-        // Limit debug prints to reduce overhead
-        if (threadIndex % 1024 == 0) {
-            debugPrintfEXT("Tessellate: Thread %llu - HeightMask: 0x%llx MSB: %lld\n", 
-                          threadIndex, heightMask, height);
+uvec3 columnCoords(uvec3 threadPos, uint off) {
+    uvec3 axisPos = uvec3(0);
+        for(int i = 0; i < 3; i++) {
+            axisPos[(i + off) % 3] = threadPos[i];
         }
+    return axisPos;
+}
+
+void maskColumnAxis(BitmapRef bitmapRef, uvec3 threadPos, uint off) {
+    uvec3 axisPos = columnCoords(threadPos, off);
+        uint index = calculateHeightmapIndex(axisPos.xy);
+        // Create a bit mask for this specific height - use 64-bit value
+        uint64_t bitMask = (uint64_t(1u) << uint64_t(axisPos.z));
+        
+        // Add memory barrier before atomic operation
+        memoryBarrierBuffer();
+        
+        // Use atomicOr to set the bit with proper alignment
+    // This ensures we record the highest non-air block in each column
+    if(off == 0) {
+        uint64_t oldValue = atomicOr(bitmapRef.z[uint(index)], bitMask);
+    } else if(off == 1) {
+        uint64_t oldValue = atomicOr(bitmapRef.x[uint(index)], bitMask);
+    } else if(off == 2) {
+        uint64_t oldValue = atomicOr(bitmapRef.y[uint(index)], bitMask);
     }
     
-    // Convert the height to a double and reinterpret the bits as a uint64_t
-    // The height value represents the Y-coordinate of the highest non-air block
-    double heightFloat = double(height);
-    uint64_t heightBits = doubleBitsToUint64(heightFloat);
-    
-    // Add memory barrier before writing
+    // Add memory barrier after atomic operation
     memoryBarrierBuffer();
-    
-    // Write the height value
-    heightmapRef.heights[uint(heightMapIndex)] = heightBits;
-    
-    // Add memory barrier after writing
-    memoryBarrierBuffer();
-    
-    // Limit debug prints to reduce overhead
-    if (threadIndex % 1024 == 0) {
-        debugPrintfEXT("Tessellate: Thread %llu - Final height (Y): %lld (bits: 0x%llx)\n", 
-                       threadIndex, height, heightBits);
-    }
 }
 
 void maskHeightmapColumns() {
     // Get buffer references
     RegionRef regionRef = RegionRef(pushConstants.heapAddress + pushConstants.regionOffset);
-    HeightmapRef heightmapRef = HeightmapRef(pushConstants.heapAddress + pushConstants.heightmapOffset);
+    BitmapRef bitmapRef = BitmapRef(pushConstants.heapAddress + regionRef.offsetBitmap);
     
-    // Get thread position
+    // Get thread position in global coordinates
     uvec3 threadPos = gl_GlobalInvocationID.xyz;
     
     // Calculate thread index for debug prints
@@ -165,6 +132,9 @@ void maskHeightmapColumns() {
     // Calculate chunk index within region
     uint64_t chunkIndex = uint64_t(regionPos.x + REGION_SIZE * (regionPos.y + REGION_SIZE * regionPos.z));
     
+    // Only debug print for the first column (x=0)
+    bool shouldDebug = (threadPos.x == 0);
+    
     // Get chunk reference
     ChunkRef chunkRef = getChunkRef(regionRef, uint(chunkIndex));
     
@@ -174,116 +144,87 @@ void maskHeightmapColumns() {
     // Get palette count
     uint64_t paletteCount = chunkRef.countPalette;
     
-    // If palette count is 0, this is an empty chunk - skip
-    if (paletteCount == 0) {
-        // Debug print for empty chunks (limited to reduce output)
-        if (threadIndex % 1024 == 0) {
-            debugPrintfEXT("MaskHeightmap: Empty chunk at region (%u,%u,%u), chunk %llu\n", 
-                          regionPos.x, regionPos.y, regionPos.z, chunkIndex);
-        }
-        return;
-    }
-    
     // Get references to the palette and compressed data
-    PaletteRef paletteRef = PaletteRef(pushConstants.heapAddress + chunkRef.offsetPalette);
-    CompressedDataRef compressedRef = CompressedDataRef(pushConstants.heapAddress + chunkRef.offsetCompressed);
+    HeapBufferRef paletteRef = HeapBufferRef(pushConstants.heapAddress + chunkRef.offsetPalette);
+    HeapBufferRef compressedRef = HeapBufferRef(pushConstants.heapAddress + chunkRef.offsetCompressed);
     
     // Calculate the block index within the chunk
     uint64_t blockIndex = uint64_t(localPos.x + CHUNK_SIZE * (localPos.y + CHUNK_SIZE * localPos.z));
     
-    // Calculate how many bits are needed for palette indices
-    // Ensure we don't overflow with 64-bit shifts
-    uint bits = min(64u, max(1u, uint(ceil(log2(float(paletteCount))))));
-    
-    // Calculate bit positions for this voxel's palette index
-    uint64_t bitCursor = blockIndex * uint64_t(bits);
-    uint64_t wordOffset = bitCursor / 64;
-    uint64_t bitOffset = bitCursor % 64;
-    
-    // Create mask for the bits we need
-    uint64_t mask = (uint64_t(1u) << bits) - uint64_t(1u);
-    
-    // Debug print for bit manipulation (limited to reduce output)
-    if (threadIndex % 1024 == 0) {
-        debugPrintfEXT("MaskHeightmap: Bit manipulation - BlockIndex: %llu, Bits: %u, BitCursor: %llu, WordOffset: %llu, BitOffset: %llu, Mask: 0x%llx\n", 
-                      blockIndex, bits, bitCursor, wordOffset, bitOffset, mask);
-    }
-    
-    // Read the palette index from compressed data
     uint64_t paletteIndex = 0;
-    if (bits <= (64 - bitOffset)) {
-        // Case 1: Palette index fits in a single word
-        paletteIndex = (compressedRef.data[uint(wordOffset)] >> uint(bitOffset)) & mask;
+    if(paletteCount > 1) {
+        // Calculate how many bits are needed for palette indices
+        // Ensure we don't overflow with 64-bit shifts
+        uint bits = uint(ceil(log2(float(paletteCount))));
         
-        // Debug print for single word case (limited to reduce output)
-        if (threadIndex % 1024 == 0) {
-            debugPrintfEXT("MaskHeightmap: Single word - WordValue: 0x%llx, PaletteIndex: %llu\n", 
-                          compressedRef.data[uint(wordOffset)], paletteIndex);
+        // Calculate bit positions for this voxel's palette index
+        uint64_t bitCursor = blockIndex * uint64_t(bits);
+        uint64_t wordOffset = bitCursor / 64;
+        uint64_t bitOffset = bitCursor % 64;
+        
+        // Create mask for the bits we need
+        uint64_t mask = (uint64_t(1u) << bits) - uint64_t(1u);
+        
+        // Debug prints for bit manipulation only for the first column
+        if (shouldDebug) {
         }
-    } else {
-        // Case 2: Palette index spans two words
-        uint bitsInCurrent = 64 - uint(bitOffset);
-        uint bitsInNext = bits - bitsInCurrent;
         
-        // Get lower bits from current word
-        uint64_t part1 = compressedRef.data[uint(wordOffset)] >> uint(bitOffset);
-        
-        // Get upper bits from next word, ensuring we don't shift by too much
-        uint64_t part2 = compressedRef.data[uint(wordOffset + 1)] & ((uint64_t(1u) << bitsInNext) - uint64_t(1u));
-        
-        // Combine the parts, ensuring we don't shift by too much
-        if (bitsInCurrent < 64) {
-            paletteIndex = part1 | (part2 << bitsInCurrent);
+        // Read the palette index from compressed data
+        if (bits <= (64 - bitOffset)) {
+            // Case 1: Palette index fits in a single word
+            // Calculate the offset in the heap buffer (in uint64_t units)
+            uint heapOffset = uint(wordOffset);
+            
+            paletteIndex = (compressedRef.data[heapOffset] >> bitOffset) & mask;
+            
+            // Debug print for single word case only for the first column
+            if (shouldDebug) {
+            }
         } else {
-            paletteIndex = part1;
-        }
-        // Apply final mask to ensure we don't have extra bits
-        paletteIndex &= mask;
-        
-        // Debug print for two word case (limited to reduce output)
-        if (threadIndex % 1024 == 0) {
-            debugPrintfEXT("MaskHeightmap: Two word - Word1: 0x%llx, Word2: 0x%llx, Part1: 0x%llx, Part2: 0x%llx, PaletteIndex: %llu\n", 
-                          compressedRef.data[uint(wordOffset)], compressedRef.data[uint(wordOffset + 1)], part1, part2, paletteIndex);
+            // Case 2: Palette index spans two words
+            uint bitsInCurrent = 64 - uint(bitOffset);
+            uint bitsInNext = bits - bitsInCurrent;
+            
+            // Calculate offsets in the heap buffer (in uint64_t units)
+            uint heapOffset1 = uint(wordOffset);
+            uint heapOffset2 = heapOffset1 + 1;
+            
+            // Get lower bits from current word
+            uint64_t part1 = compressedRef.data[heapOffset1] >> bitOffset;
+            
+            // Get upper bits from next word
+            uint64_t part2 = compressedRef.data[heapOffset2] & ((uint64_t(1u) << bitsInNext) - uint64_t(1u));
+            
+            // Combine the parts
+            paletteIndex = part1 | (part2 << bitsInCurrent);
+            
+            // Apply final mask to ensure we don't have extra bits
+            paletteIndex &= mask;
+            
+            // Debug print for two word case only for the first column
+            if (shouldDebug) {
+            }
         }
     }
-    
-    // Get the actual block ID from the palette
-    uint64_t blockID = paletteRef.entries[uint(paletteIndex)];
-    
-    // Debug print for palette lookup (limited to reduce output)
-    if (threadIndex % 1024 == 0) {
-        debugPrintfEXT("MaskHeightmap: Palette lookup - PaletteIndex: %llu, BlockID: %llu\n", 
-                      paletteIndex, blockID);
+
+    if(paletteCount == 1) {
+        paletteIndex = 0;
     }
     
+    // Get the block ID from the palette
+    uint64_t blockID = 0;
+    if(paletteIndex < paletteCount) {
+        blockID = paletteRef.data[uint(paletteIndex)];
+    }
+
     // If the block is not air (blockID != 0), set the corresponding bit in the heightmap mask
     if (blockID != 0) {
-        // Calculate the heightmap index for this column (x,y position)
-        uint64_t heightMapIndex = uint64_t(calculateHeightmapIndex(uvec3(threadPos.xy, 0)));
-        
-        // Ensure proper alignment for atomic operations
-        uint alignedIndex = uint(heightMapIndex & ~3u); // Align to 4 bytes
-        uint offsetInWord = uint(heightMapIndex & 3u);
-        
-        // Add memory barrier before atomic operation
-        memoryBarrierBuffer();
-        
-        // Set the bit corresponding to this block's height, adjusted for alignment
-        uint64_t bitMask = uint64_t(1u) << uint64_t(threadPos.z + (offsetInWord * 32));
-        
-        // Use atomicOr to set the bit with proper alignment
-        uint64_t oldValue = atomicOr(heightmapRef.heights[alignedIndex], bitMask);
-        
-        // Add memory barrier after atomic operation
-        memoryBarrierBuffer();
-        
-        // Debug print for non-air blocks (limited to reduce output)
-        if (threadIndex % 1024 == 0) {
-            debugPrintfEXT("MaskHeightmap: Non-air block at pos (%u,%u,%u) - BlockID: %llu, Height: %u, OldMask: 0x%llx, NewMask: 0x%llx\n", 
-                          threadPos.x, threadPos.y, threadPos.z, blockID, threadPos.z, oldValue, oldValue | bitMask);
+        for(int i = 0; i < 3; i++) {
+            maskColumnAxis(bitmapRef, threadPos, i);
         }
     }
 }
+
 
 void main() {
     // Add a global memory barrier at the start of each shader invocation
