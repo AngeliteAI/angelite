@@ -316,7 +316,7 @@ const facePassFn = struct {
         vk.cmdPushConstants(passCtx.cmd, pipelineLayout, vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT, 0, pushConstantsSize, &pushConstants);
 
         // Draw the grid of triangles (8x8 grid, 2 triangles per cell, 3 vertices per triangle)
-        vk.cmdDraw(passCtx.cmd, 2048, 1, 0, 0);
+        vk.cmdDraw(passCtx.cmd, 1000000, 1, 0, 0);
         logger.info("Draw call completed", .{});
 
         logger.info("Ending dynamic rendering", .{});
@@ -562,7 +562,7 @@ const stage_mod = @import("stage.zig");
 
 // Constants for buffer sizes
 const RENDERER_STAGING_BUFFER_SIZE = 1024 * 1024 * 1024; // 8MB
-const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 2048; // 1GB
+const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 4096; // 1GB
 
 // Heightmap constants
 const HEIGHTMAP_POINTS_PER_CHUNK = 64; // 8x8 grid per chunk
@@ -676,6 +676,7 @@ const Renderer = struct {
             .vertex_shader = .{ .path = "src/gfx/src/vk/face.glsl", .shader_type = .Vertex },
             .fragment_shader = .{ .path = "src/gfx/src/vk/facef.glsl", .shader_type = .Fragment },
             .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Unorm},
+            .depth_attachment_format = vk.Format.D32Sfloat,
             // Add push constant range for the camera device address and model matrix
             .push_constant_size = @sizeOf(struct {
                 heap_address: u64,
@@ -694,6 +695,7 @@ const Renderer = struct {
             .vertex_shader = .{ .path = "src/gfx/src/vk/heightmap.glsl", .shader_type = .Vertex },
             .fragment_shader = .{ .path = "src/gfx/src/vk/heightmapf.glsl", .shader_type = .Fragment },
             .color_attachment_formats = &[_]vk.Format{vk.Format.B8G8R8A8Unorm},
+            .depth_attachment_format = vk.Format.D32Sfloat,
             // Add push constant range for the camera device address and model matrix
             .push_constant_size = @sizeOf(struct {
                 heap_address: u64,
@@ -774,7 +776,7 @@ const Renderer = struct {
         // Create generate heightmap phase 1 compute pipeline
         logger.info("Creating generate heightmap phase 1 compute pipeline...", .{});
         _ = renderer.pipeline.createComputePipeline("generate_heightmap_phase1", .{
-            .shader = .{ .path = "src/gfx/src/vk/070_generate_heightmap.glsl", .shader_type = .Compute },
+            .shader = .{ .path = "src/gfx/src/vk/070_generate_bitmap.glsl", .shader_type = .Compute },
             .push_constant_size = @sizeOf(struct {
                 heap_address: u64,
                 region_offset: u64,
@@ -1092,7 +1094,7 @@ const Renderer = struct {
             logger.err("Failed to allocate heightmap: {s}", .{@errorName(err)});
             return null;
         };
-        const mesh_allocation = renderer.allocator.alloc(@sizeOf(u64) * 2048 * 8) catch |err| {
+        const mesh_allocation = renderer.allocator.alloc(@sizeOf(u64) * 10000000 * 8) catch |err| {
             logger.err("Failed to allocate mesh: {s}", .{@errorName(err)});
             return null;
         };
@@ -1380,14 +1382,6 @@ const Renderer = struct {
         // Add resources to generate heightmap phase 2 pass
         try generateMeshPass.addInput(region_resource, .{
             .accessMask = vk.ACCESS_SHADER_READ_BIT | vk.ACCESS_SHADER_WRITE_BIT,
-            .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        }, .{
-            .offset = renderer.region_allocation.heap_offset,
-            .size = @sizeOf(Region),
-        });
-
-        try generateMeshPass.addInput(region_resource, .{
-            .accessMask = vk.ACCESS_SHADER_READ_BIT,
             .stageMask = vk.PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         }, .{
             .offset = renderer.region_allocation.heap_offset,
@@ -2082,10 +2076,9 @@ const greedyMeshPassFn = struct {
         vk.cmdBindPipeline(passCtx.cmd, vk.PIPELINE_BIND_POINT_COMPUTE, pipeline.asCompute().?.base.handle);
         logger.info("Greedy mesh pipeline bound successfully", .{});
 
-        // Calculate the number of workgroups needed
-        // For a 64x64x64 region, we need to divide by the subgroup size
-
-        // Dispatch compute shader with the calculated workgroup count
-        vk.cmdDispatch(passCtx.cmd, 64 / 8, 64 / 8, 1);
+        logger.info("Dispatching compute shader with workgroup size 16x16x1", .{});
+        // Calculate how many workgroups we need to cover the entire grid (64x64)
+        // With workgroup size of 16x16, we need 4x4 workgroups to cover 64x64 grid
+        vk.cmdDispatch(passCtx.cmd, 8, 8, 6); // 4x4x1 workgroups
     }
 }.execute;

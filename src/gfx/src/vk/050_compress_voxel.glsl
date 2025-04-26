@@ -110,6 +110,19 @@ void createPalette() {
     HeapBufferRef palette = HeapBufferRef(pushConstants.heapAddress + chunk.offsetPalette);
     HeapBufferRef compressed = HeapBufferRef(pushConstants.heapAddress + chunk.offsetCompressed);
     
+    // Initialize palette count to 0 for the first thread in each chunk
+    if (localIndex == 0) {
+        // Only the first thread in each chunk should initialize the palette count
+        atomicExchange(chunk.countPalette, 0);
+        memoryBarrier();
+        if (threadPos.x == 0) {
+            debugPrintfEXT("Phase 1 - Initialized chunk palette count to 0\n");
+        }
+    }
+    
+    // Wait for all threads to reach this point, ensuring initialization is complete
+    barrier();
+    
     if (threadPos.x == 0) {
         debugPrintfEXT("Phase 1 - Chunk info - countPalette: %llu, offsetPalette: %llu, offsetCompressed: %llu\n", 
                       chunk.countPalette, chunk.offsetPalette, chunk.offsetCompressed);
@@ -127,7 +140,7 @@ void createPalette() {
                       blockID, chunkIndex, localIndex, globalIndex);
     }
 
-
+    // Ensure all threads in workgroup have loaded their block IDs before proceeding
     barrier();
 
     // -------------------------------
@@ -139,7 +152,8 @@ void createPalette() {
 
     // Keep trying until we've either found the blockID or added it to the palette
     while (!added) {
-        // Get current palette count
+        // Get current palette count - use a memory barrier to ensure all threads see the most recent count
+        memoryBarrier();
         uint64_t currentCount = atomicOr(chunk.countPalette, 0);
         memoryBarrier();
 
@@ -194,6 +208,9 @@ void createPalette() {
                 debugPrintfEXT("Phase 1 - Palette full, using fallback index 0\n");
             }
         }
+        
+        // Add a workgroup barrier to ensure all threads see the updated palette
+        barrier();
     }
 }
 

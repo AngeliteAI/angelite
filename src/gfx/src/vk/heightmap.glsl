@@ -21,14 +21,14 @@ layout(buffer_reference, scalar) readonly buffer CameraBuffer {
 // Define the heightmap data structure - match the structure in 070_generate_heightmap.glsl
 layout(buffer_reference, scalar) readonly buffer BitmapRef {
     // The heightmap is stored as uint64_t values that are reinterpreted as doubles
-    uint64_t x[4096];  // 8x8 grid per chunk
-    uint64_t y[4096];  // 8x8 grid per chunk
-    uint64_t z[4096];  // 8x8 grid per chunk
+    uint64_t data[3][4096];  // 8x8 grid per chunk
 };
 
 // Define the region data structure
 layout(buffer_reference, scalar) buffer RegionRef {
-    uint64_t offsetBitmap;  // New field for heightmap offset
+    uint64_t offsetBitmap;  // Heightmap offset
+    uint64_t offsetMesh;    // Mesh data offset
+    uint64_t faceCount;     // Number of faces
     uint64_t chunkOffsets[512];
 };
 
@@ -74,15 +74,15 @@ uint chunkHeight(RegionRef region, ivec3 pos) {
    
     uint index = calculateHeightmapIndex(pos.xy);
 
-    uint highBits = uint(bitmapData.z[index] >> 32);
-    uint lowBits = uint(bitmapData.z[index] & 0xFFFFFFFF);
-    debugPrintfEXT("Heightmap: %llu", bitmapData.x[index]);
+    uint highBits = uint(bitmapData.data[0][index] >> 32);
+    uint lowBits = uint(bitmapData.data[0][index] & 0xFFFFFFFF);
     if (highBits != 0) {
         return findMSB(highBits) + 32;
     }
     if (lowBits != 0) {
         return findMSB(lowBits);
     }
+    
     return 0;
 }
 // Function to safely sample height from heightmap
@@ -144,7 +144,7 @@ void main() {
     int worldY = gridY + int(point.y);
     
     // Interpolate height from surrounding points
-    float height = sampleHeight(regionData, worldX, worldY);
+    float height = interpolateHeight(regionData, worldX, worldY);
     debugPrintfEXT("Height: %f", height);
     
     // Create world position with proper transformation - Z is up

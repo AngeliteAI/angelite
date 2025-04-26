@@ -821,7 +821,10 @@ pub const Graph = struct {
                     .dstQueueFamilyIndex = required.queueFamilyIndex,
                     .image = resource.handle.?.image,
                     .subresourceRange = .{
-                        .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
+                        .aspectMask = if (resource.name.len > 5 and std.mem.indexOf(u8, resource.name, "depth") != null)
+                            vk.IMAGE_ASPECT_DEPTH_BIT
+                        else
+                            vk.IMAGE_ASPECT_COLOR_BIT,
                         .baseMipLevel = 0,
                         .levelCount = vk.REMAINING_MIP_LEVELS,
                         .baseArrayLayer = 0,
@@ -1013,7 +1016,10 @@ pub const Graph = struct {
                     .dstQueueFamilyIndex = required.queueFamilyIndex,
                     .image = resource.handle.?.image,
                     .subresourceRange = .{
-                        .aspectMask = vk.IMAGE_ASPECT_COLOR_BIT,
+                        .aspectMask = if (resource.name.len > 5 and std.mem.indexOf(u8, resource.name, "depth") != null)
+                            vk.IMAGE_ASPECT_DEPTH_BIT
+                        else
+                            vk.IMAGE_ASPECT_COLOR_BIT,
                         .baseMipLevel = 0,
                         .levelCount = vk.REMAINING_MIP_LEVELS,
                         .baseArrayLayer = 0,
