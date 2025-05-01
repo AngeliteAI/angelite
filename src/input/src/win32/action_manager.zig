@@ -261,33 +261,31 @@ export fn addMouseButtonBinding(action: *anyopaque, button: MouseButton, action_
 }
 
 export fn addGamepadButtonBinding(action: *anyopaque, button: GamepadButton, action_type: ButtonAction) callconv(.C) bool {
-    _ = action;
-    _ = button;
-    _ = action_type;
+    _ = action_type; // Not actually used right now
+    const act = @as(*InputAction, @ptrCast(@alignCast(action)));
+
+    // Print what we're about to add
+    std.debug.print("Adding gamepad button binding for button: {any}\n", .{button});
+
+    // Create a new gamepad button binding with the correct type
+    const binding = Binding{
+        .ty = .Gamepad, // MUST match the type we actually use in triggerBinding
+        .data = .{
+            .Gamepad = .{
+                .binding = mapping.GamepadBinding{
+                    .button = button,
+                    .side = .None,
+                },
+            },
+        },
+    };
+
+    // Add the binding
+    act.bindings.append(binding) catch {
+        return false;
+    };
+
     return true;
-    //     const act = @as(*InputAction, @ptrCast(@alignCast(action)));
-
-    //     // Create a new gamepad button binding
-    //     const binding = Binding{ .ty = .Button, .data = .{ .Button = .{
-    //         .binding = ButtonBinding{
-    //             .button = .ButtoCode{ .GamepadButton = button },
-    //             .ty = .Gamepad,
-    //         },
-    //         .action = action_type,
-    //     } } };
-
-    //     // Check if binding already exists
-    //     for (act.bindings.items) |existing| {
-    //         if (mapping.binding_eql(existing, binding)) {
-    //             return false;
-    //         }
-    //     }
-
-    //     // Add the binding
-    //     act.bindings.append(binding) catch {
-    //         return false;
-    //     };
-
 }
 
 export fn addMouseAxisBinding(action: *anyopaque, axis: Axis, threshold: f32) callconv(.C) bool {
@@ -436,4 +434,32 @@ export fn getActionName(action: *anyopaque, buffer: [*c]u8, buffer_size: usize) 
     buffer[i] = 0;
 
     return i;
+}
+
+export fn addGamepadButtonWithSideBinding(action: *anyopaque, button: GamepadButton, side: Side, action_type: ButtonAction) callconv(.C) bool {
+    _ = action_type; // Not actually used right now
+    const act = @as(*InputAction, @ptrCast(@alignCast(action)));
+
+    // Print what we're about to add
+    std.debug.print("Adding gamepad button binding for button: {any} with side: {any}\n", .{ button, side });
+
+    // Create a new gamepad button binding with side specification
+    const binding = Binding{
+        .ty = .Gamepad, // MUST match the type we actually use in triggerBinding
+        .data = .{
+            .Gamepad = .{
+                .binding = mapping.GamepadBinding{
+                    .button = button,
+                    .side = side,
+                },
+            },
+        },
+    };
+
+    // Add the binding
+    act.bindings.append(binding) catch {
+        return false;
+    };
+
+    return true;
 }

@@ -1,0 +1,40 @@
+layout (8, 8, 1)
+
+fn faceMask()
+    //expressions as first class citizens like functions
+    const neighbors = if @global().backface 
+        @global().value << 1
+    else
+        @global().value >> 1
+
+    $: mask = @global().value & ~neighbors
+
+//! means error, ? means nil/null. not actually used in this example
+fn main()!?
+    const data = @push();
+    //Svelte like rune stores in @global for later
+    $: uv = @global().id.xy
+    $: axis = @workGroup().id.z
+    $: direction = axis / 2
+    $: backface = if (axis % 2 == 0)
+
+    $: column = data.region.*.bitmap.*.data[axis][@flatten(uv, 64)]
+
+    faceMask()
+
+    //I do not know if this is possible in SPIRV so it might have to be changed
+    let quad = @emitter(data.region.faceCount, Quad:
+        //I didnt write this, the AI is starting to learn my syntax lol
+        position = (uv.xy..., 0),
+        size = (1, 1),
+        axis = direction,
+        material = 0,
+    )
+
+    while mask != 0
+        quad.position.z = primary
+        //special functor syntax for emitting
+        quad();
+        mask = mask & ~(1 << primary)
+
+

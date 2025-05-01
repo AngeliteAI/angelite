@@ -13,7 +13,6 @@ const GamepadBinding = mapping.GamepadBinding;
 
 fn array_contains(comptime T: type, haystack: []T, needle: T) bool {
     for (haystack) |element| {
-        std.debug.print("comparing {any} with {any}\n", .{ element, needle });
         if (mapping.binding_eql(element, needle))
             return true;
     }
@@ -209,6 +208,7 @@ pub export fn inputPollActiveActions(actionBuffer: [*]Action, maxActions: usize)
             count += 1;
             const window_handle = entry.key_ptr.*;
             const input_state = entry.value_ptr;
+            pollGamepads(input_state);
             std.debug.print("DEBUG: Processing state entry {d} for window handle {d}\n", .{ count, window_handle });
 
             // Poll the window for messages
@@ -222,8 +222,6 @@ pub export fn inputPollActiveActions(actionBuffer: [*]Action, maxActions: usize)
             std.debug.print("DEBUG: Processed {d} messages for this window\n", .{msg_count});
 
             // Poll for gamepad input
-            std.debug.print("DEBUG: Polling gamepads\n", .{});
-            pollGamepads(input_state);
         }
 
         std.debug.print("DEBUG: Processed {d} state entries in total\n", .{count});
@@ -305,12 +303,14 @@ fn processInputMessage(input_state: *InputStateMap, msg: Message) void {
 fn triggerBinding(input_state: *InputStateMap, binding: Binding, is_down: bool) void {
     std.debug.print("DEBUG: triggerBinding called for binding type {any}, is_down: {any}\n", .{ binding.ty, is_down });
 
+    var found_match = false;
     var iterator = input_state.actionManager.actions.iterator();
     while (iterator.next()) |entry| {
         std.debug.print("DEBUG: binding {any}\n", .{binding});
         if (!array_contains(Binding, entry.value_ptr.*.bindings.items, binding)) {
             continue;
         }
+        found_match = true;
         std.debug.print("DEBUG: Found matching binding\n", .{});
 
         // Create a new control state based on the threshold
@@ -360,18 +360,24 @@ fn triggerBinding(input_state: *InputStateMap, binding: Binding, is_down: bool) 
             std.debug.print("ERROR: Failed to append continuous action: {s}\n", .{@errorName(err)});
         };
     }
-    std.debug.print("DEBUG: No matching binding found\n", .{});
+
+    if (!found_match) {
+        std.debug.print("DEBUG: No matching binding found\n", .{});
+    }
 }
 
 // Trigger an axis movement
 fn triggerAxisMovement(input_state: *InputStateMap, binding: Binding, movement: f32) void {
     std.debug.print("DEBUG: triggerAxisMovement called for binding type {any}, movement: {d}\n", .{ binding.ty, movement });
+
+    var found_match = false;
     var iterator = input_state.actionManager.actions.iterator();
     while (iterator.next()) |entry| {
         std.debug.print("DEBUG: binding {any}\n", .{entry});
         if (!array_contains(Binding, entry.value_ptr.*.bindings.items, binding)) {
             continue;
         }
+        found_match = true;
 
         // Create a new control with the movement
         const new_control = Control{
@@ -405,7 +411,10 @@ fn triggerAxisMovement(input_state: *InputStateMap, binding: Binding, movement: 
             std.debug.print("DEBUG: Movement {d} below threshold {d}\n", .{ @abs(movement), threshold });
         }
     }
-    std.debug.print("DEBUG: No matching binding found\n", .{});
+
+    if (!found_match) {
+        std.debug.print("DEBUG: No matching binding found\n", .{});
+    }
 }
 
 // Poll for gamepad input
@@ -430,28 +439,66 @@ fn pollGamepads(input_state: *InputStateMap) void {
             if ((curr_buttons & GamepadButtons.A) != (prev_buttons & GamepadButtons.A)) {
                 const is_pressed = (curr_buttons & GamepadButtons.A) != 0;
                 std.debug.print("DEBUG: Gamepad A button {s}\n", .{if (is_pressed) "pressed" else "released"});
-                // Implementation would create a ButtonBinding and call triggerBinding
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .A, .side = .None } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .A, .side = .None } } } }, is_pressed);
+                }
             }
 
             // Check B button
             if ((curr_buttons & GamepadButtons.B) != (prev_buttons & GamepadButtons.B)) {
                 const is_pressed = (curr_buttons & GamepadButtons.B) != 0;
                 std.debug.print("DEBUG: Gamepad B button {s}\n", .{if (is_pressed) "pressed" else "released"});
-                // Implementation would create a ButtonBinding and call triggerBinding
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .B, .side = .None } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .B, .side = .None } } } }, is_pressed);
+                }
             }
 
             // Check X button
             if ((curr_buttons & GamepadButtons.X) != (prev_buttons & GamepadButtons.X)) {
                 const is_pressed = (curr_buttons & GamepadButtons.X) != 0;
                 std.debug.print("DEBUG: Gamepad X button {s}\n", .{if (is_pressed) "pressed" else "released"});
-                // Implementation would create a ButtonBinding and call triggerBinding
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .X, .side = .None } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .X, .side = .None } } } }, is_pressed);
+                }
             }
 
             // Check Y button
             if ((curr_buttons & GamepadButtons.Y) != (prev_buttons & GamepadButtons.Y)) {
                 const is_pressed = (curr_buttons & GamepadButtons.Y) != 0;
                 std.debug.print("DEBUG: Gamepad Y button {s}\n", .{if (is_pressed) "pressed" else "released"});
-                // Implementation would create a ButtonBinding and call triggerBinding
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Y, .side = .None } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Y, .side = .None } } } }, is_pressed);
+                }
+            }
+
+            // Check Left Thumb (Left Stick) button
+            if ((curr_buttons & GamepadButtons.LEFT_THUMB) != (prev_buttons & GamepadButtons.LEFT_THUMB)) {
+                const is_pressed = (curr_buttons & GamepadButtons.LEFT_THUMB) != 0;
+                std.debug.print("DEBUG: Gamepad Left Stick button {s}\n", .{if (is_pressed) "pressed" else "released"});
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Stick, .side = .Left } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Stick, .side = .Left } } } }, is_pressed);
+                }
+            }
+
+            // Check Right Thumb (Right Stick) button
+            if ((curr_buttons & GamepadButtons.RIGHT_THUMB) != (prev_buttons & GamepadButtons.RIGHT_THUMB)) {
+                const is_pressed = (curr_buttons & GamepadButtons.RIGHT_THUMB) != 0;
+                std.debug.print("DEBUG: Gamepad Right Stick button {s}\n", .{if (is_pressed) "pressed" else "released"});
+                if (is_pressed) {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Stick, .side = .Right } } } }, is_pressed);
+                } else {
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Stick, .side = .Right } } } }, is_pressed);
+                }
             }
 
             if ((curr_buttons & GamepadButtons.LEFT_SHOULDER) != (prev_buttons & GamepadButtons.LEFT_SHOULDER)) {
@@ -459,9 +506,9 @@ fn pollGamepads(input_state: *InputStateMap) void {
                 std.debug.print("DEBUG: Gamepad Left Shoulder button {s}\n", .{if (is_pressed) "pressed" else "released"});
                 //Implement left shoulder trigger binding
                 if (is_pressed) {
-                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Left } } } }, is_pressed);
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Left } } } }, is_pressed);
                 } else {
-                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Left } } } }, is_pressed);
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Left } } } }, is_pressed);
                 }
             }
 
@@ -471,9 +518,9 @@ fn pollGamepads(input_state: *InputStateMap) void {
                 std.debug.print("DEBUG: Gamepad Right Shoulder button {s}\n", .{if (is_pressed) "pressed" else "released"});
                 // Implementation would create a ButtonBinding and call triggerBinding
                 if (is_pressed) {
-                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Right } } } }, is_pressed);
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Right } } } }, is_pressed);
                 } else {
-                    triggerBinding(input_state, Binding{ .ty = .Button, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Right } } } }, is_pressed);
+                    triggerBinding(input_state, Binding{ .ty = .Gamepad, .data = .{ .Gamepad = .{ .binding = GamepadBinding{ .button = .Shoulder, .side = .Right } } } }, is_pressed);
                 }
             }
 

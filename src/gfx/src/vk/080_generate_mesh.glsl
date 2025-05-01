@@ -104,7 +104,7 @@ void emitQuad(Quad quad) {
 
     uint64_t slot = atomicAdd(regionRef.faceCount, 1);
 
-    if(slot >= 100000) {
+    if(slot >= 1000000) {
         return;
     }
     uint64_t offset = slot * QUAD_SIZEOF;
@@ -128,6 +128,7 @@ void main() {
     uvec2 uv = gl_GlobalInvocationID.xy;
     uint axis = gl_WorkGroupID.z / 2;
     bool backface = gl_WorkGroupID.z % 2 == 0;
+    uint absoluteAxis = axis * 2 + (backface ? 1 : 0);
 
     uint64_t mask = faceMask(bitmapRef, uv, axis, backface);
     while(mask != 0) {
@@ -143,7 +144,7 @@ void main() {
         Quad quad;
         quad.position = uvw;
         quad.size = size;
-        quad.axis = axis;
+        quad.axis = absoluteAxis;
         quad.material = material;
 
         emitQuad(quad); 

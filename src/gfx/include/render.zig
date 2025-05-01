@@ -23,6 +23,8 @@ pub extern fn init(surface: *Surface) bool;
 pub extern fn shutdown() void;
 pub extern fn supportsMultiple() bool;
 
+pub extern fn hotReload(renderer: *Renderer) void;
+
 // Camera control
 pub extern fn setCamera(renderer: *Renderer, camera: *Camera) void;
 pub extern fn setSettings(renderer: *Renderer, settings: *RenderSettings) void;

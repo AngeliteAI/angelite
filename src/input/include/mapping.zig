@@ -72,7 +72,7 @@ pub const Control = extern struct {
 };
 
 // Binding type
-pub const BindingType = enum(c_int) { Button = 0, Axis = 1, _ };
+pub const BindingType = enum(c_int) { Button = 0, Axis = 1, Gamepad = 2, _ };
 
 // NOTE: This must match what state.zig expects - UNTAGGED union
 pub const BindingData = extern union {
@@ -173,7 +173,13 @@ pub fn binding_hash(binding: Binding) u64 {
         .Axis => {
             std.hash.autoHash(&hasher, axis_binding_hash(binding.data.Axis.binding));
         },
-        _ => {},
+        .Gamepad => {
+            const button_int = @intFromEnum(binding.data.Gamepad.binding.button);
+            const side_int = @intFromEnum(binding.data.Gamepad.binding.side);
+            std.hash.autoHash(&hasher, button_int);
+            std.hash.autoHash(&hasher, side_int);
+        },
+        else => {},
     }
 
     return hasher.final();
@@ -189,8 +195,15 @@ pub fn binding_eql(a: Binding, b: Binding) bool {
         .Axis => {
             return axis_binding_eql(a.data.Axis.binding, b.data.Axis.binding);
         },
-        _ => return false,
+        .Gamepad => {
+            return gamepad_binding_eql(a.data.Gamepad.binding, b.data.Gamepad.binding);
+        },
+        else => return false,
     }
+}
+
+pub fn gamepad_binding_eql(a: GamepadBinding, b: GamepadBinding) bool {
+    return a.button == b.button and a.side == b.side;
 }
 
 // C-compatible helper functions with simple scalar types

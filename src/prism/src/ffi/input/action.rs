@@ -49,6 +49,12 @@ unsafe extern "C" {
     pub fn addJoystickBinding(action: *mut c_void, axis: Axis, side: Side, threshold: f32) -> bool;
     pub fn addTriggerBinding(action: *mut c_void, side: Side, threshold: f32) -> bool;
     pub fn addScrollBinding(action: *mut c_void, axis: Axis, threshold: f32) -> bool;
+    pub fn addGamepadButtonWithSideBinding(
+        action: *mut c_void,
+        button: GamepadButton,
+        side: Side,
+        action_type: ButtonAction,
+    ) -> bool;
 }
 
 // Safe wrapper for ActionManager
@@ -174,6 +180,20 @@ impl InputAction {
             Ok(())
         } else {
             Err("Failed to add scroll binding")
+        }
+    }
+
+    pub fn add_gamepad_button_with_side_binding(
+        &self,
+        button: GamepadButton,
+        side: Side,
+        action_type: ButtonAction,
+    ) -> Result<(), &'static str> {
+        let success = unsafe { addGamepadButtonWithSideBinding(self.ptr, button, side, action_type) };
+        if success {
+            Ok(())
+        } else {
+            Err("Failed to add gamepad button with side binding")
         }
     }
 }

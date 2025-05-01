@@ -146,7 +146,7 @@ pub const Context = struct {
         };
 
         const sync2_extension_supported = checkExtensionsSupport(&Sync2Extensions, device_extensions) catch |err| {
-            std.debug.print("ERROR: Error checking device extensions: {s}\n", .{@errorName(err)});
+            logger.err("Error checking device extensions: {s}", .{@errorName(err)});
             return null;
         };
         if (!device_extensions_supported) {
@@ -376,29 +376,29 @@ pub const Context = struct {
     // Acquire next image from swapchain
     pub fn acquireNextImage(self: *Context, frameIndex: u32) !u32 {
         // Wait for this frame's fence
-        std.debug.print("[RENDER] SYNC: Waiting for frame {} fence {any}...\n", .{ frameIndex, self.in_flight_fences[frameIndex] });
+        logger.info("SYNC: Waiting for frame {} fence {any}...", .{ frameIndex, self.in_flight_fences[frameIndex] });
         const wait_result = vk.waitForFences(self.device, 1, &self.in_flight_fences[frameIndex], vk.TRUE, std.math.maxInt(u64));
-        std.debug.print("[RENDER] SYNC: Wait result: {any}\n", .{wait_result});
+        logger.info("SYNC: Wait result: {any}", .{wait_result});
 
         // Acquire next image using this frame's semaphore
-        std.debug.print("[RENDER] SYNC: Acquiring next image with semaphore {any}...\n", .{self.image_available_semaphores[frameIndex]});
+        logger.info("SYNC: Acquiring next image with semaphore {any}...", .{self.image_available_semaphores[frameIndex]});
         var imageIndex: u32 = undefined;
         const result = vk.acquireNextImageKHR(self.device, self.swapchain, std.math.maxInt(u64), // Wait indefinitely
             self.image_available_semaphores[frameIndex], null, &imageIndex);
-        std.debug.print("[RENDER] SYNC: Acquire result: {any}, image index: {}\n", .{ result, imageIndex });
+        logger.info("SYNC: Acquire result: {any}, image index: {}", .{ result, imageIndex });
 
         // If image is being used by another frame, wait for that frame's fence
         if (result == vk.SUCCESS) {
             if (self.images_in_flight[imageIndex] != null) {
-                std.debug.print("[RENDER] SYNC: Image {} is in use by another frame, waiting for fence {any}...\n", .{ imageIndex, self.images_in_flight[imageIndex] });
+                logger.info("SYNC: Image {} is in use by another frame, waiting for fence {any}...", .{ imageIndex, self.images_in_flight[imageIndex] });
                 const img_wait_result = vk.waitForFences(self.device, 1, &self.images_in_flight[imageIndex], vk.TRUE, std.math.maxInt(u64));
-                std.debug.print("[RENDER] SYNC: Image wait result: {any}\n", .{img_wait_result});
+                logger.info("SYNC: Image wait result: {any}", .{img_wait_result});
             } else {
-                std.debug.print("[RENDER] SYNC: Image {} is not in use by another frame\n", .{imageIndex});
+                logger.info("SYNC: Image {} is not in use by another frame", .{imageIndex});
             }
 
             // Mark this image as being used by the current frame
-            std.debug.print("[RENDER] SYNC: Marking image {} as used by frame {} (fence {any})\n", .{ imageIndex, frameIndex, self.in_flight_fences[frameIndex] });
+            logger.info("SYNC: Marking image {} as used by frame {} (fence {any})", .{ imageIndex, frameIndex, self.in_flight_fences[frameIndex] });
             self.images_in_flight[imageIndex] = self.in_flight_fences[frameIndex];
 
             // Only reset the fence now after we've verified the image is available
@@ -478,7 +478,7 @@ pub const Context = struct {
         const result = vk.enumerateInstanceExtensionProperties(null, &extension_count, @ptrCast(extensions));
 
         if (result != vk.SUCCESS) {
-            std.debug.print("Failed to enumerate instance extensions: {}\n", .{result});
+            logger.err("Failed to enumerate instance extensions: {}", .{result});
             return error.EnumerationFailed;
         }
         return extensions[0..extension_count];
@@ -492,7 +492,7 @@ pub const Context = struct {
         const result = vk.enumerateDeviceExtensionProperties(physical_device, null, &extension_count, @ptrCast(extensions));
 
         if (result != vk.SUCCESS) {
-            std.debug.print("Failed to enumerate device extensions: {}\n", .{result});
+            logger.err("Failed to enumerate device extensions: {}", .{result});
             return error.EnumerationFailed;
         }
         return extensions[0..extension_count];

@@ -1,5 +1,4 @@
 const std = @import("std");
-
 const c = @cImport({
     // Platform-specific definitions
     if (@import("builtin").os.tag == .windows) {
@@ -39,6 +38,7 @@ const c = @cImport({
         @cDefine("xcb_visualid_t", "uint32_t");
     }
 });
+const logger = @import("../logger.zig");
 
 // Platform-specific constants and functions
 
@@ -544,6 +544,7 @@ pub const COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT = c.VK_COMMAND_POOL_CREAT
 pub const COMMAND_BUFFER_LEVEL_PRIMARY = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 
 pub const RESOLVE_MODE_NONE_KHR = c.VK_RESOLVE_MODE_NONE_KHR;
+pub const CULL_MODE_BACK_BIT = c.VK_CULL_MODE_BACK_BIT;
 
 pub const RENDER_PASS_LOAD_OP_CLEAR = c.VK_ATTACHMENT_LOAD_OP_CLEAR;
 pub const RENDER_PASS_LOAD_OP_LOAD = c.VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -576,23 +577,23 @@ pub fn loadDeviceExtensionFunctions(device: Device) void {
     // Load dynamic rendering functions
     if (@as(?*const anyopaque, loadDeviceProc(device, "vkCmdBeginRenderingKHR"))) |proc_addr| {
         cmdBeginRenderingKHR = @ptrCast(proc_addr);
-        std.debug.print("Successfully loaded vkCmdBeginRenderingKHR\n", .{});
+        logger.info("Successfully loaded vkCmdBeginRenderingKHR", .{});
     } else {
-        std.debug.print("Failed to load vkCmdBeginRenderingKHR\n", .{});
+        logger.err("Failed to load vkCmdBeginRenderingKHR", .{});
     }
 
     if (@as(?*const anyopaque, loadDeviceProc(device, "vkCmdEndRenderingKHR"))) |proc_addr| {
         cmdEndRenderingKHR = @ptrCast(proc_addr);
-        std.debug.print("Successfully loaded vkCmdEndRenderingKHR\n", .{});
+        logger.info("Successfully loaded vkCmdEndRenderingKHR", .{});
     } else {
-        std.debug.print("Failed to load vkCmdEndRenderingKHR\n", .{});
+        logger.err("Failed to load vkCmdEndRenderingKHR", .{});
     }
 
     if (@as(?*const anyopaque, loadDeviceProc(device, "vkCmdPipelineBarrier2"))) |proc_addr| {
         cmdPipelineBarrier2KHR = @ptrCast(proc_addr);
-        std.debug.print("Successfully loaded vkCmdPipelineBarrier2KHR\n", .{});
+        logger.info("Successfully loaded vkCmdPipelineBarrier2KHR", .{});
     } else {
-        std.debug.print("Failed to load vkCmdPipelineBarrier2KHR\n", .{});
+        logger.err("Failed to load vkCmdPipelineBarrier2KHR", .{});
     }
 }
 

@@ -49,16 +49,12 @@ pub enum GamepadButton {
     B = 1,
     X = 2,
     Y = 3,
-    LeftShoulder = 4,
-    RightShoulder = 5,
-    LeftStick = 6,
-    RightStick = 7,
-    DPadUp = 8,
-    DPadDown = 9,
-    DPadLeft = 10,
-    DPadRight = 11,
-    Start = 12,
-    Back = 13,
+    Shoulder = 4,
+    Trigger = 5,
+    Stick = 6,
+    DPad = 7,
+    Start = 8,
+    Back = 9,
 }
 
 #[repr(C)]
@@ -138,10 +134,11 @@ pub struct AxisBinding {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindingType {
     Button = 0,
     Axis = 1,
+    Gamepad = 2,
 }
 
 #[repr(C)]
@@ -149,6 +146,7 @@ pub enum BindingType {
 pub union BindingData {
     pub button: ButtonBindingData,
     pub axis: AxisBindingData,
+    pub gamepad: GamepadBindingData,
 }
 
 #[repr(C)]
@@ -161,6 +159,19 @@ pub struct ButtonBindingData {
 #[derive(Copy, Clone)]
 pub struct AxisBindingData {
     pub binding: AxisBinding,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct GamepadBinding {
+    pub button: GamepadButton,
+    pub side: Side,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct GamepadBindingData {
+    pub binding: GamepadBinding,
 }
 
 #[repr(C)]
@@ -274,21 +285,33 @@ pub fn create_mouse_binding(button: MouseButton) -> Binding {
 }
 
 pub fn create_gamepad_binding(button: GamepadButton) -> Binding {
-    let gamepad_code = GamepadCode { button };
-    let code = ButtonCode {
-        gamepad: gamepad_code,
+    let gamepad_binding = GamepadBinding {
+        button,
+        side: Side::None,
     };
-    let button_binding = ButtonBinding {
-        ty: InputType::Gamepad,
-        code,
-    };
-    let button_data = ButtonBindingData {
-        binding: button_binding,
+    let gamepad_data = GamepadBindingData {
+        binding: gamepad_binding,
     };
     Binding {
-        ty: BindingType::Button,
+        ty: BindingType::Gamepad,
         data: BindingData {
-            button: button_data,
+            gamepad: gamepad_data,
+        },
+    }
+}
+
+pub fn create_gamepad_binding_with_side(button: GamepadButton, side: Side) -> Binding {
+    let gamepad_binding = GamepadBinding {
+        button,
+        side,
+    };
+    let gamepad_data = GamepadBindingData {
+        binding: gamepad_binding,
+    };
+    Binding {
+        ty: BindingType::Gamepad,
+        data: BindingData {
+            gamepad: gamepad_data,
         },
     }
 }

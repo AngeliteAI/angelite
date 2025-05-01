@@ -316,7 +316,7 @@ const facePassFn = struct {
         vk.cmdPushConstants(passCtx.cmd, pipelineLayout, vk.SHADER_STAGE_VERTEX_BIT | vk.SHADER_STAGE_FRAGMENT_BIT, 0, pushConstantsSize, &pushConstants);
 
         // Draw the grid of triangles (8x8 grid, 2 triangles per cell, 3 vertices per triangle)
-        vk.cmdDraw(passCtx.cmd, 1000000, 1, 0, 0);
+        vk.cmdDraw(passCtx.cmd, 1_000_000, 1, 0, 0);
         logger.info("Draw call completed", .{});
 
         logger.info("Ending dynamic rendering", .{});
@@ -562,10 +562,10 @@ const stage_mod = @import("stage.zig");
 
 // Constants for buffer sizes
 const RENDERER_STAGING_BUFFER_SIZE = 1024 * 1024 * 1024; // 8MB
-const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 4096; // 1GB
+const RENDERER_HEAP_BUFFER_SIZE = 1024 * 1024 * 3000; // 1GB
 
 // Heightmap constants
-const HEIGHTMAP_POINTS_PER_CHUNK = 64; // 8x8 grid per chunk
+const HEIGHTMAP_POINTS_PER_CHUNK = 4096; // 8x8 grid per chunk
 const TOTAL_HEIGHTMAP_POINTS = 4096; // 64x64 points total
 
 const Renderer = struct {
@@ -683,7 +683,7 @@ const Renderer = struct {
                 camera_offset: u64,
                 heightmap_offset: u64,
             }),
-            .cull_mode = vk.CULL_MODE_NONE, // Set cull mode to none
+            .cull_mode = vk.CULL_MODE_BACK_BIT, // Set cull mode to none
             .depth_write_enable = true,
             .depth_test_enable = true,
         }) catch |err| {
@@ -792,7 +792,7 @@ const Renderer = struct {
 
         // Create the compute pipeline with the subgroup size as the local workgroup size
         _ = renderer.pipeline.createComputePipeline("generate_mesh", .{
-            .shader = .{ .path = "src/gfx/src/vk/080_greedy_mesh.glsl", .shader_type = .Compute },
+            .shader = .{ .path = "src/gfx/src/vk/080_generate_mesh.glsl", .shader_type = .Compute },
             .push_constant_size = @sizeOf(struct {
                 heap_address: u64,
                 region_offset: u64,
@@ -1083,18 +1083,11 @@ const Renderer = struct {
 
         // Allocate palette offsets array (512 u64s)
         logger.info("Allocating palette offsets array...", .{});
-        const PALETTE_OFFSETS_SIZE = 512 * @sizeOf(u64);
-        renderer.palette_offsets_allocation = renderer.allocator.alloc(PALETTE_OFFSETS_SIZE) catch |err| {
-            logger.err("Failed to allocate palette offsets: {s}", .{@errorName(err)});
-            return null;
-        };
-        logger.info("Palette offsets allocation successful at offset: {}", .{renderer.palette_offsets_allocation.heap_offset});
-
         const heightmap_allocation = renderer.allocator.alloc(@sizeOf(u64) * HEIGHTMAP_POINTS_PER_CHUNK * 3) catch |err| {
             logger.err("Failed to allocate heightmap: {s}", .{@errorName(err)});
             return null;
         };
-        const mesh_allocation = renderer.allocator.alloc(@sizeOf(u64) * 10000000 * 8) catch |err| {
+        const mesh_allocation = renderer.allocator.alloc(@sizeOf(u64) * 1_000_000 * 7) catch |err| {
             logger.err("Failed to allocate mesh: {s}", .{@errorName(err)});
             return null;
         };
@@ -1737,6 +1730,21 @@ pub export fn render(handle: ?*PlatformRenderer) void {
     logger.info("Frame index: {}, count: {}", .{ activeFrame.index, activeFrame.count });
 }
 
+pub export fn hotReload(handle: ?*PlatformRenderer) void {
+    if (handle == null) return;
+
+    var renderer = platformRenderers.get(handle.?.*) orelse {
+        return;
+    };
+
+    if (renderer.pipeline.checkForChanges() catch |err| {
+        logger.err("Failed to check for pipeline changes: {s}", .{@errorName(err)});
+        return;
+    }) {
+        logger.info("Pipeline changes detected, reloading...", .{});
+    }
+}
+
 pub export fn setCamera(handle: ?*include.render.Renderer, camera: *const include.render.Camera) void {
     if (handle == null) return;
 
@@ -2017,6 +2025,11 @@ const greedyMeshPassFn = struct {
     fn execute(passCtx: PassContext) void {
         const taskRenderer = @as(*Renderer, @ptrCast(@alignCast(passCtx.userData)));
         logger.info("Executing greedy mesh pass...", .{});
+
+        if (taskRenderer.generated) {
+            logger.info("Greedy mesh pass already generated, skipping", .{});
+            return;
+        }
 
         // Clear the face tracking buffer before processing
         const FACE_TRACKING_SIZE = 3 * 4096 * @sizeOf(u64);

@@ -148,7 +148,7 @@ void main() {
     debugPrintfEXT("Height: %f", height);
     
     // Create world position with proper transformation - Z is up
-    vec4 worldPos = vec4(worldX, worldY, height, 1.0);  // X, Y for ground plane, Z for height
+    vec4 worldPos = vec4(worldX, worldY, 0.0, 1.0);  // X, Y for ground plane, Z for height
     gl_Position = cameraData.viewProjection * worldPos;
     
     // Debug coloring based on position and height

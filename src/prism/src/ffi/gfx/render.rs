@@ -31,6 +31,7 @@ unsafe extern "C" {
     pub fn shutdown(renderer: *mut Renderer);
     pub fn supportsMultiple() -> bool;
 
+    pub fn hotReload(renderer: *mut Renderer);
     // Camera control
     pub fn setCamera(renderer: *mut Renderer, camera: *const Camera);
     pub fn setSettings(renderer: *mut Renderer, settings: *const RenderSettings);

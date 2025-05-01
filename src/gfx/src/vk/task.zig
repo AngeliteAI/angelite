@@ -205,24 +205,24 @@ pub const Resource = struct {
 };
 
 fn pass_submit_execute(ctx: PassContext) void {
-    std.debug.print("[TASK] === SUBMIT PASS - CRITICAL SYNC POINT ===\n", .{});
-    std.debug.print("[TASK] Command buffer: {any}\n", .{ctx.cmd});
-    std.debug.print("[TASK] Queue: {any}\n", .{ctx.queue});
-    std.debug.print("[TASK] In-flight fence: {any}\n", .{ctx.in_flight_fence});
-    std.debug.print("[TASK] Image available semaphore: {any}\n", .{ctx.image_available_semaphore});
-    std.debug.print("[TASK] Render finished semaphore: {any}\n", .{ctx.render_finished_semaphore});
+    logger.info("[TASK] === SUBMIT PASS - CRITICAL SYNC POINT ===", .{});
+    logger.info("[TASK] Command buffer: {any}", .{ctx.cmd});
+    logger.info("[TASK] Queue: {any}", .{ctx.queue});
+    logger.info("[TASK] In-flight fence: {any}", .{ctx.in_flight_fence});
+    logger.info("[TASK] Image available semaphore: {any}", .{ctx.image_available_semaphore});
+    logger.info("[TASK] Render finished semaphore: {any}", .{ctx.render_finished_semaphore});
 
     // Check if any handles are null
     if (ctx.cmd == null) {
-        std.debug.print("[TASK] ERROR: Command buffer is null!\n", .{});
+        logger.err("[TASK] Command buffer is null!", .{});
         return;
     }
     if (ctx.queue == null) {
-        std.debug.print("[TASK] ERROR: Queue is null!\n", .{});
+        logger.err("[TASK] Queue is null!", .{});
         return;
     }
     if (ctx.in_flight_fence == null) {
-        std.debug.print("[TASK] ERROR: In-flight fence is null!\n", .{});
+        logger.err("[TASK] In-flight fence is null!", .{});
     }
 
     // Submit the queue
@@ -239,22 +239,22 @@ fn pass_submit_execute(ctx: PassContext) void {
         .pSignalSemaphores = &ctx.render_finished_semaphore,
     };
 
-    std.debug.print("[TASK] SUBMITTING COMMAND BUFFER - Waiting on semaphore {any}, signaling semaphore {any}\n", .{ ctx.image_available_semaphore, ctx.render_finished_semaphore });
+    logger.info("[TASK] SUBMITTING COMMAND BUFFER - Waiting on semaphore {any}, signaling semaphore {any}", .{ ctx.image_available_semaphore, ctx.render_finished_semaphore });
 
     const result = vk.queueSubmit(ctx.queue, 1, &submitInfo, ctx.in_flight_fence);
     if (result != vk.SUCCESS) {
-        std.debug.print("[TASK] ERROR: Queue submission failed with result: {any}\n", .{result});
+        logger.err("[TASK] Queue submission failed with result: {any}", .{result});
 
         // Try to get more info about the error
         if (result == vk.ERROR_DEVICE_LOST) {
-            std.debug.print("[TASK] CRITICAL ERROR: Device lost during submission!\n", .{});
+            logger.critical("[TASK] CRITICAL ERROR: Device lost during submission!", .{});
         } else if (result == vk.ERROR_OUT_OF_HOST_MEMORY) {
-            std.debug.print("[TASK] ERROR: Out of host memory\n", .{});
+            logger.err("[TASK] Out of host memory", .{});
         } else if (result == vk.ERROR_OUT_OF_DEVICE_MEMORY) {
-            std.debug.print("[TASK] ERROR: Out of device memory\n", .{});
+            logger.err("[TASK] Out of device memory", .{});
         }
     } else {
-        std.debug.print("[TASK] Queue submission SUCCESSFUL - command buffer {any} submitted with fence {any}\n", .{ ctx.cmd, ctx.in_flight_fence });
+        logger.info("[TASK] Queue submission SUCCESSFUL - command buffer {any} submitted with fence {any}", .{ ctx.cmd, ctx.in_flight_fence });
     }
 }
 
@@ -557,24 +557,24 @@ pub const Graph = struct {
             activePassContext.userData = activePass.userData;
 
             if (activePass.cmd) {
-                std.debug.print("[TASK] ==== STARTING PASS EXECUTION: {s} ====\n", .{activePass.name});
-                std.debug.print("[TASK] Command buffer: {any}\n", .{activePassContext.cmd});
-                std.debug.print("[TASK] Using pass-specific userData: {any}\n", .{activePassContext.userData});
+                logger.debug("[TASK] ==== STARTING PASS EXECUTION: {s} ====", .{activePass.name});
+                logger.debug("[TASK] Command buffer: {any}", .{activePassContext.cmd});
+                logger.debug("[TASK] Using pass-specific userData: {any}", .{activePassContext.userData});
 
                 if (std.mem.eql(u8, activePass.name, "CameraUpdate")) {
-                    std.debug.print("[TASK] CAMERA PASS EXECUTION - detailed debugging\n", .{});
-                    std.debug.print("[TASK] Camera pass inputs: {d}, outputs: {d}\n", .{ activePass.inputs.items.len, activePass.outputs.items.len });
+                    logger.debug("[TASK] CAMERA PASS EXECUTION - detailed debugging", .{});
+                    logger.debug("[TASK] Camera pass inputs: {d}, outputs: {d}", .{ activePass.inputs.items.len, activePass.outputs.items.len });
 
                     if (activePass.userData != null) {
-                        std.debug.print("[TASK] Camera pass userData is {any}\n", .{activePass.userData});
+                        logger.debug("[TASK] Camera pass userData is {any}", .{activePass.userData});
                     } else {
-                        std.debug.print("[TASK] WARNING: Camera pass userData is NULL!\n", .{});
+                        logger.warn("[TASK] WARNING: Camera pass userData is NULL!", .{});
                     }
                 }
 
                 logger.debug("[TASK] Executing command-based pass: {s}", .{activePass.name});
                 activeExecute(activePassContext);
-                std.debug.print("[TASK] ==== COMPLETED PASS EXECUTION: {s} ====\n", .{activePass.name});
+                logger.debug("[TASK] ==== COMPLETED PASS EXECUTION: {s} ====", .{activePass.name});
             } else {
                 logger.debug("[TASK] Deferring non-command pass: {s}", .{activePass.name});
 
