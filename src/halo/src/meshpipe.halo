@@ -1,0 +1,28 @@
+fn faceMask(*mask, backface)
+	//expressions as first class citizens like functions
+	mask.* = @column & ~if backface 
+		@column << 1
+	else
+		@column >> 1
+
+//! means error, ? means nil/null. not actually used in this example
+fn main()
+	const data = @push()
+	const uv = @global().id.xy
+	const axis = @workGroup().id.z
+	const backface = axis % 2 == 0
+	//Svelte like rune stores in @global for later
+	const @column = data.region.*.bitmap.*.data[axis][@flatten(uv, 64)]
+
+	var mask = undefined 
+
+	faceMask(&mask, backface)
+
+	//I do not know if this is possible in SPIRV so it might have to be changed
+	var quad = @emitter(data.region.faceCount, Quad)
+
+	while mask != 0 : mask &= ~(1 << primary)
+		const primary = @findLSB(mask)
+		quad.position.z = primary
+		//special functor syntax for emitting
+		quad() 

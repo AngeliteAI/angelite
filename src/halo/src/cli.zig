@@ -5,7 +5,8 @@ const parse = parser.parse;
 const Expression = parser.Expression;
 
 /// Recursively prints an AST node with proper indentation
-fn printAstNode(node: *const Expression, depth: usize, is_last: bool, prefix: []const u8) void {
+fn printAstNode(nodeExpr: *const Expression, depth: usize, is_last: bool, prefix: []const u8) void {
+    const node = &nodeExpr.data;
     // Print the current line's prefix
     std.debug.print("{s}", .{prefix});
 
@@ -103,6 +104,18 @@ fn printAstNode(node: *const Expression, depth: usize, is_last: bool, prefix: []
         },
         .PointerMember => |pm| {
             std.debug.print(": .*{s}", .{pm.member});
+        },
+        .PointerDeref => |_| {
+            std.debug.print(": .* (pointer dereference)", .{});
+        },
+        .Var => |v| {
+            std.debug.print(": {s}", .{v.identifier});
+        },
+        .Decl => |d| {
+            std.debug.print(": {s}", .{d.identifier});
+        },
+        .Const => |c| {
+            std.debug.print(": {s}", .{c.identifier});
         },
     }
     std.debug.print("\n", .{});
@@ -216,6 +229,19 @@ fn printAstNode(node: *const Expression, depth: usize, is_last: bool, prefix: []
         .PointerMember => |pm| {
             // Print the object expression that we're dereferencing and accessing
             printAstNode(pm.object, depth + 1, true, new_prefix);
+        },
+        .PointerDeref => |pd| {
+            // Print the object expression that we're dereferencing
+            printAstNode(pd.ptr, depth + 1, true, new_prefix);
+        },
+        .Var => |v| {
+            printAstNode(v.value, depth + 1, true, new_prefix);
+        },
+        .Decl => |d| {
+            printAstNode(d.value, depth + 1, true, new_prefix);
+        },
+        .Const => |c| {
+            printAstNode(c.value, depth + 1, true, new_prefix);
         },
         else => {},
     }

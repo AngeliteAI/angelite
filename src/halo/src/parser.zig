@@ -22,7 +22,48 @@ pub const GlobalType = enum {
     Call,
 };
 
-pub const Expression = union(enum) {
+// Define the Var struct for mutable variables
+pub const Var = struct {
+    identifier: []const u8,
+    value: *Expression,
+};
+
+// Define the Decl struct for declarations
+pub const Decl = struct {
+    identifier: []const u8,
+    value: *Expression,
+};
+
+// Define the Const struct for constant variables
+pub const Const = struct {
+    identifier: []const u8,
+    value: *Expression,
+};
+
+pub const Expression = struct {
+    data: ExpressionData,
+    ref_count: usize,
+    pub fn init(data: ExpressionData) Expression {
+        return Expression{
+            .data = data,
+            .ref_count = 1,
+        };
+    }
+
+    pub fn addRef(self: *Expression) void {
+        self.ref_count += 1;
+    }
+
+    pub fn deinit(self: *Expression, allocator: std.mem.Allocator) void {
+        self.ref_count -= 1;
+        if (self.ref_count == 0) {
+            self.deinit(allocator);
+            allocator.destroy(self);
+        }
+    }
+};
+
+pub const ExpressionData = union(enum) {
     Literal: Value,
     Variable: *Variable,
     Operator: Operator,
@@ -43,7 +84,11 @@ pub const Expression = union(enum) {
     CompoundAssign: *CompoundAssign, // Add new variant for compound assignments
     Binary: *Binary, // Added for generic binary ops
     Unary: *Unary, // Added for unary ops
-    PointerMember: *PointerMember, // Added for ptr.* syntax (equivalent to -> in C)
+    PointerMember: *PointerMember, // Added for ptr.* member syntax (equivalent to -> in C)
+    PointerDeref: *PointerDeref, // New: simple pointer dereference (ptr.*)
+    Var: *Var, // Mutable variable expression
+    Decl: *Decl, // Declaration expression
+    Const: *Const, // Constant variable expression
 
     pub fn deinit(self: *Expression, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -53,10 +98,7 @@ pub const Expression = union(enum) {
                     allocator.free(val.string);
                 }
             },
-            .Variable => |v| {
-                allocator.free(v.identifier);
-                allocator.destroy(v);
-            },
+
             .Operator => {}, // No allocation needed
             .Logical => |l| {
                 l.left.deinit(allocator);
@@ -131,28 +173,26 @@ pub const Expression = union(enum) {
                 }
                 allocator.destroy(f);
             },
+            .Variable => |v| {
+                if (v.identifier.len > 0) { // Only free if not empty
+                    allocator.free(v.identifier);
+                }
+                allocator.destroy(v);
+            },
             .Global => |g| {
                 switch (g.type) {
-                    .Const, .Var => {
-                        allocator.free(g.identifier);
-                        if (g.value) |val| {
-                            val.deinit(allocator);
+                    .Const, .Var, .Fn, .Reference => {
+                        if (g.identifier.len > 0) { // Only free if not empty
+                            allocator.free(g.identifier);
                         }
-                    },
-                    .Fn => {
-                        allocator.free(g.identifier);
-                        if (g.value) |val| {
-                            val.deinit(allocator);
-                        }
-                    },
-                    .Reference => {
-                        allocator.free(g.identifier);
                         if (g.value) |val| {
                             val.deinit(allocator);
                         }
                     },
                     .Call => {
-                        allocator.free(g.identifier);
+                        if (g.identifier.len > 0) { // Only free if not empty
+                            allocator.free(g.identifier);
+                        }
                         if (g.arguments) |args| {
                             for (args.items) |arg| {
                                 arg.deinit(allocator);
@@ -200,6 +240,25 @@ pub const Expression = union(enum) {
                 pm.object.deinit(allocator);
                 allocator.free(pm.member);
                 allocator.destroy(pm);
+            },
+            .PointerDeref => |pd| {
+                pd.ptr.deinit(allocator);
+                allocator.destroy(pd);
+            },
+            .Var => |v| {
+                allocator.free(v.identifier);
+                v.value.deinit(allocator);
+                allocator.destroy(v);
+            },
+            .Decl => |d| {
+                allocator.free(d.identifier);
+                d.value.deinit(allocator);
+                allocator.destroy(d);
+            },
+            .Const => |c| {
+                allocator.free(c.identifier);
+                c.value.deinit(allocator);
+                allocator.destroy(c);
             },
         }
         allocator.destroy(self);
@@ -335,6 +394,11 @@ pub const PointerMember = struct {
     member: []const u8, // The member name
 };
 
+// Define the PointerDeref struct for simple pointer dereference (ptr.*)
+pub const PointerDeref = struct {
+    ptr: *Expression, // The pointer expression
+};
+
 const ParseError = error{
     UnexpectedToken,
     UnterminatedExpression,
@@ -385,13 +449,13 @@ const ExpressionHeap = struct {
 
     // Create a special marker for parentheses
     pub fn createParenMarker(self: *ExpressionHeap) !usize {
-        return try self.allocate(Expression{ .Literal = Value{ .unit = {} } });
+        return try self.allocate(Expression.init(.{ .Literal = Value{ .unit = {} } }));
     }
 
     // Check if an expression is a parenthesis marker
     pub fn isParenMarker(self: *ExpressionHeap, handle: usize) bool {
         if (self.get(handle)) |expr| {
-            return expr.* == .Literal and expr.Literal == .unit;
+            return expr.*.data == .Literal and expr.*.data.Literal == .unit;
         }
         return false;
     }
@@ -422,6 +486,7 @@ const ParserState = struct {
     expressionHeap: ExpressionHeap, // The heap for managing expressions
     indentationLevel: usize,
     in_if_context: bool = false,
+    in_inline_if: bool = false,
     if_indent_level: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, tokens: []const Token) std.mem.Allocator.Error!ParserState {
@@ -514,6 +579,28 @@ const ParserState = struct {
 
     pub fn processWhitespace(self: *ParserState) !void {
         debug("processWhitespace: Starting at index {d}, current indentationLevel: {d}\n", .{ self.index, self.indentationLevel });
+
+        // Add a safety check to prevent infinite recursion
+        // This helps avoid loops when processing operators and identifiers
+        if (self.index < self.tokens.len) {
+            const curr = self.tokens[self.index];
+            const should_skip = switch (curr) {
+                .operator => |op| op == .@"=" or
+                    op == .@"*" or
+                    op == .@"&" or
+                    op == .@"~" or
+                    op == .@"!",
+                .punctuation => |p| p == .@"[" or p == .@"]", // Skip array indexing brackets
+                .identifier => true, // Skip whitespace processing for identifiers to prevent loops
+                else => false,
+            };
+
+            if (should_skip) {
+                debug("processWhitespace: Skipping whitespace processing for token {any} to prevent loop\n", .{curr});
+                return;
+            }
+        }
+
         var newlineFound = false;
         var indentCount: usize = 0;
         var whitespace_count: usize = 0;
@@ -608,8 +695,16 @@ const ParserState = struct {
                 self.indentationLevel = indentCount;
             } else if (indentCount > self.indentationLevel + 1) {
                 // Check if the previous token was 'else' - if so, be more lenient
-                var prev_token_was_else = false;
-                if (self.index > 0) {
+                var should_allow_indent_jump = false;
+
+                // Special handling for indentation at level 0
+                if (self.indentationLevel == 0) {
+                    // At the root level, we can be more permissive with indentation jumps
+                    should_allow_indent_jump = true;
+                    debug("processWhitespace: At root level, allowing larger indent jump from 0 to {d}\n", .{indentCount});
+                }
+
+                if (self.index > 0 and !should_allow_indent_jump) {
                     var look_back = self.index - 1;
                     // Skip any whitespace when looking backwards
                     while (look_back > 0) {
@@ -619,15 +714,17 @@ const ParserState = struct {
                             continue;
                         }
                         // Check if it's an else token
-                        prev_token_was_else = (prev == .keyword and prev.keyword == .@"else");
-                        debug("processWhitespace: Looking back found token: {any}, is_else: {}\n", .{ prev, prev_token_was_else });
+                        if (prev == .keyword and prev.keyword == .@"else") {
+                            should_allow_indent_jump = true;
+                        }
+                        debug("processWhitespace: Looking back found token: {any}, allowing jump: {}\n", .{ prev, should_allow_indent_jump });
                         break;
                     }
                 }
 
-                if (prev_token_was_else) {
-                    // Special case: Allow bigger indentation jumps after 'else'
-                    debug("processWhitespace: Allowing indentation jump after 'else': {d} -> {d}\n", .{ self.indentationLevel, indentCount });
+                if (should_allow_indent_jump) {
+                    // Special case: Allow bigger indentation jumps after 'else' or at root level
+                    debug("processWhitespace: Allowing indentation jump from {d} -> {d}\n", .{ self.indentationLevel, indentCount });
                     self.indentationLevel = indentCount;
                 } else {
                     debug("processWhitespace: Error - Indent jumped more than one level: {d} -> {d}\n", .{ self.indentationLevel, indentCount });
@@ -677,91 +774,25 @@ fn parseGlobalExpression(state: *ParserState) ParserError!*Expression {
     debug("parseGlobalExpression: Starting\n", .{});
 
     // Consume the @ symbol
-    try parseOperator(state, .@"@");
+    if (state.currentToken()) |token| {
+        if (token == .operator and token.operator == .@"@") {
+            _ = state.nextToken(); // consume the @ operator
+        } else {
+            debug("parseGlobalExpression: Error - Expected @ operator, got {any}\n", .{token});
+            return ParseError.UnexpectedToken;
+        }
+    } else {
+        debug("parseGlobalExpression: Error - Unexpected end of tokens\n", .{});
+        return ParseError.UnexpectedToken;
+    }
+
     try state.processWhitespace();
 
-    // Get the identifier or keyword after @
+    // Get the identifier after @
     if (state.currentToken()) |token| {
         debug("parseGlobalExpression: Processing token after @: {any}\n", .{token});
 
         switch (token) {
-            .keyword => |kw| {
-                // ... existing keyword handling (@const, @var, @fn) ...
-                // This part seems okay
-                debug("parseGlobalExpression: Found keyword: {any}\n", .{kw});
-                switch (kw) {
-                    .@"const" => {
-                        try parseKeyword(state, .@"const");
-                        try state.processWhitespace();
-                        const ident = try parseIdentifier(state);
-                        errdefer state.allocator.free(ident);
-                        try state.processWhitespace();
-                        var value: ?*Expression = null;
-                        if (state.currentToken()) |eq_token| {
-                            if (eq_token == .operator and eq_token.operator == .@"=") {
-                                try parseOperator(state, .@"=");
-                                try state.processWhitespace();
-                                value = try parseExpression(state);
-                            }
-                        }
-                        const global = try state.allocator.create(Global);
-                        global.* = Global{
-                            .type = .Const,
-                            .identifier = ident,
-                            .value = value,
-                        };
-                        const result = try state.allocator.create(Expression);
-                        result.* = Expression{ .Global = global };
-                        return result;
-                    },
-                    .@"var" => {
-                        try parseKeyword(state, .@"var");
-                        try state.processWhitespace();
-                        const ident = try parseIdentifier(state);
-                        errdefer state.allocator.free(ident);
-                        try state.processWhitespace();
-                        var value: ?*Expression = null;
-                        if (state.currentToken()) |eq_token| {
-                            if (eq_token == .operator and eq_token.operator == .@"=") {
-                                try parseOperator(state, .@"=");
-                                try state.processWhitespace();
-                                value = try parseExpression(state);
-                            }
-                        }
-                        const global = try state.allocator.create(Global);
-                        global.* = Global{
-                            .type = .Var,
-                            .identifier = ident,
-                            .value = value,
-                        };
-                        const result = try state.allocator.create(Expression);
-                        result.* = Expression{ .Global = global };
-                        return result;
-                    },
-                    .@"fn" => {
-                        // Consume fn keyword handled by parseFunctionExpression
-                        const func_expr = try parseFunctionExpression(state);
-
-                        // Extract function details
-                        if (func_expr.* != .Function) return ParseError.UnexpectedToken;
-                        const func = func_expr.Function;
-
-                        // Create global function
-                        const global = try state.allocator.create(Global);
-                        // Dupe identifier since func_expr owns its identifier
-                        global.* = Global{
-                            .type = .Fn,
-                            .identifier = try state.allocator.dupe(u8, func.identifier),
-                            .value = func_expr,
-                        };
-
-                        const result = try state.allocator.create(Expression);
-                        result.* = Expression{ .Global = global };
-                        return result;
-                    },
-                    else => return ParseError.UnexpectedToken,
-                }
-            },
             .identifier => |_| { // Use underscore for unused capture
                 var ident_ptr: ?[]const u8 = null; // Use a pointer to manage ownership
                 errdefer if (ident_ptr) |ptr| state.allocator.free(ptr); // Free if not transferred
@@ -790,19 +821,44 @@ fn parseGlobalExpression(state: *ParserState) ParserError!*Expression {
                         };
 
                         const result = try state.allocator.create(Expression);
-                        result.* = Expression{ .Global = global };
+                        result.* = Expression.init(ExpressionData{ .Global = global });
+
+                        // Mark identifier as transferred
+                        ident_ptr = null;
+
+                        // Check for chained dot operators after the function call
+                        try state.processWhitespace();
+                        if (state.currentToken()) |dot_token| {
+                            if (dot_token == .operator and dot_token.operator == .@".") {
+                                debug("parseGlobalExpression: Found dot operator after global call, parsing member access\n", .{});
+                                return parseDotChain(state, result);
+                            }
+                        }
+
+                        return result;
+                    } else if (next_token == .operator and next_token.operator == .@"=") {
+                        // Global variable assignment (e.g., @myVar = 10)
+                        debug("parseGlobalExpression: Detected assignment to global '{s}'\n", .{ident});
+                        try parseOperator(state, .@"=");
+                        try state.processWhitespace();
+
+                        // Parse the value expression
+                        const value = try parseExpression(state);
+
+                        // Create a global var with the assignment
+                        const global = try state.allocator.create(Global);
+                        global.* = Global{
+                            .type = .Var, // Default to Var type for direct assignments
+                            .identifier = ident, // Ownership moves here
+                            .value = value,
+                        };
+
+                        const result = try state.allocator.create(Expression);
+                        result.* = Expression.init(ExpressionData{ .Global = global });
 
                         // Mark identifier as transferred
                         ident_ptr = null;
                         return result;
-                    } else if (next_token == .operator and next_token.operator == .@"=") {
-                        // Global variable assignment (e.g., @myVar = 10)
-                        // This syntax might be ambiguous or unintended?
-                        // For now, let's assume assignment is handled by @var or @const
-                        // If direct assignment like @ident = value is needed, handle it here.
-                        // Let's treat @identifier = ... as an error for now unless specified.
-                        debug("parseGlobalExpression: Error - Direct assignment to @identifier not supported use @var or @const\n", .{});
-                        return ParseError.InvalidSyntax;
                     }
                 }
 
@@ -817,10 +873,20 @@ fn parseGlobalExpression(state: *ParserState) ParserError!*Expression {
                 };
 
                 const result = try state.allocator.create(Expression);
-                result.* = Expression{ .Global = global };
+                result.* = Expression.init(ExpressionData{ .Global = global });
 
                 // Mark identifier as transferred
                 ident_ptr = null;
+
+                // Check for chained dot operators after the reference
+                try state.processWhitespace();
+                if (state.currentToken()) |dot_token| {
+                    if (dot_token == .operator and dot_token.operator == .@".") {
+                        debug("parseGlobalExpression: Found dot operator after global reference, parsing member access\n", .{});
+                        return parseDotChain(state, result);
+                    }
+                }
+
                 return result;
             },
             .space, .newline, .indent => {
@@ -842,6 +908,68 @@ fn parseGlobalExpression(state: *ParserState) ParserError!*Expression {
         debug("parseGlobalExpression: Error - Missing token after @\n", .{});
         return ParseError.UnexpectedToken;
     }
+}
+
+// Add a helper function to parse chains of dot operators
+fn parseDotChain(state: *ParserState, left_expr: *Expression) ParserError!*Expression {
+    debug("parseDotChain: Starting with left expression\n", .{});
+
+    var current_expr = left_expr;
+
+    while (state.currentToken()) |token| {
+        if (token == .operator and token.operator == .@".") {
+            _ = state.nextToken(); // Consume the dot
+            try state.processWhitespace();
+
+            // Check for * (pointer dereference)
+            if (state.currentToken()) |maybe_star| {
+                if (maybe_star == .operator and maybe_star.operator == .@"*") {
+                    debug("parseDotChain: Found pointer dereference (.* operator)\n", .{});
+                    _ = state.nextToken(); // Consume the *
+
+                    // Create pointer dereference expression
+                    const ptr_deref = try state.allocator.create(PointerDeref);
+                    ptr_deref.* = PointerDeref{
+                        .ptr = current_expr,
+                    };
+
+                    const result = try state.allocator.create(Expression);
+                    result.* = Expression.init(ExpressionData{ .PointerDeref = ptr_deref });
+                    current_expr = result;
+
+                    try state.processWhitespace();
+                    continue;
+                }
+            }
+
+            // Parse the member name (identifier)
+            if (state.currentToken() == null or state.currentToken().? != .identifier) {
+                debug("parseDotChain: Error - Expected identifier after dot\n", .{});
+                return ParseError.ExpectedIdentifier;
+            }
+
+            const member_name = try parseIdentifier(state);
+            debug("parseDotChain: Parsed member name: '{s}'\n", .{member_name});
+
+            // Create property expression
+            const property = try state.allocator.create(Property);
+            property.* = Property{
+                .key = member_name,
+                .value = current_expr,
+            };
+
+            const result = try state.allocator.create(Expression);
+            result.* = Expression.init(ExpressionData{ .Property = property });
+            current_expr = result;
+
+            try state.processWhitespace();
+        } else {
+            // Not a dot, end of the chain
+            break;
+        }
+    }
+
+    return current_expr;
 }
 
 // Helper function to parse a function expression
@@ -925,16 +1053,63 @@ fn parseFunctionExpression(state: *ParserState) ParserError!*Expression {
     try state.processWhitespace();
     debug("parseFunctionExpression: Parsing body for function '{s}'\n", .{func_name});
 
-    // Use a fresh state for the body to avoid any state issues
-    var body_state = try ParserState.init(state.allocator, state.tokens[state.index..]);
-    defer body_state.deinit();
-    body_state.indentationLevel = state.indentationLevel;
+    // Use a block expression to represent the function body if there are multiple expressions
+    var body_exprs = std.ArrayList(*Expression).init(state.allocator);
+    errdefer {
+        for (body_exprs.items) |expr| {
+            expr.deinit(state.allocator);
+        }
+        body_exprs.deinit();
+    }
 
-    const body = try parseExpression(&body_state);
-    errdefer body.deinit(state.allocator);
+    const starting_indent = state.indentationLevel;
+    debug("parseFunctionExpression: Starting indent level for body: {d}\n", .{starting_indent});
 
-    // Update the original state's index
-    state.index += body_state.index;
+    // Parse multiple expressions in the function body
+    while (state.currentToken() != null) {
+        try state.processWhitespace();
+
+        // If we've decreased indentation below the function's indent level, we're done with the body
+        if (state.indentationLevel < starting_indent or state.currentToken() == null) {
+            debug("parseFunctionExpression: End of function body - indentation dropped to {d}\n", .{state.indentationLevel});
+            break;
+        }
+
+        // Parse the next expression in the body
+        debug("parseFunctionExpression: Parsing body expression at indent {d}, token: {any}\n", .{ state.indentationLevel, state.currentToken() });
+
+        const expr = try parseExpression(state);
+        try body_exprs.append(expr);
+
+        debug("parseFunctionExpression: Parsed body expression, now at index {d}\n", .{state.index});
+        try state.processWhitespace();
+    }
+
+    debug("parseFunctionExpression: Parsed {d} expressions in body\n", .{body_exprs.items.len});
+
+    // Create a block for the function body if there are multiple expressions
+    var body: *Expression = undefined;
+    if (body_exprs.items.len > 1) {
+        const block = try state.allocator.create(Block);
+        block.* = Block{
+            .body = body_exprs,
+        };
+
+        body = try state.allocator.create(Expression);
+        body.* = Expression.init(ExpressionData{ .Block = block });
+        debug("parseFunctionExpression: Created Block with {d} expressions for function body\n", .{body_exprs.items.len});
+    } else if (body_exprs.items.len == 1) {
+        // Just use the single expression directly
+        body = body_exprs.items[0];
+        // Don't deinit the ArrayList since we're keeping the item
+        body_exprs.deinit();
+        debug("parseFunctionExpression: Using single expression for function body\n", .{});
+    } else {
+        // Empty function body - use unit value
+        body = try createLiteralExpression(state, Value{ .unit = {} });
+        body_exprs.deinit();
+        debug("parseFunctionExpression: Using unit value for empty function body\n", .{});
+    }
 
     debug("parseFunctionExpression: Successfully parsed body for function '{s}'\n", .{func_name});
 
@@ -948,7 +1123,7 @@ fn parseFunctionExpression(state: *ParserState) ParserError!*Expression {
     debug("parseFunctionExpression: Created function node for '{s}'\n", .{func_name});
 
     const result = try state.allocator.create(Expression);
-    result.* = Expression{ .Function = function };
+    result.* = Expression.init(ExpressionData{ .Function = function });
     debug("parseFunctionExpression: Returning function expression for '{s}'\n", .{func_name});
 
     return result;
@@ -978,6 +1153,98 @@ fn parseExpression(state: *ParserState) ParserError!*Expression {
     const starting_token = state.currentToken();
     debug("parseExpression: Starting with token: {any}\n", .{starting_token});
 
+    // Special handling for 'else' keywords that appear outside of if-context
+    if (starting_token) |token| {
+        if (token == .keyword and token.keyword == .@"else" and !state.in_if_context) {
+            debug("parseExpression: Found 'else' keyword outside of if-context, skipping\n", .{});
+            _ = state.nextToken(); // Skip the else keyword
+
+            // Return a unit value since we can't meaningfully process 'else' here
+            return createLiteralExpression(state, Value{ .unit = {} });
+        }
+
+        // Special case for combinations like bitwise NOT (~) followed by if
+        if (token == .operator and (token.operator == .@"~" or token.operator == .@"&") and
+            state.index + 1 < state.tokens.len)
+        {
+            const op = token.operator;
+            const next_token = state.tokens[state.index + 1];
+
+            if (next_token == .keyword and next_token.keyword == .@"if") {
+                debug("parseExpression: Found bitwise operator followed by if, special handling\n", .{});
+
+                // Consume the unary operator
+                _ = state.nextToken();
+                try state.processWhitespace();
+
+                // Parse the if expression
+                const if_expr = try parseIfExpression(state);
+
+                // Wrap it in a unary operation
+                const unary = try state.allocator.create(Unary);
+                unary.* = Unary{
+                    .op = op,
+                    .operand = if_expr,
+                };
+
+                const result = try state.allocator.create(Expression);
+                result.* = Expression.init(ExpressionData{ .Unary = unary });
+                return result;
+            }
+        }
+    }
+
+    // Try to match pointer dereferencing pattern first by looking ahead
+    // This is an optimization to avoid double parsing
+    if (state.index + 2 < state.tokens.len) {
+        // Look for identifier followed by dot-star pattern
+        if (state.tokens[state.index] == .identifier) {
+            var dot_index: ?usize = null;
+            var star_index: ?usize = null;
+
+            // Look ahead for . and then *
+            var i = state.index + 1;
+            var looking_for_dot = true;
+            var whitespace_ok = true;
+
+            while (i < state.tokens.len) {
+                const peek_token = state.tokens[i];
+
+                // Skip whitespace
+                if (peek_token == .space or peek_token == .newline or
+                    peek_token == .indent or peek_token == .comment)
+                {
+                    i += 1;
+                    continue;
+                }
+
+                if (looking_for_dot) {
+                    if (peek_token == .operator and peek_token.operator == .@".") {
+                        dot_index = i;
+                        looking_for_dot = false;
+                        whitespace_ok = true;
+                        i += 1;
+                        continue;
+                    } else {
+                        // Not a pointer operation
+                        break;
+                    }
+                } else {
+                    // Looking for *
+                    if (peek_token == .operator and peek_token.operator == .@"*") {
+                        star_index = i;
+                        // Found the pattern
+                        debug("parseExpression: Found potential .* pattern at dot_index={?}, star_index={?}\n", .{ dot_index, star_index });
+                        return parsePointerExpression(state);
+                    } else {
+                        // Not a pointer operation
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // Handle prefix unary operators so "~if" or "&if" etc works
     if (state.currentToken()) |tok| {
         if (tok == .operator and (tok.operator == .@"-" or tok.operator == .@"!" or tok.operator == .@"~" or tok.operator == .@"&" or tok.operator == .@"*")) {
@@ -1000,7 +1267,7 @@ fn parseExpression(state: *ParserState) ParserError!*Expression {
             const unary_node = try state.allocator.create(Unary);
             unary_node.* = Unary{ .op = op, .operand = operand };
             const result = try state.allocator.create(Expression);
-            result.* = Expression{ .Unary = unary_node };
+            result.* = Expression.init(ExpressionData{ .Unary = unary_node });
             return result;
         }
     }
@@ -1011,10 +1278,15 @@ fn parseExpression(state: *ParserState) ParserError!*Expression {
             // START Restored block
             switch (token.keyword) {
                 .@"if" => return parseIfExpression(state),
-                .@"while" => return parseWhileExpression(state),
+                .@"while" => {
+                    debug("parseExpression: Parsing while expression\n", .{});
+                    return parseWhileExpression(state);
+                },
                 .@"for" => return parseForExpression(state),
                 .@"return", .@"break", .@"continue", .@"defer" => return parseFlowExpression(state),
                 .@"fn" => return parseFunctionExpression(state),
+                .@"const" => return parseConstExpression(state),
+                .@"var" => return parseVarExpression(state),
                 .true => {
                     try parseKeyword(state, .true);
                     return createLiteralExpression(state, Value{ .boolean = true });
@@ -1029,8 +1301,28 @@ fn parseExpression(state: *ParserState) ParserError!*Expression {
                 },
             }
         } else if (token == .operator and token.operator == .@"@") {
-            // Let the shunting yard handle @ operator now
-            debug("parseExpression: Found @ operator at start, proceeding to shunting yard\n", .{});
+            // Global expression - handle the @ operator directly
+            debug("parseExpression: Found @ operator, parsing as global expression\n", .{});
+            return parseGlobalExpression(state);
+        } else if (token == .identifier) {
+            debug("parseExpression: Found identifier '{s}'\n", .{token.identifier});
+
+            // Check for function call pattern (identifier followed by parenthesis)
+            if (state.index + 1 < state.tokens.len and
+                state.tokens[state.index + 1] == .punctuation and
+                state.tokens[state.index + 1].punctuation == .@"(")
+            {
+                debug("parseExpression: Found potential function call for '{s}'\n", .{token.identifier});
+            }
+
+            // Check for array indexing pattern (identifier followed by '[')
+            if (state.index + 1 < state.tokens.len and
+                state.tokens[state.index + 1] == .punctuation and
+                state.tokens[state.index + 1].punctuation == .@"[")
+            {
+                debug("parseExpression: Found potential array indexing for '{s}'\n", .{token.identifier});
+                return parseArrayIndexExpression(state);
+            }
         }
     }
 
@@ -1056,24 +1348,8 @@ fn parseExpression(state: *ParserState) ParserError!*Expression {
             if (token == .operator and token.operator == .@"@") {
                 debug("parseExpression: Found @ operator with empty stack, attempting to create global reference\n", .{});
 
-                // Try to create a placeholder global reference
-                if (state.index > 0 and state.index < state.tokens.len) {
-                    const next_token = state.tokens[state.index];
-                    if (next_token == .identifier) {
-                        const ident = try state.allocator.dupe(u8, next_token.identifier);
-
-                        const global = try state.allocator.create(Global);
-                        global.* = Global{
-                            .type = .Reference,
-                            .identifier = ident,
-                            .value = null,
-                        };
-
-                        const result = try state.allocator.create(Expression);
-                        result.* = Expression{ .Global = global };
-                        return result;
-                    }
-                }
+                // Process this as a global expression directly
+                return parseGlobalExpression(state);
             }
 
             // If we're dealing with binary operators like << or >>
@@ -1090,139 +1366,158 @@ fn parseExpression(state: *ParserState) ParserError!*Expression {
     // Evaluate the RPN stack to build the final expression tree
     const final_expr = try evaluateRPN(state);
 
-    debug("parseExpression: Successfully evaluated RPN, result type {s}\n", .{@tagName(std.meta.activeTag(final_expr.*))});
+    debug("parseExpression: Successfully evaluated RPN, result type {s}\n", .{@tagName(std.meta.activeTag(final_expr.*.data))});
     return final_expr;
 }
-
-// Evaluates the RPN stack (outputStack) to build the final expression tree
 fn evaluateRPN(state: *ParserState) ParserError!*Expression {
     debug("evaluateRPN: Starting with {d} RPN tokens\n", .{state.outputStack.items.len});
 
-    var evalStack = std.ArrayList(usize).init(state.allocator);
+    var evalStack = std.ArrayList(*Expression).init(state.allocator);
     defer evalStack.deinit();
 
     for (state.outputStack.items) |expr_handle| {
-        const expr = state.expressionHeap.get(expr_handle).?;
-        debug("evaluateRPN: Processing RPN item: {any}\n", .{expr.*});
+        const expr = state.expressionHeap.get(expr_handle) orelse {
+            return ParseError.InvalidSyntax;
+        };
 
-        switch (expr.*) {
-            .Literal, .Variable, .Conditional, .Loop, .Call, .Function, .Block, .Object, .Flow, .Global, .Index, .Range, .Tensor, .Expansion, .CompoundAssign, .Unary => {
-                // Operand: Push onto eval stack
-                try evalStack.append(expr_handle);
-                debug("evaluateRPN: Pushed operand {s}\n", .{@tagName(std.meta.activeTag(expr.*))});
+        switch (expr.data) {
+            // For literals and variables, just push them onto the stack
+            .Literal, .Variable, .Global => {
+                try evalStack.append(expr);
             },
 
             .Operator => |op| {
-                debug("evaluateRPN: Found operator {any}\n", .{op});
+                switch (op) {
+                    .@"@" => {
+                        if (evalStack.items.len < 1) return ParseError.InvalidSyntax;
+                        const ident_expr = evalStack.pop();
 
-                // Handle operators similarly to before but using handles
-                if (op == .@"-" or op == .@"!" or op == .@"~" or op == .@"*" or op == .@"&") {
-                    // Unary operator
-                    if (evalStack.items.len < 1) {
-                        debug("evaluateRPN: Error - Insufficient operand for unary operator {any}\n", .{op});
-                        return ParseError.InvalidSyntax;
-                    }
-
-                    const operand_handle = evalStack.pop().?;
-                    const operand = state.expressionHeap.get(operand_handle).?;
-                    debug("evaluateRPN: Popped operand={any} for unary op={any}\n", .{ operand.*, op });
-
-                    // Create Unary expression
-                    const unary = try state.allocator.create(Unary);
-                    unary.* = Unary{
-                        .op = op,
-                        .operand = operand,
-                    };
-
-                    const unary_handle = try state.expressionHeap.allocate(Expression{ .Unary = unary });
-                    try evalStack.append(unary_handle);
-                    debug("evaluateRPN: Pushed Unary result\n", .{});
-                } else {
-                    // Binary operator
-                    if (evalStack.items.len < 2) {
-                        debug("evaluateRPN: Error - Insufficient operands for binary operator {any}\n", .{op});
-
-                        // Special handling for bitshift operators
-                        if (op == .@"<<" or op == .@">>") {
-                            debug("evaluateRPN: Special handling for bitshift with insufficient operands\n", .{});
-
-                            // Create dummy operands as needed
-                            var left_handle: usize = undefined;
-                            var right_handle: usize = undefined;
-
-                            if (evalStack.items.len == 0) {
-                                // Need both operands
-                                left_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .scalar = 0 } });
-                                right_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .scalar = 1 } });
-                            } else {
-                                // Have one operand already
-                                right_handle = evalStack.pop().?;
-                                left_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .scalar = 0 } });
+                        if (ident_expr) |innerExpr| {
+                            if (innerExpr.data != .Variable) {
+                                return ParseError.InvalidSyntax;
                             }
+                            
+                            const global = try state.allocator.create(Global);
+                            errdefer state.allocator.destroy(global);
 
-                            // Create the binary expression
-                            const binary = try state.allocator.create(Binary);
-                            binary.* = Binary{ .op = op, .left = state.expressionHeap.get(left_handle).?, .right = state.expressionHeap.get(right_handle).? };
+                            // Create new copy of identifier for global
+                            const ident_copy = try state.allocator.dupe(u8, innerExpr.data.Variable.identifier);
+                            errdefer state.allocator.free(ident_copy);
 
-                            const binary_handle = try state.expressionHeap.allocate(Expression{ .Binary = binary });
-                            try evalStack.append(binary_handle);
-                            continue;
+                            global.* = Global{
+                                .type = .Reference,
+                                .identifier = ident_copy,
+                                .value = null,
+                                .arguments = null,
+                            };
+
+                            const result = try state.allocator.create(Expression);
+                            errdefer state.allocator.destroy(result);
+                            result.* = Expression.init(ExpressionData{ .Global = global });
+
+                            try evalStack.append(result);
+                        } else {
+                            return ParseError.InvalidSyntax;
                         }
+                    },
 
-                        return ParseError.InvalidSyntax;
-                    }
+                    .@"&", .@"~", .@"!", .@"*" => {
+                        if (evalStack.items.len < 1) return ParseError.InvalidSyntax;
+                        const operand = evalStack.pop();
 
-                    const right_handle = evalStack.pop().?;
-                    const left_handle = evalStack.pop().?;
-                    const right = state.expressionHeap.get(right_handle).?;
-                    const left = state.expressionHeap.get(left_handle).?;
+                        const unary = try state.allocator.create(Unary);
+                        errdefer state.allocator.destroy(unary);
 
-                    debug("evaluateRPN: Popped left={any}, right={any} for binary op={any}\n", .{ left.*, right.*, op });
+                        unary.* = Unary{
+                            .op = op,
+                            .operand = operand orelse return ParseError.InvalidSyntax,
+                        };
 
-                    var new_handle: usize = undefined;
+                        const result = try state.allocator.create(Expression);
+                        errdefer state.allocator.destroy(result);
+                        result.* = Expression.init(ExpressionData{ .Unary = unary });
 
-                    if (op == .@"=") {
-                        // Assignment
-                        debug("evaluateRPN: Creating assignment\n", .{});
+                        try evalStack.append(result);
+                    },
+
+                    .@"=", .@"+=" , .@"-=", .@"*=", .@"/=" => {
+                        if (evalStack.items.len < 2) return ParseError.InvalidSyntax;
+                        const right = evalStack.pop();
+                        const left = evalStack.pop();
+
                         const binary = try state.allocator.create(Binary);
-                        binary.* = Binary{ .op = op, .left = left, .right = right };
-                        new_handle = try state.expressionHeap.allocate(Expression{ .Binary = binary });
-                    } else {
-                        // Generic binary operator
-                        const binary = try state.allocator.create(Binary);
-                        binary.* = Binary{ .op = op, .left = left, .right = right };
-                        new_handle = try state.expressionHeap.allocate(Expression{ .Binary = binary });
-                    }
+                        errdefer state.allocator.destroy(binary);
 
-                    try evalStack.append(new_handle);
-                    debug("evaluateRPN: Pushed Binary result\n", .{});
+                        binary.* = Binary{
+                            .op = op,
+                            .left = left orelse return ParseError.InvalidSyntax,
+                            .right = right orelse return ParseError.InvalidSyntax,
+                        };
+
+                        const result = try state.allocator.create(Expression);
+                        errdefer state.allocator.destroy(result);
+                        result.* = Expression.init(ExpressionData{ .Binary = binary });
+
+                        try evalStack.append(result);
+                    },
+
+                    .@"<<", .@">>" => {
+                        if (evalStack.items.len < 2) return ParseError.InvalidSyntax;
+                        const right = evalStack.pop();
+                        const left = evalStack.pop();
+
+                        const binary = try state.allocator.create(Binary);
+                        errdefer state.allocator.destroy(binary);
+
+                        binary.* = Binary{
+                            .op = op,
+                            .left = left orelse return ParseError.InvalidSyntax,
+                            .right = right orelse return ParseError.InvalidSyntax,
+                        };
+
+                        const result = try state.allocator.create(Expression);
+                        errdefer state.allocator.destroy(result);
+                        result.* = Expression.init(ExpressionData{ .Binary = binary });
+
+                        try evalStack.append(result);
+                    },
+
+                    else => {
+                        if (evalStack.items.len < 2) return ParseError.InvalidSyntax;
+                        const right = evalStack.pop();
+                        const left = evalStack.pop();
+
+                        const binary = try state.allocator.create(Binary);
+                        errdefer state.allocator.destroy(binary);
+
+                        binary.* = Binary{
+                            .op = op,
+                            .left = left orelse return ParseError.InvalidSyntax,
+                            .right = right orelse return ParseError.InvalidSyntax,
+                        };
+
+                        const result = try state.allocator.create(Expression);
+                        errdefer state.allocator.destroy(result);
+                        result.* = Expression.init(ExpressionData{ .Binary = binary });
+
+                        try evalStack.append(result);
+                    },
                 }
             },
 
             else => {
-                debug("evaluateRPN: Error - Unexpected item in RPN stack\n", .{});
-                return ParseError.InvalidSyntax;
+                try evalStack.append(expr);
             },
         }
     }
 
-    // Final result should be the single item left on the stack
-    if (evalStack.items.len >= 1) {
-        // If more than one item, discard extras
-        while (evalStack.items.len > 1) {
-            const extra_handle = evalStack.pop().?;
-            _ = extra_handle; // We don't free here since expressions are owned by the heap
-        }
-
-        const final_handle = evalStack.pop().?;
-        const final_expr = state.expressionHeap.get(final_handle).?;
-
-        debug("evaluateRPN: Finished with result\n", .{});
-        return final_expr;
-    } else {
-        debug("evaluateRPN: Error - Eval stack has 0 items, expected expression\n", .{});
-        return ParseError.InvalidSyntax;
+    if (evalStack.items.len == 1) {
+        const final_expr = evalStack.pop();
+        const result = final_expr orelse return ParseError.InvalidSyntax;
+        return result;
     }
+
+    return ParseError.InvalidSyntax;
 }
 
 pub fn parse(allocator: std.mem.Allocator, tokens: std.ArrayList(Token)) ParserError![]const *Expression {
@@ -1260,12 +1555,34 @@ pub fn parse(allocator: std.mem.Allocator, tokens: std.ArrayList(Token)) ParserE
 
     // Parse multiple expressions until we run out of tokens
     var expr_count: usize = 0;
+    var last_index: usize = 0; // Track the last processed index to detect loops
+    var repeat_count: usize = 0; // Count repeated processing of the same index
+
     while (state.currentToken() != null) {
         try state.processWhitespace();
         if (state.currentToken() == null) break;
 
         const loop_start_index = state.index;
         debug("parse: Loop iteration start. Index: {d}, Token: {any}\n", .{ loop_start_index, state.currentToken() });
+
+        // Safety check to prevent infinite loops
+        if (loop_start_index == last_index) {
+            repeat_count += 1;
+            if (repeat_count > 3) {
+                debug("parse: Detected potential infinite loop at index {d}, token: {any}\n", .{ loop_start_index, state.currentToken() });
+
+                // Force advance the index to break the loop
+                state.index += 1;
+                if (state.index >= state.tokens.len) break;
+
+                // Reset the repeat counter
+                repeat_count = 0;
+                continue;
+            }
+        } else {
+            repeat_count = 0;
+        }
+        last_index = loop_start_index;
 
         // Handle special cases for certain tokens
         if (state.currentToken()) |curr_token| {
@@ -1277,6 +1594,28 @@ pub fn parse(allocator: std.mem.Allocator, tokens: std.ArrayList(Token)) ParserE
             {
                 debug("parse: Skipping unexpected closing delimiter: {any}\n", .{curr_token});
                 _ = state.nextToken();
+                continue;
+            }
+
+            // Special handling for array indexing
+            if (curr_token == .punctuation and curr_token.punctuation == .@"[") {
+                debug("parse: Found array indexing token at top level\n", .{});
+
+                // Create a fresh state for parsing this expression
+                var array_index_state = try ParserState.init(allocator, state.tokens[state.index..]);
+                defer array_index_state.deinit();
+                array_index_state.indentationLevel = state.indentationLevel;
+
+                // Try to parse as array indexing
+                debug("parse: Attempting to parse as array index\n", .{});
+                const array_expr = try parseArrayIndexExpression(&array_index_state);
+                try results.append(array_expr);
+
+                // Update main state index
+                const pre_update_index = state.index;
+                state.index += array_index_state.index;
+                debug("parse: Array indexing parsing advanced index from {d} to {d} ({d} tokens)\n", .{ pre_update_index, state.index, state.index - pre_update_index });
+
                 continue;
             }
 
@@ -1316,20 +1655,20 @@ pub fn parse(allocator: std.mem.Allocator, tokens: std.ArrayList(Token)) ParserE
 
                 // Convert regular function to global function if needed
                 if (is_global_function or is_main_function or is_special_global_function) {
-                    debug("parse: Converting function '{s}' to global function\n", .{if (func_expr.* == .Function) func_expr.Function.identifier else "unknown"});
+                    debug("parse: Converting function '{s}' to global function\n", .{if (func_expr.data == .Function) func_expr.data.Function.identifier else "unknown"});
 
-                    if (func_expr.* == .Function) {
+                    if (func_expr.data == .Function) {
                         // Create global function wrapper
                         const global = try allocator.create(Global);
                         global.* = Global{
                             .type = .Fn,
-                            .identifier = try allocator.dupe(u8, func_expr.Function.identifier),
+                            .identifier = try allocator.dupe(u8, func_expr.data.Function.identifier),
                             .value = func_expr,
                             .arguments = null,
                         };
 
                         const global_expr = try allocator.create(Expression);
-                        global_expr.* = Expression{ .Global = global };
+                        global_expr.* = Expression.init(ExpressionData{ .Global = global });
 
                         // Add the global function expression to results
                         try results.append(global_expr);
@@ -1337,15 +1676,55 @@ pub fn parse(allocator: std.mem.Allocator, tokens: std.ArrayList(Token)) ParserE
                         // If not a function (shouldn't happen), add as-is
                         try results.append(func_expr);
                     }
+                } else {
+                    // Regular function (not global)
+                    try results.append(func_expr);
                 }
+
+                // Continue to next iteration - we've handled this function
+                continue;
+            } else if (curr_token == .keyword) {
+                // For other keywords like while, if, for, etc., parse them as expressions
+                debug("parse: Found keyword {s} at index {d}\n", .{ @tagName(curr_token.keyword), state.index });
+                const expr = try parseExpression(&state);
+                try results.append(expr);
+                continue;
+            } else if (curr_token == .identifier) {
+                // Check if this identifier might be a function call
+                if (state.index + 1 < state.tokens.len and
+                    state.tokens[state.index + 1] == .punctuation and
+                    state.tokens[state.index + 1].punctuation == .@"(")
+                {
+                    debug("parse: Found potential function call for '{s}'\n", .{curr_token.identifier});
+                }
+
+                // Parse as a normal expression
+                const expr = try parseExpression(&state);
+                try results.append(expr);
+                continue;
             }
         }
 
-        // ... existing code ...
+        // Try to parse a regular expression if no special handling applied
+        debug("parse: Parsing general expression at index {d}\n", .{state.index});
+
+        // Create a fresh state for this expression to avoid state contamination
+        var expr_state = try ParserState.init(allocator, state.tokens[state.index..]);
+        defer expr_state.deinit();
+        expr_state.indentationLevel = state.indentationLevel;
+
+        const expr = try parseExpression(&expr_state);
+        try results.append(expr);
+
+        // Update the main state's index
+        const pre_update_index = state.index;
+        state.index += expr_state.index;
+        debug("parse: Expression parsing advanced index from {d} to {d} ({d} tokens)\n", .{ pre_update_index, state.index, state.index - pre_update_index });
 
         expr_count += 1;
     }
 
+    debug("parse: Completed with {d} expressions\n", .{results.items.len});
     return results.toOwnedSlice();
 }
 
@@ -1408,7 +1787,7 @@ fn createLiteralExpression(state: *ParserState, value: Value) ParserError!*Expre
     debug("createLiteralExpression: Creating literal with value {any}\n", .{value});
 
     const result = try state.allocator.create(Expression);
-    result.* = Expression{ .Literal = value };
+    result.* = Expression.init(ExpressionData{ .Literal = value });
     return result;
 }
 
@@ -1467,6 +1846,8 @@ fn parseIfExpression(state: *ParserState) ParserError!*Expression {
     var condition_state = try ParserState.init(state.allocator, state.tokens[state.index..]);
     defer condition_state.deinit();
     condition_state.indentationLevel = state.indentationLevel;
+    // Set a flag that we're in an inline if expression to help with parsing
+    condition_state.in_inline_if = true;
 
     const condition = try parseExpression(&condition_state);
     errdefer condition.deinit(state.allocator);
@@ -1480,6 +1861,8 @@ fn parseIfExpression(state: *ParserState) ParserError!*Expression {
     var body_state = try ParserState.init(state.allocator, state.tokens[state.index..]);
     defer body_state.deinit();
     body_state.indentationLevel = state.indentationLevel;
+    // Set a flag that we're in an inline if expression body
+    body_state.in_inline_if = true;
 
     const body = try parseExpression(&body_state);
     errdefer body.deinit(state.allocator);
@@ -1503,6 +1886,8 @@ fn parseIfExpression(state: *ParserState) ParserError!*Expression {
             var else_state = try ParserState.init(state.allocator, state.tokens[state.index..]);
             defer else_state.deinit();
             else_state.indentationLevel = state.indentationLevel;
+            // Set a flag that we're in an inline if expression else branch
+            else_state.in_inline_if = true;
 
             else_body = try parseExpression(&else_state);
 
@@ -1523,7 +1908,7 @@ fn parseIfExpression(state: *ParserState) ParserError!*Expression {
     };
 
     const result = try state.allocator.create(Expression);
-    result.* = Expression{ .Conditional = conditional };
+    result.* = Expression.init(ExpressionData{ .Conditional = conditional });
     return result;
 }
 
@@ -1544,6 +1929,7 @@ fn parseWhileExpression(state: *ParserState) ParserError!*Expression {
 
     // Update state index
     state.index += condition_state.index;
+    debug("parseWhileExpression: Parsed condition, new index {d}\n", .{state.index});
 
     // Check for tail expression (after ':')
     var tail_expression: ?*Expression = null;
@@ -1553,6 +1939,7 @@ fn parseWhileExpression(state: *ParserState) ParserError!*Expression {
 
     if (state.currentToken()) |token| {
         if (token == .punctuation and token.punctuation == .@":") {
+            debug("parseWhileExpression: Found tail expression marker ':'\n", .{});
             _ = state.nextToken(); // consume ':'
             try state.processWhitespace();
 
@@ -1562,6 +1949,7 @@ fn parseWhileExpression(state: *ParserState) ParserError!*Expression {
             tail_state.indentationLevel = state.indentationLevel;
 
             tail_expression = try parseExpression(&tail_state);
+            debug("parseWhileExpression: Parsed tail expression\n", .{});
 
             // Update state index
             state.index += tail_state.index;
@@ -1571,6 +1959,7 @@ fn parseWhileExpression(state: *ParserState) ParserError!*Expression {
     try state.processWhitespace();
 
     // Parse body
+    debug("parseWhileExpression: Parsing body with indentation level {d}\n", .{state.indentationLevel});
     var body_state = try ParserState.init(state.allocator, state.tokens[state.index..]);
     defer body_state.deinit();
     body_state.indentationLevel = state.indentationLevel;
@@ -1580,6 +1969,7 @@ fn parseWhileExpression(state: *ParserState) ParserError!*Expression {
 
     // Update state index
     state.index += body_state.index;
+    debug("parseWhileExpression: Parsed body, new index {d}\n", .{state.index});
 
     // Create loop expression
     const loop = try state.allocator.create(Loop);
@@ -1591,7 +1981,8 @@ fn parseWhileExpression(state: *ParserState) ParserError!*Expression {
     };
 
     const result = try state.allocator.create(Expression);
-    result.* = Expression{ .Loop = loop };
+    result.* = Expression.init(ExpressionData{ .Loop = loop });
+    debug("parseWhileExpression: Created Loop node\n", .{});
     return result;
 }
 
@@ -1702,7 +2093,7 @@ fn parseForExpression(state: *ParserState) ParserError!*Expression {
 
         // Create the loop expression
         const loop_expr = try state.allocator.create(Expression);
-        loop_expr.* = Expression{ .Loop = loop };
+        loop_expr.* = Expression.init(ExpressionData{ .Loop = loop });
 
         // Add the loop to the block
         try block_items.append(loop_expr);
@@ -1714,12 +2105,12 @@ fn parseForExpression(state: *ParserState) ParserError!*Expression {
         };
 
         const result = try state.allocator.create(Expression);
-        result.* = Expression{ .Block = block };
+        result.* = Expression.init(ExpressionData{ .Block = block });
         return result;
     } else {
         // Only the condition, no initialization
         const result = try state.allocator.create(Expression);
-        result.* = Expression{ .Loop = loop };
+        result.* = Expression.init(ExpressionData{ .Loop = loop });
         return result;
     }
 }
@@ -1770,141 +2161,160 @@ fn parseFlowExpression(state: *ParserState) ParserError!*Expression {
     };
 
     const result = try state.allocator.create(Expression);
-    result.* = Expression{ .Flow = flow };
+    result.* = Expression.init(ExpressionData{ .Flow = flow });
     return result;
 }
 
 fn parseShuntingYard(state: *ParserState) ParserError!void {
-    // Implementation of shunting yard algorithm
-    debug("parseShuntingYard: Starting\n", .{});
+    var in_array_index = false;
+    var paren_depth: usize = 0;
+    var in_global_call = false;
 
     while (state.currentToken()) |token| {
-        debug("parseShuntingYard: Processing token {any}\n", .{token});
 
-        // Handle different token types
         switch (token) {
             .identifier => {
-                // Push variable onto output
                 const ident = try state.allocator.dupe(u8, token.identifier);
-
-                const variable = Variable{
+                const variable = try state.allocator.create(Variable);
+                variable.* = Variable{
                     .identifier = ident,
                     .value = .{ .unit = {} },
                 };
-
-                const expr_handle = try state.expressionHeap.allocate(Expression{ .Variable = try state.allocator.create(Variable) });
-                state.expressionHeap.get(expr_handle).?.*.Variable.* = variable;
-
+                const expr = Expression.init(.{ .Variable = variable });
+                const expr_handle = try state.expressionHeap.allocate(expr);
                 try state.outputStack.append(expr_handle);
-                _ = state.nextToken(); // consume identifier
+                _ = state.nextToken();
             },
+
             .literal => |lit| {
-                var expr_handle: usize = undefined;
-
-                if (lit == .scalar) {
-                    expr_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .scalar = lit.scalar } });
-                } else if (lit == .real) {
-                    expr_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .real = lit.real } });
-                } else if (lit == .string) {
-                    const string_copy = try state.allocator.dupe(u8, lit.string);
-                    expr_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .string = string_copy } });
-                } else if (lit == .boolean) {
-                    expr_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .boolean = lit.boolean } });
-                } else if (lit == .unit) {
-                    expr_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .unit = {} } });
-                } else {
-                    // Handle other literal types
-                    expr_handle = try state.expressionHeap.allocate(Expression{ .Literal = Value{ .unit = {} } });
-                }
-
+                const expr_handle = try state.expressionHeap.allocate(Expression.init(.{ .Literal = lit }));
                 try state.outputStack.append(expr_handle);
-                _ = state.nextToken(); // consume literal
+                _ = state.nextToken();
             },
-            .operator => |op| {
-                // Handle operator precedence
-                while (state.operatorStack.items.len > 0) {
-                    const top_handle = state.operatorStack.items[state.operatorStack.items.len - 1];
-                    const top_expr = state.expressionHeap.get(top_handle).?;
 
-                    if (top_expr.* == .Operator and
-                        top_expr.Operator.precedence() >= op.precedence())
+            .operator => |op| {
+                // Handle @ operator specially
+                if (op == .@"@") {
+                    // Look ahead for function call pattern
+                    if (state.index + 2 < state.tokens.len and
+                        state.tokens[state.index + 1] == .identifier and
+                        state.tokens[state.index + 2] == .punctuation and
+                        state.tokens[state.index + 2].punctuation == .@"(")
                     {
-                        // Pop higher precedence operator onto output
-                        const popped_handle = state.operatorStack.pop().?;
-                        try state.outputStack.append(popped_handle);
-                    } else {
-                        break;
+                        in_global_call = true;
+                        const global_expr = try parseGlobalExpression(state);
+                        const expr_handle = try state.expressionHeap.allocate(global_expr.*);
+                        try state.outputStack.append(expr_handle);
+                        continue;
                     }
                 }
 
-                // Push current operator onto stack
-                const op_handle = try state.expressionHeap.allocate(Expression{ .Operator = op });
-                try state.operatorStack.append(op_handle);
-                _ = state.nextToken(); // consume operator
-            },
-            .punctuation => |p| {
-                switch (p) {
-                    .@"(" => {
-                        // Push a special marker for an open parenthesis
-                        const paren_handle = try state.expressionHeap.createParenMarker();
-                        try state.operatorStack.append(paren_handle);
-                        _ = state.nextToken(); // consume '('
-                    },
-                    .@")" => {
-                        // Pop operators until matching open parenthesis marker
-                        var found_paren = false;
-                        while (state.operatorStack.items.len > 0) {
-                            const top_handle = state.operatorStack.pop().?;
+                // Handle binary operators
+                while (state.operatorStack.items.len > 0) {
+                    const top_handle = state.operatorStack.items[state.operatorStack.items.len - 1];
+                    
+                    // Validate handle
+                    if (top_handle >= state.expressionHeap.expressions.items.len) {
+                        return ParseError.InvalidSyntax;
+                    }
+                    
+                    const top_expr = state.expressionHeap.get(top_handle) orelse {
+                        return ParseError.InvalidSyntax;
+                    };
 
-                            // Check if this is our open parenthesis marker
-                            if (state.expressionHeap.isParenMarker(top_handle)) {
-                                found_paren = true;
-                                break;
-                            }
-
-                            try state.outputStack.append(top_handle);
-                        }
-
-                        if (!found_paren) {
-                            return ParseError.UnterminatedExpression;
-                        }
-
-                        _ = state.nextToken(); // consume ')'
-                    },
-                    else => {
-                        // Other punctuation marks the end of the expression
-                        break;
-                    },
+                    if (top_expr.*.data == .Operator and
+                        !in_global_call and
+                        top_expr.*.data.Operator.precedence() >= op.precedence())
+                    {
+                        _ = state.operatorStack.pop();
+                        try state.outputStack.append(top_handle);
+                    } else break;
                 }
-            },
-            // Stop on newlines or keywords that can follow expressions
-            .newline, .keyword => {
-                break;
-            },
-            .space, .indent, .comment => {
-                // Whitespace and comments - skip
+
+                const op_handle = try state.expressionHeap.allocate(Expression.init(.{ .Operator = op }));
+                try state.operatorStack.append(op_handle);
                 _ = state.nextToken();
             },
+
+            .punctuation => |p| {
+                switch (p) {
+                    .@"[" => {
+                        in_array_index = true;
+                        const marker = try state.expressionHeap.createParenMarker();
+                        try state.operatorStack.append(marker);
+                        _ = state.nextToken();
+                    },
+
+                    .@"]" => {
+                        if (!in_array_index) break;
+
+                        // Pop everything until matching [
+                        while (state.operatorStack.items.len > 0) {
+                            const op_handle = state.operatorStack.pop().?;
+                            if (state.expressionHeap.isParenMarker(op_handle)) break;
+                            try state.outputStack.append(op_handle);
+                        }
+
+                        in_array_index = false;
+                        _ = state.nextToken();
+                    },
+
+                    .@"(" => {
+                        paren_depth += 1;
+                        const marker = try state.expressionHeap.createParenMarker();
+                        try state.operatorStack.append(marker);
+                        _ = state.nextToken();
+                    },
+
+                    .@")" => {
+                        if (paren_depth == 0) break;
+
+                        // Pop until matching (
+                        while (state.operatorStack.items.len > 0) {
+                            const op_handle = state.operatorStack.pop().?;
+                            if (state.expressionHeap.isParenMarker(op_handle)) break;
+                            try state.outputStack.append(op_handle);
+                        }
+
+                        paren_depth -= 1;
+                        if (in_global_call and paren_depth == 0) {
+                            in_global_call = false;
+                        }
+                        _ = state.nextToken();
+                    },
+
+                    .@"," => {
+                        if (!in_array_index and !in_global_call) break;
+
+                        // Pop operators until ( or [
+                        while (state.operatorStack.items.len > 0) {
+                            const top_handle = state.operatorStack.items[state.operatorStack.items.len - 1];
+                            if (state.expressionHeap.isParenMarker(top_handle)) break;
+                            _ = state.operatorStack.pop();
+                            try state.outputStack.append(top_handle);
+                        }
+                        _ = state.nextToken();
+                    },
+
+                    else => {},
+                }
+            },
+
+            .space, .indent, .comment => _ = state.nextToken(),
+
+            else => if (!in_array_index and !in_global_call) break,
         }
 
-        // Skip any whitespace between tokens
         try state.processWhitespace();
     }
 
-    // Pop remaining operators onto output
+    // Handle any remaining operators
     while (state.operatorStack.items.len > 0) {
         const op_handle = state.operatorStack.pop().?;
-
-        // Check if this is our open parenthesis marker
-        if (state.expressionHeap.isParenMarker(op_handle)) {
-            // Found unmatched opening parenthesis
-            return ParseError.UnterminatedExpression;
+        if (!state.expressionHeap.isParenMarker(op_handle)) {
+            try state.outputStack.append(op_handle);
         }
-
-        try state.outputStack.append(op_handle);
     }
-
-    debug("parseShuntingYard: Completed with {d} output items\n", .{state.outputStack.items.len});
 }
 
 // Add the parseArgumentList function before it's used
@@ -1928,6 +2338,9 @@ fn parseArgumentList(state: *ParserState) ParserError!std.ArrayList(*Expression)
             _ = state.nextToken(); // consume closing parenthesis
             return args;
         }
+    } else {
+        debug("parseArgumentList: Unexpected end of tokens (no closing parenthesis)\n", .{});
+        return ParseError.UnterminatedExpression;
     }
 
     // Parse arguments
@@ -1944,6 +2357,15 @@ fn parseArgumentList(state: *ParserState) ParserError!std.ArrayList(*Expression)
             } else if (token == .punctuation and token.punctuation == .@",") {
                 _ = state.nextToken(); // consume comma
                 try state.processWhitespace();
+
+                // Check if there's an immediate closing parenthesis after the comma (trailing comma case)
+                if (state.currentToken()) |next_token| {
+                    if (next_token == .punctuation and next_token.punctuation == .@")") {
+                        _ = state.nextToken(); // consume closing parenthesis
+                        break;
+                    }
+                }
+
                 continue;
             } else {
                 debug("parseArgumentList: Unexpected token in argument list: {any}\n", .{token});
@@ -1961,11 +2383,58 @@ fn parseArgumentList(state: *ParserState) ParserError!std.ArrayList(*Expression)
 
 // Add this new function to handle pointer member access with .* syntax
 fn parsePointerMemberExpression(state: *ParserState) ParserError!*Expression {
-    debug("parsePointerMemberExpression: Starting\n", .{});
+    // This function is replaced by the more flexible parsePointerExpression
+    return parsePointerExpression(state);
+}
 
-    // Parse the object (pointer) expression
-    const object = try parseExpression(state);
-    errdefer object.deinit(state.allocator);
+// Add this new function to handle pointer operations (both deref and member access)
+fn parsePointerExpression(state: *ParserState) ParserError!*Expression {
+    debug("parsePointerExpression: Starting\n", .{});
+
+    // Parse the pointer expression
+    var identifier_only = true;
+    var ptr_expr: ?*Expression = null;
+    errdefer if (ptr_expr) |expr| expr.deinit(state.allocator);
+
+    if (state.currentToken()) |token| {
+        if (token == .identifier) {
+            // Create a variable expression for the identifier
+            const ident = try state.allocator.dupe(u8, token.identifier);
+            const variable = try state.allocator.create(Variable);
+            variable.* = Variable{
+                .identifier = ident,
+                .value = .{ .unit = {} },
+            };
+
+            ptr_expr = try state.allocator.create(Expression);
+            ptr_expr.?.* = Expression.init(ExpressionData{ .Variable = variable });
+            _ = state.nextToken(); // consume identifier
+        } else {
+            // Try parsing a more complex expression
+            identifier_only = false;
+            try state.processWhitespace();
+
+            // Use shunting yard to parse a more complex primary expression
+            const old_output_stack = state.outputStack;
+            state.outputStack = std.ArrayList(usize).init(state.allocator);
+            defer {
+                state.outputStack.deinit();
+                state.outputStack = old_output_stack;
+            }
+
+            try parseShuntingYard(state);
+            if (state.outputStack.items.len > 0) {
+                const primary = try evaluateRPN(state);
+                ptr_expr = primary;
+            } else {
+                debug("parsePointerExpression: Error - Failed to parse pointer expression\n", .{});
+                return ParseError.UnexpectedToken;
+            }
+        }
+    } else {
+        debug("parsePointerExpression: Error - Expected token for pointer\n", .{});
+        return ParseError.UnexpectedToken;
+    }
 
     try state.processWhitespace();
 
@@ -1981,29 +2450,314 @@ fn parsePointerMemberExpression(state: *ParserState) ParserError!*Expression {
                     _ = state.nextToken(); // consume *
                     try state.processWhitespace();
 
-                    // Parse member identifier
-                    const member = try parseIdentifier(state);
-                    errdefer state.allocator.free(member);
+                    // Now determine if this is a member access or a dereference
+                    if (state.currentToken()) |next_token| {
+                        if (next_token == .identifier) {
+                            // This is a pointer member access (ptr.* member)
+                            const member = try parseIdentifier(state);
+                            errdefer state.allocator.free(member);
 
-                    // Create the pointer member expression
-                    const ptr_member = try state.allocator.create(PointerMember);
-                    ptr_member.* = PointerMember{
-                        .object = object,
-                        .member = member,
-                    };
+                            // Create the pointer member expression
+                            const ptr_member = try state.allocator.create(PointerMember);
+                            ptr_member.* = PointerMember{
+                                .object = ptr_expr.?,
+                                .member = member,
+                            };
 
-                    const result = try state.allocator.create(Expression);
-                    result.* = Expression{ .PointerMember = ptr_member };
-                    debug("parsePointerMemberExpression: Created PointerMember for object->'{s}'\n", .{member});
-                    return result;
+                            const result = try state.allocator.create(Expression);
+                            result.* = Expression.init(ExpressionData{ .PointerMember = ptr_member });
+                            debug("parsePointerExpression: Created PointerMember for object->'{s}'\n", .{member});
+                            return result;
+                        } else {
+                            // This is a simple pointer dereference (ptr.*)
+                            // Create the pointer dereference expression
+                            const ptr_deref = try state.allocator.create(PointerDeref);
+                            ptr_deref.* = PointerDeref{
+                                .ptr = ptr_expr.?,
+                            };
+
+                            const result = try state.allocator.create(Expression);
+                            result.* = Expression.init(.{ .PointerDeref = ptr_deref });
+                            debug("parsePointerExpression: Created PointerDeref\n", .{});
+
+                            // Check if an assignment follows this dereference
+                            // We need to handle this specially to avoid the infinite loop issue
+                            if (state.currentToken()) |next| {
+                                if (next == .operator and next.operator == .@"=") {
+                                    debug("parsePointerExpression: Found assignment after dereference\n", .{});
+                                    // Don't advance token here - let the expression parser handle the assignment
+                                }
+                            }
+
+                            return result;
+                        }
+                    } else {
+                        // EOF after .* - treat as dereference
+                        const ptr_deref = try state.allocator.create(PointerDeref);
+                        ptr_deref.* = PointerDeref{
+                            .ptr = ptr_expr.?,
+                        };
+
+                        const result = try state.allocator.create(Expression);
+                        result.* = Expression.init(.{ .PointerDeref = ptr_deref });
+                        debug("parsePointerExpression: Created PointerDeref at EOF\n", .{});
+                        return result;
+                    }
                 }
             }
         }
     }
 
-    // If we reached here, it's not a pointer member expression
-    // Free the object since we're not using it in a PointerMember
-    object.deinit(state.allocator);
-    debug("parsePointerMemberExpression: Failed to parse pointer member access\n", .{});
-    return ParseError.UnexpectedToken;
+    // If we reached here, it's not a pointer expression
+    // Just return the original expression we parsed
+    return ptr_expr.?;
+}
+
+// Function to parse a const expression (const x = expr) with support for global references
+fn parseConstExpression(state: *ParserState) ParserError!*Expression {
+    debug("parseConstExpression: Starting\n", .{});
+
+    // Consume 'const' keyword
+    try parseKeyword(state, .@"const");
+    try state.processWhitespace();
+
+    // Check if this is a global reference declaration (const @identifier = ...)
+    var is_global = false;
+    if (state.currentToken()) |token| {
+        if (token == .operator and token.operator == .@"@") {
+            is_global = true;
+            debug("parseConstExpression: Found global reference declaration (@)\n", .{});
+            _ = state.nextToken(); // consume @ symbol
+            try state.processWhitespace();
+        }
+    }
+
+    // Parse the identifier
+    const ident = try parseIdentifier(state);
+    errdefer state.allocator.free(ident);
+    try state.processWhitespace();
+
+    // Check for and require the = operator for const declarations
+    if (state.currentToken()) |token| {
+        if (token == .operator and token.operator == .@"=") {
+            _ = state.nextToken(); // consume =
+            try state.processWhitespace();
+
+            // Parse the value expression
+            const value = try parseExpression(state);
+
+            if (is_global) {
+                // Create a Global expression for a global constant
+                debug("parseConstExpression: Creating global const '{s}'\n", .{ident});
+                const global = try state.allocator.create(Global);
+                global.* = Global{
+                    .type = .Const,
+                    .identifier = ident,
+                    .value = value,
+                    .arguments = null,
+                };
+
+                const result = try state.allocator.create(Expression);
+                result.* = Expression.init(ExpressionData{ .Global = global });
+                return result;
+            } else {
+                // Create a regular Const expression
+                debug("parseConstExpression: Creating local const '{s}'\n", .{ident});
+                const const_expr = try state.allocator.create(Const);
+                const_expr.* = Const{
+                    .identifier = ident,
+                    .value = value,
+                };
+
+                const result = try state.allocator.create(Expression);
+                result.* = Expression.init(ExpressionData{ .Const = const_expr });
+                return result;
+            }
+        }
+    }
+
+    // If there's no assignment, create a declaration without value
+    // This is an error for const, but we'll return it anyway and let semantic analysis handle it
+    debug("parseConstExpression: Warning - const declaration without initializer\n", .{});
+
+    // Create a placeholder value (unit)
+    const unit_value = try createLiteralExpression(state, Value{ .unit = {} });
+
+    if (is_global) {
+        // Create a Global expression without a value
+        debug("parseConstExpression: Creating global const '{s}' without initializer\n", .{ident});
+        const global = try state.allocator.create(Global);
+        global.* = Global{
+            .type = .Const,
+            .identifier = ident,
+            .value = unit_value,
+            .arguments = null,
+        };
+
+        const result = try state.allocator.create(Expression);
+        result.* = Expression.init(.{ .Global = global });
+        return result;
+    } else {
+        // Create a regular Decl expression without a value
+        debug("parseConstExpression: Creating local const '{s}' without initializer\n", .{ident});
+        const decl_expr = try state.allocator.create(Decl);
+        decl_expr.* = Decl{
+            .identifier = ident,
+            .value = unit_value,
+        };
+
+        const result = try state.allocator.create(Expression);
+        result.* = Expression.init(ExpressionData{ .Decl = decl_expr });
+        return result;
+    }
+}
+
+// Function to parse a var expression (var x = expr) with support for global references
+fn parseVarExpression(state: *ParserState) ParserError!*Expression {
+    debug("parseVarExpression: Starting\n", .{});
+
+    // Consume 'var' keyword
+    try parseKeyword(state, .@"var");
+    try state.processWhitespace();
+
+    // Check if this is a global reference declaration (var @identifier = ...)
+    var is_global = false;
+    if (state.currentToken()) |token| {
+        if (token == .operator and token.operator == .@"@") {
+            is_global = true;
+            debug("parseVarExpression: Found global reference declaration (@)\n", .{});
+            _ = state.nextToken(); // consume @ symbol
+            try state.processWhitespace();
+        }
+    }
+
+    // Parse the identifier
+    const ident = try parseIdentifier(state);
+    errdefer state.allocator.free(ident);
+    try state.processWhitespace();
+
+    // Check for and parse the = operator
+    if (state.currentToken()) |token| {
+        if (token == .operator and token.operator == .@"=") {
+            _ = state.nextToken(); // consume =
+            try state.processWhitespace();
+
+            // Parse the value expression
+            const value = try parseExpression(state);
+
+            if (is_global) {
+                // Create a Global expression for a global variable
+                debug("parseVarExpression: Creating global var '{s}'\n", .{ident});
+                const global = try state.allocator.create(Global);
+                global.* = Global{
+                    .type = .Var,
+                    .identifier = ident,
+                    .value = value,
+                    .arguments = null,
+                };
+
+                const result = try state.allocator.create(Expression);
+                result.* = Expression.init(ExpressionData{ .Global = global });
+                return result;
+            } else {
+                // Create a Var expression with an initial value
+                debug("parseVarExpression: Creating local var '{s}'\n", .{ident});
+                const var_expr = try state.allocator.create(Var);
+                var_expr.* = Var{
+                    .identifier = ident,
+                    .value = value,
+                };
+
+                const result = try state.allocator.create(Expression);
+                result.* = Expression.init(ExpressionData{ .Var = var_expr });
+                return result;
+            }
+        }
+    }
+
+    // If there's no assignment, create a Var expression with a unit value
+    debug("parseVarExpression: Creating var declaration without initializer\n", .{});
+
+    // Create a placeholder value (unit)
+    const unit_value = try createLiteralExpression(state, Value{ .unit = {} });
+
+    if (is_global) {
+        // Create a Global expression without an initial value
+        debug("parseVarExpression: Creating global var '{s}' without initializer\n", .{ident});
+        const global = try state.allocator.create(Global);
+        global.* = Global{
+            .type = .Var,
+            .identifier = ident,
+            .value = unit_value,
+            .arguments = null,
+        };
+
+        const result = try state.allocator.create(Expression);
+        result.* = Expression.init(.{ .Global = global });
+        return result;
+    } else {
+        // Create a local Var expression without an initial value
+        debug("parseVarExpression: Creating local var '{s}' without initializer\n", .{ident});
+        const var_expr = try state.allocator.create(Var);
+        var_expr.* = Var{
+            .identifier = ident,
+            .value = unit_value,
+        };
+
+        const result = try state.allocator.create(Expression);
+        result.* = Expression.init(.{ .Var = var_expr });
+        return result;
+    }
+}
+
+// Add this function after the parsePointerExpression function
+fn parseArrayIndexExpression(state: *ParserState) ParserError!*Expression {
+    debug("parseArrayIndexExpression: Starting\n", .{});
+
+    // Parse the array expression (identifier or complex expression)
+    const array_expr = try parseExpression(state);
+
+    try state.processWhitespace();
+
+    // Check for '[' operator
+    if (state.currentToken()) |token| {
+        if (token == .punctuation and token.punctuation == .@"[") {
+            _ = state.nextToken(); // consume '['
+            debug("parseArrayIndexExpression: Found opening '[' for array index\n", .{});
+            try state.processWhitespace();
+
+            // Parse the index expression
+            const index_expr = try parseExpression(state);
+            try state.processWhitespace();
+
+            // Check for ']' to close the index
+            if (state.currentToken()) |close_token| {
+                if (close_token == .punctuation and close_token.punctuation == .@"]") {
+                    _ = state.nextToken(); // consume ']'
+                    debug("parseArrayIndexExpression: Found closing ']' for array index\n", .{});
+
+                    // Create the index expression
+                    const index = try state.allocator.create(Index);
+                    index.* = Index{
+                        .array = array_expr,
+                        .index = index_expr,
+                    };
+
+                    const result = try state.allocator.create(Expression);
+                    result.* = Expression.init(ExpressionData{ .Index = index });
+                    return result;
+                } else {
+                    debug("parseArrayIndexExpression: Error - Expected ']' to close array index, got {any}\n", .{close_token});
+                    return ParseError.UnterminatedExpression;
+                }
+            } else {
+                debug("parseArrayIndexExpression: Error - Unexpected end of tokens while parsing array index\n", .{});
+                return ParseError.UnterminatedExpression;
+            }
+        }
+    }
+
+    // If we reach here, it's not an array index expression
+    // Just return the original expression we parsed
+    return array_expr;
 }
