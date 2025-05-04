@@ -1,6 +1,7 @@
 fn faceMask(*mask, backface)
 	//expressions as first class citizens like functions
-	mask.* = @column & ~if backface 
+	// & - bitwise AND / ~ - bitwise NOT / | - bitwise OR / ^ - bitwise XOR
+	mask.* = @column & ~ if backface
 		@column << 1
 	else
 		@column >> 1
@@ -14,14 +15,14 @@ fn main()
 	//Svelte like rune stores in @global for later
 	const @column = data.region.*.bitmap.*.data[axis][@flatten(uv, 64)]
 
-	var mask = undefined 
+	var mask = undefined
 
 	faceMask(&mask, backface)
 
 	//I do not know if this is possible in SPIRV so it might have to be changed
 	var quad = @emitter(data.region.faceCount, Quad)
 
-	while mask != 0 : mask &= ~(1 << primary)
+	while mask != 0 : mask &= ~ (1 << primary)
 		const primary = @findLSB(mask)
 		quad.position.z = primary
 		//special functor syntax for emitting

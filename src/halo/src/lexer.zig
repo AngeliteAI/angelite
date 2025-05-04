@@ -11,8 +11,6 @@ pub const Keyword = enum {
     @"for",
     @"break",
     @"continue",
-    @"and",
-    @"or",
     @"const",
     @"var",
     @"defer",
@@ -31,8 +29,8 @@ pub const Punctuation = enum {
 };
 
 pub const Operator = enum {
-    And,
-    Or,
+    And, // And & and
+    Or, // Or | or
     @".",
     @"+",
     @"-",
@@ -56,12 +54,14 @@ pub const Operator = enum {
     @"..",
     @"...",
     @"@",
+    @"and", // New: textual and operator
+    @"or", // New: textual or operator
 
     pub fn requiresLeftSpace(self: Operator) bool {
         //Should be C like syntax, for instance, dot operator is false but math operators are true
         //TODO this should consider context, for instance, & could be address of (where this is false) or bitwise and (where this is true)
         return switch (self) {
-            .@".", .@"@", .@"*", .@"&", .@"..." => false,
+            .@".", .@"@", .@"*", .@"&", .@"...", .@"and", .@"or" => false,
             else => true,
         };
     }
@@ -70,7 +70,7 @@ pub const Operator = enum {
         //Should be C like syntax, for instance, dot operator is false but math operators are true
         //TODO this should consider context, for instance, & could be address of (where this is false) or bitwise and (where this is true)
         return switch (self) {
-            .@".", .@"@", .@"*", .@"&", .@"~", .@"!", .@"..." => false,
+            .@".", .@"@", .@"*", .@"&", .@"~", .@"!", .@"...", .@"and", .@"or" => false,
             else => true,
         };
     }
@@ -85,8 +85,10 @@ pub const Operator = enum {
 
     pub fn precedence(self: Operator) u8 {
         return switch (self) {
-            .And => 1,
-            .Or => 2,
+            .@"and" => 2, // Text version 'and' has same precedence as And
+            .@"or" => 1, // Text version 'or' has same precedence as Or
+            .And => 2,
+            .Or => 1,
             .@"<" => 4,
             .@">" => 4,
             .@"<=" => 4,
@@ -220,8 +222,8 @@ fn buildLookupTable(allocator: std.mem.Allocator) !LookupTable {
     defer lexerTable.deinit();
 
     // Keywords
-    const keyword_strings = [_][]const u8{ "fn", "return", "if", "else", "while", "for", "break", "continue", "and", "or", "const", "var", "defer", "true", "false" };
-    const keyword_values = [_]Keyword{ .@"fn", .@"return", .@"if", .@"else", .@"while", .@"for", .@"break", .@"continue", .@"and", .@"or", .@"const", .@"var", .@"defer", .true, .false };
+    const keyword_strings = [_][]const u8{ "fn", "return", "if", "else", "while", "for", "break", "continue", "const", "var", "defer", "true", "false" };
+    const keyword_values = [_]Keyword{ .@"fn", .@"return", .@"if", .@"else", .@"while", .@"for", .@"break", .@"continue", .@"const", .@"var", .@"defer", .true, .false };
     comptime {
         if (keyword_strings.len != keyword_values.len) {
             @compileError("keyword arrays must have same length");
@@ -233,8 +235,8 @@ fn buildLookupTable(allocator: std.mem.Allocator) !LookupTable {
     }
 
     // Operators
-    const operator_strings = [_][]const u8{ "+", "-", "*", "/", "%", "=", "==", "!=", "<", ">", "<=", ">=", "!", "~", "&", "|", "^", "<<", ">>", "..", "...", "@", "." };
-    const operator_values = [_]Operator{ .@"+", .@"-", .@"*", .@"/", .@"%", .@"=", .@"==", .@"!=", .@"<", .@">", .@"<=", .@">=", .@"!", .@"~", .@"&", .@"|", .@"^", .@"<<", .@">>", .@"..", .@"...", .@"@", .@"." };
+    const operator_strings = [_][]const u8{ "and", "or", "+", "-", "*", "/", "%", "=", "==", "!=", "<", ">", "<=", ">=", "!", "~", "&", "|", "^", "<<", ">>", "..", "...", "@", "." };
+    const operator_values = [_]Operator{ .@"and", .@"or", .@"+", .@"-", .@"*", .@"/", .@"%", .@"=", .@"==", .@"!=", .@"<", .@">", .@"<=", .@">=", .@"!", .@"~", .@"&", .@"|", .@"^", .@"<<", .@">>", .@"..", .@"...", .@"@", .@"." };
     comptime {
         if (operator_strings.len != operator_values.len) {
             @compileError("operator arrays must have same length");
@@ -535,13 +537,15 @@ pub fn lexer(allocator: std.mem.Allocator, source: []const u8) !TokenList {
                         const prev_is_separator = (index == 0) or
                             (source[prev_pos] == ' ') or
                             (source[prev_pos] == '\n') or
-                            (source[prev_pos] == '\t');
+                            (source[prev_pos] == '\t') or
+                            isPunctuationOrOperator(source[prev_pos]);
 
                         const next_pos = index + keyword_len;
                         const next_is_separator = (next_pos >= source.len) or
                             (source[next_pos] == ' ') or
                             (source[next_pos] == '\n') or
-                            (source[next_pos] == '\t');
+                            (source[next_pos] == '\t') or
+                            isPunctuationOrOperator(source[next_pos]);
 
                         // If not a standalone keyword, skip it
                         if (!prev_is_separator or !next_is_separator) {
@@ -654,6 +658,14 @@ pub fn lexer(allocator: std.mem.Allocator, source: []const u8) !TokenList {
 
     std.debug.print("DEBUG: Lexer completed, generated {d} tokens\n", .{list.items.len});
     return TokenList{ .list = list, .allocator = allocator };
+}
+
+// Helper function to determine if a character is part of punctuation or operator
+fn isPunctuationOrOperator(c: u8) bool {
+    return switch (c) {
+        ',', '[', ']', '(', ')', ':', '.', '+', '-', '*', '/', '%', '=', '!', '&', '|', '^', '<', '>', '~', '@' => true,
+        else => false,
+    };
 }
 
 /// Helper function to process identifier or number token
