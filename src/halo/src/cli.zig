@@ -1,7 +1,7 @@
 const std = @import("std");
 const lexer = @import("lexer.zig").lexer;
-const parser = @import("parser.zig");
-const parse = parser.parse;
+const parser = @import("ir.zig");
+const express = parser.express;
 const Expression = parser.Expression;
 
 /// Recursively prints an AST node with proper indentation
@@ -269,6 +269,7 @@ fn printAst(expressions: []const *Expression) void {
 }
 
 pub fn main() !void {
+    std.debug.print("Starting CLI...\n", .{});
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -285,6 +286,7 @@ pub fn main() !void {
         std.debug.print("Usage: {s} <filename>\n", .{args.next().?});
         std.process.exit(1);
     };
+    std.debug.print("Reading file: {s}\n", .{filename});
 
     // Read the file
     const file = try std.fs.cwd().openFile(filename, .{});
@@ -292,14 +294,16 @@ pub fn main() !void {
 
     const source = try file.readToEndAlloc(allocator, 1024 * 1024); // 1MB limit
     defer allocator.free(source);
+    std.debug.print("File read successfully, size: {d} bytes\n", .{source.len});
 
     // Run the lexer on the file contents
+    std.debug.print("Running lexer...\n", .{});
     var tokens = try lexer(allocator, source);
     defer tokens.deinit();
+    std.debug.print("Lexer completed, found {d} tokens\n", .{tokens.list.items.len});
 
+    // Print tokens for debugging
     for (tokens.list.items) |token| {
-        //print detailed information for each token
-        //implement correctly for all tokens
         switch (token) {
             .identifier => {
                 std.debug.print("  Identifier: {s}\n", .{token.identifier});
@@ -336,18 +340,15 @@ pub fn main() !void {
             .space => {
                 std.debug.print("  Space\n", .{});
             },
-            .operator => {
-                std.debug.print("  Operator: {s}\n", .{@tagName(token.operator)});
+            .symbol => {
+                std.debug.print("  Symbol: {s}\n", .{@tagName(token.symbol)});
             },
             .keyword => {
                 std.debug.print("  Keyword: {s}\n", .{@tagName(token.keyword)});
             },
         }
     }
-
-    const expressions = try parse(allocator, tokens.list);
-    defer parser.deinitExpressions(expressions, allocator);
-
-    // Print the AST in a tree format
-    printAst(expressions);
+    const expression = try express(allocator, tokens.list.items);
+    //print the expression
+    std.debug.print("Expression: {any}\n", .{expression});
 }

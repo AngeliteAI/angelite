@@ -26,3 +26,43 @@ fn main()
 		quad.position.z = primary
 		//special functor syntax for emitting
 		quad() 
+
+
+/*
+expected output should be
+
+literal representation of the previous
+def # testSyntax = | mask , backface |
+    mask . * = @ column & ~
+    if backface
+        @ column << 1
+    else 
+        @ column >> 1
+
+(
+    def
+    (prop const testSyntax)
+    ((ref mask) backface)
+    (
+        assign
+        (prop (deref mask))
+        (
+            ~
+            (
+                ?
+                (prop backface)
+                (
+                    <<
+                    fetch (prop global column)
+                    1
+                )
+                (
+                    >>
+                    fetch (prop global column)
+                    1
+                )
+            )
+        )
+    )
+)
+*/

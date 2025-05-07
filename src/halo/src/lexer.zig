@@ -14,6 +14,7 @@ pub const Keyword = enum {
     @"const",
     @"var",
     @"defer",
+    loop,
     true,
     false,
 };
@@ -28,37 +29,27 @@ pub const Punctuation = enum {
     @":",
 };
 
-pub const Operator = enum {
-    And, // And & and
-    Or, // Or | or
-    @".",
+pub const Symbol = enum {
+    @".", // Dot should only be defined here
     @"+",
     @"-",
     @"*",
     @"/",
     @"%",
     @"=",
-    @"==",
-    @"!=",
     @"<",
     @">",
-    @"<=",
-    @">=",
     @"!",
     @"~",
     @"&",
     @"|",
     @"^",
-    @"<<",
-    @">>",
-    @"..",
-    @"...",
     @"@",
-    @"and", // New: textual and operator
-    @"or", // New: textual or operator
+    @"and", // New: textual and symbol
+    @"or", // New: textual or symbol
 
-    pub fn requiresLeftSpace(self: Operator) bool {
-        //Should be C like syntax, for instance, dot operator is false but math operators are true
+    pub fn requiresLeftSpace(self: Symbol) bool {
+        //Should be C like syntax, for instance, dot symbol is false but math operators are true
         //TODO this should consider context, for instance, & could be address of (where this is false) or bitwise and (where this is true)
         return switch (self) {
             .@".", .@"@", .@"*", .@"&", .@"...", .@"and", .@"or" => false,
@@ -66,8 +57,8 @@ pub const Operator = enum {
         };
     }
 
-    pub fn requiresRightSpace(self: Operator) bool {
-        //Should be C like syntax, for instance, dot operator is false but math operators are true
+    pub fn requiresRightSpace(self: Symbol) bool {
+        //Should be C like syntax, for instance, dot symbol is false but math operators are true
         //TODO this should consider context, for instance, & could be address of (where this is false) or bitwise and (where this is true)
         return switch (self) {
             .@".", .@"@", .@"*", .@"&", .@"~", .@"!", .@"...", .@"and", .@"or" => false,
@@ -75,20 +66,18 @@ pub const Operator = enum {
         };
     }
 
-    pub fn canBeCompoundAssignment(self: Operator) bool {
-        // Only certain operators can be used in compound assignments
+    pub fn canBeCompoundAssignment(self: Symbol) bool {
+        // Only certain symbols can be used in compound assignments
         return switch (self) {
             .@"+", .@"-", .@"*", .@"/", .@"%", .@"&", .@"|", .@"^", .@"<<", .@">>" => true,
             else => false,
         };
     }
 
-    pub fn precedence(self: Operator) u8 {
+    pub fn precedence(self: Symbol) u8 {
         return switch (self) {
             .@"and" => 2, // Text version 'and' has same precedence as And
             .@"or" => 1, // Text version 'or' has same precedence as Or
-            .And => 2,
-            .Or => 1,
             .@"<" => 4,
             .@">" => 4,
             .@"<=" => 4,
@@ -115,7 +104,7 @@ pub const Operator = enum {
         };
     }
 
-    pub fn associativity(self: Operator) Associativity {
+    pub fn associativity(self: Symbol) Associativity {
         return switch (self) {
             .@".",
             .@"*",
@@ -139,7 +128,7 @@ pub const Token = union(enum) {
     space,
     comment: []const u8,
     keyword: Keyword,
-    operator: Operator,
+    symbol: Symbol,
     literal: Value,
     punctuation: Punctuation,
     identifier: []const u8,
@@ -222,8 +211,8 @@ fn buildLookupTable(allocator: std.mem.Allocator) !LookupTable {
     defer lexerTable.deinit();
 
     // Keywords
-    const keyword_strings = [_][]const u8{ "fn", "return", "if", "else", "while", "for", "break", "continue", "const", "var", "defer", "true", "false" };
-    const keyword_values = [_]Keyword{ .@"fn", .@"return", .@"if", .@"else", .@"while", .@"for", .@"break", .@"continue", .@"const", .@"var", .@"defer", .true, .false };
+    const keyword_strings = [_][]const u8{ "fn", "return", "if", "else", "while", "for", "break", "continue", "const", "var", "defer", "true", "false", "loop" };
+    const keyword_values = [_]Keyword{ .@"fn", .@"return", .@"if", .@"else", .@"while", .@"for", .@"break", .@"continue", .@"const", .@"var", .@"defer", .true, .false, .loop };
     comptime {
         if (keyword_strings.len != keyword_values.len) {
             @compileError("keyword arrays must have same length");
@@ -234,17 +223,17 @@ fn buildLookupTable(allocator: std.mem.Allocator) !LookupTable {
         std.debug.print("DEBUG: Added keyword: {s}\n", .{str});
     }
 
-    // Operators
-    const operator_strings = [_][]const u8{ "and", "or", "+", "-", "*", "/", "%", "=", "==", "!=", "<", ">", "<=", ">=", "!", "~", "&", "|", "^", "<<", ">>", "..", "...", "@", "." };
-    const operator_values = [_]Operator{ .@"and", .@"or", .@"+", .@"-", .@"*", .@"/", .@"%", .@"=", .@"==", .@"!=", .@"<", .@">", .@"<=", .@">=", .@"!", .@"~", .@"&", .@"|", .@"^", .@"<<", .@">>", .@"..", .@"...", .@"@", .@"." };
+    // Symbols
+    const symbol_strings = [_][]const u8{ "and", "or", "+", "-", "*", "/", "%", "=", "<", ">", "!", "~", "&", "|", "^", "@", "." };
+    const symbol_values = [_]Symbol{ .@"and", .@"or", .@"+", .@"-", .@"*", .@"/", .@"%", .@"=", .@"<", .@">", .@"!", .@"~", .@"&", .@"|", .@"^", .@"@", .@"." };
     comptime {
-        if (operator_strings.len != operator_values.len) {
-            @compileError("operator arrays must have same length");
+        if (symbol_strings.len != symbol_values.len) {
+            @compileError("symbol arrays must have same length");
         }
     }
-    inline for (operator_strings, operator_values) |str, val| {
-        try lexerTable.put(str, Token{ .operator = val });
-        std.debug.print("DEBUG: Added operator: {s}\n", .{str});
+    inline for (symbol_strings, symbol_values) |str, val| {
+        try lexerTable.put(str, Token{ .symbol = val });
+        std.debug.print("DEBUG: Added symbol: {s}\n", .{str});
     }
 
     // Punctuation
@@ -529,8 +518,8 @@ pub fn lexer(allocator: std.mem.Allocator, source: []const u8) !TokenList {
                         const keyword_len = slice_to_check.len;
 
                         // Simple approach: only recognize keywords when they're:
-                        // 1. Preceded by a space, newline, operator, or punctuation (or start of source)
-                        // 2. Followed by a space, newline, operator, or punctuation (or end of source)
+                        // 1. Preceded by a space, newline, symbol, or punctuation (or start of source)
+                        // 2. Followed by a space, newline, symbol, or punctuation (or end of source)
 
                         // Check if this is a standalone keyword
                         const prev_pos = if (index > 0) index - 1 else 0;
@@ -538,14 +527,14 @@ pub fn lexer(allocator: std.mem.Allocator, source: []const u8) !TokenList {
                             (source[prev_pos] == ' ') or
                             (source[prev_pos] == '\n') or
                             (source[prev_pos] == '\t') or
-                            isPunctuationOrOperator(source[prev_pos]);
+                            isPunctuationOrSymbol(source[prev_pos]);
 
                         const next_pos = index + keyword_len;
                         const next_is_separator = (next_pos >= source.len) or
                             (source[next_pos] == ' ') or
                             (source[next_pos] == '\n') or
                             (source[next_pos] == '\t') or
-                            isPunctuationOrOperator(source[next_pos]);
+                            isPunctuationOrSymbol(source[next_pos]);
 
                         // If not a standalone keyword, skip it
                         if (!prev_is_separator or !next_is_separator) {
@@ -660,8 +649,8 @@ pub fn lexer(allocator: std.mem.Allocator, source: []const u8) !TokenList {
     return TokenList{ .list = list, .allocator = allocator };
 }
 
-// Helper function to determine if a character is part of punctuation or operator
-fn isPunctuationOrOperator(c: u8) bool {
+// Helper function to determine if a character is part of punctuation or symbol
+fn isPunctuationOrSymbol(c: u8) bool {
     return switch (c) {
         ',', '[', ']', '(', ')', ':', '.', '+', '-', '*', '/', '%', '=', '!', '&', '|', '^', '<', '>', '~', '@' => true,
         else => false,

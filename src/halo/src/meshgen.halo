@@ -1,7 +1,6 @@
 fn faceMask(*mask, backface)
 	//expressions as first class citizens like functions
-	// & - bitwise AND / ~ - bitwise NOT / | - bitwise OR / ^ - bitwise XOR
-	mask.* = @column & ~ if backface
+	mask.* = @column & ~if backface
 		@column << 1
 	else
 		@column >> 1
@@ -22,8 +21,10 @@ fn main()
 	//I do not know if this is possible in SPIRV so it might have to be changed
 	var quad = @emitter(data.region.faceCount, Quad)
 
-	while mask != 0 : mask &= ~ (1 << primary)
+	while mask != 0 : mask &= ~(1 << primary)
 		const primary = @findLSB(mask)
 		quad.position.z = primary
 		//special functor syntax for emitting
-		quad()
+		quad() 
+
+
