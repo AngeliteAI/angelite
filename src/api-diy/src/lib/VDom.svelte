@@ -1,175 +1,400 @@
-<script context="module" lang="ts">
-import { writable } from 'svelte/store';
+<script lang="ts">
+    import { onMount } from "svelte";
+    
+    // Props
+    let {
+        selectedNodeId = $bindable<string | null>(null),
+        showBlueprintMode = false,
+    } = $props();
 
-class VNode {
-    id: string;
-    tagName: string;
-    props: Record<string, any>;
-    children: string[]; // Assuming children are stored as an array of IDs
-    parentId: string | null;
-    styleProps: Record<string, any>;
-
-    constructor(id: string, tagName: string, parentId: string | null = null, children: string[] = [], props: Record<string, any> = {}, styleProps: Record<string, any> = {}) {
-      this.id = id;
-      this.tagName = tagName;
-      this.props = props;
-      this.children = children;
-      this.parentId = parentId;
-      this.styleProps = styleProps;
-    }
-  
-    appendChild(childNode: VNode) { // Assuming child is a VNode instance
-      childNode.parentId = this.id;
-      this.children.push(childNode.id);
-    }
-  
-    setStyle(property: string, value: any) {
-      this.styleProps[property] = value;
-    }
-  
-    setProperty(name: string, value: any) {
-      this.props[name] = value;
-    }
-  
-    toString(): string {
-      return JSON.stringify(this, null, 2);
-    }
-}
-
-
-class VDom {
-    nodes = $state(new Map<string, VNode>());
-    rootNodeId: string | null;
-
-    constructor() {
-        this.rootNodeId = null;
-        console.log("New VDom instance created");
+    // Create a simple registry
+    let nodeRegistry = $state(new Map());
+    let nodeCount = $state(0);
+    let rootNodeId = $state("root");
+    
+    // Check if root node is already present
+    if (!nodeRegistry.has(rootNodeId)) {
+        // Initialize root node
+        nodeRegistry.set(rootNodeId, {
+            id: rootNodeId,
+            tagName: "div",
+            parentId: null,
+            children: [],
+            props: {},
+            styleProps: {
+                width: "100%",
+                height: "100%",
+                position: "relative",
+                padding: "20px",
+            },
+        });
     }
 
-    getNode(id: string): VNode | undefined {
-        return this.nodes.get(id);
-    }
-
-    createNode(elementType: string, parentId: string | null): [string, VNode] {
-        const id = crypto.randomUUID();
-        // Ensure children array is initialized as string[] for VNode constructor
-        const element = new VNode(id, elementType, parentId, [], {}, {}); 
-        console.log(`Node created: ${id} (${elementType})`);
-        return [id, element];
-    }
-
-    addNode(elementType: string, parentId: string | null): string {
-        const [id, element] = this.createNode(elementType, parentId);
-
+    // Simple node methods
+    function addNode(elementType, parentId = null) {
+        // Default to root if no parent specified
         if (parentId === null) {
-            this.rootNodeId = id;
-            console.log(`Root node set: ${id}`);
+            parentId = rootNodeId;
         }
 
-        this.nodes.set(id, element);
+        // Generate ID
+        const nodeId = crypto.randomUUID();
+        console.log(`Adding node ${nodeId} (${elementType}) to parent ${parentId}`);
         
-        if (parentId !== null) {
-            const parentNode = this.nodes.get(parentId);
-            if (parentNode) {
-                console.log(`Adding child ${id} to parent ${parentId}`);
-                parentNode.appendChild(element); // Pass the VNode element
-                // No need to this.nodes.set(parentId, parentNode) if appendChild mutates parentNode directly 
-                // and parentNode is the same object reference from the map. Svelte $state should track deep mutations.
-            }
+        // Create node object
+        // Add to registry
+        nodeRegistry.set(nodeId, {
+            id: nodeId,
+            tagName: elementType,
+            parentId: parentId,
+            children: [],
+            props: {},
+            styleProps: {},
+        });
+        nodeCount++; // Increment counter to trigger reactivity
+        
+        // Add to parent's children list
+        if (parentId && nodeRegistry.has(parentId)) {
+            const parentNode = nodeRegistry.get(parentId);
+            parentNode.children.push(nodeId);
+            nodeRegistry.set(parentId, {...parentNode}); // Update parent in registry
+            console.log(`Added ${nodeId} to parent ${parentId}, children count: ${parentNode.children.length}`);
         }
-        return id;
+        
+        // Force refresh to ensure the node is rendered
+        forceRefresh();
+        
+        return nodeId;
     }
     
-    printTree() {
-        if (!this.rootNodeId) {
-            console.log("No root node");
-            return;
+    function getNode(id) {
+        if (!nodeRegistry.has(id)) {
+            console.log(`Node ${id} not found in registry`);
+            return null;
         }
         
-        const printNode = (id: string, depth = 0) => {
-            const node = this.nodes.get(id);
-            if (!node) return;
-            
-            const indent = "  ".repeat(depth);
-            console.log(`${indent}- ${node.tagName} (${id})`);
-            
-            if (node.children) { // Check if children exist
-                for (const childId of node.children) {
-                    printNode(childId, depth + 1);
-                }
+        const node = nodeRegistry.get(id);
+        
+        // Add methods
+        return {
+            ...node,
+            setProperty: (name, value) => {
+                console.log(`Setting property ${name}=${value} on node ${id}`);
+                node.props[name] = value;
+                // This forces Svelte to recognize the change
+                nodeRegistry.set(id, {...node});
+                nodeCount++; // Increment counter to trigger reactivity
+                forceRefresh();
+            },
+            setStyle: (property, value) => {
+                console.log(`Setting style ${property}=${value} on node ${id}`);
+                node.styleProps[property] = value;
+                // This forces Svelte to recognize the change
+                nodeRegistry.set(id, {...node});
+                nodeCount++; // Increment counter to trigger reactivity
+                forceRefresh();
             }
         };
+    }
+    
+    // Force refresh function to update the DOM
+    // Store a global copy of our registry to prevent it from being lost
+    let globalRegistry = new Map();
+    
+    function forceRefresh() {
+        setTimeout(() => {
+            // Protect our registry from being destroyed
+            if (nodeRegistry.size > globalRegistry.size) {
+                // Update global registry if needed
+                globalRegistry = new Map(nodeRegistry);
+            } else if (globalRegistry.size > nodeRegistry.size) {
+                // Restore registry from global if it was lost
+                nodeRegistry = new Map(globalRegistry);
+                console.log("Restored registry from global copy, nodes:", nodeRegistry.size);
+            }
+            
+            console.log("Forcing refresh of VDOM");
+            console.log("Current nodes:", Array.from(nodeRegistry.keys()));
+            
+            const vdomContainer = document.querySelector('.vdom-container');
+            if (vdomContainer) {
+                // Create nodes directly in the DOM instead of using innerHTML
+                createDomNodesDirectly(vdomContainer);
+                
+                // Log all reorderable elements after render
+                setTimeout(() => {
+                    const reorderables = document.querySelectorAll('.reorderable');
+                    console.log(`Found ${reorderables.length} reorderable elements after refresh`);
+                    reorderables.forEach(el => {
+                        console.log(`Reorderable: ${el.tagName} - ID: ${el.id}, data-node-id: ${el.getAttribute('data-node-id')}`);
+                    });
+                }, 10);
+            }
+        }, 0);
+    }
+    
+    // Directly create DOM nodes instead of using innerHTML
+    function createDomNodesDirectly(container) {
+        // Clear the container
+        container.innerHTML = '';
         
-        console.log("VDom Tree:");
-        printNode(this.rootNodeId);
+        // Create the root node first
+        const rootNode = createDomNodeForId(rootNodeId);
+        if (rootNode) {
+            container.appendChild(rootNode);
+        }
     }
-}
-
-function initializeActiveVDom(pageRootData: any | null) { // pageRootData matches PageContentNode structure
-    console.log("[VDom.svelte] Initializing activeVDom with data:", pageRootData);
-    let instance = activeVDom;
-    if (!instance) {
-        instance = new VDom();
-    }
-    instance.nodes.clear();
-    instance.rootNodeId = null;
-
-    if (!pageRootData) {
-        console.log("[VDom.svelte] No page data, creating default placeholder.");
-        const rootId = instance.addNode('div', null);
-        const h1Id = instance.addNode('h1', rootId);
-        const h1Node = instance.getNode(h1Id);
-        if (h1Node) h1Node.setProperty('textContent', 'No document loaded or empty (from VDom.svelte).');
-        const rootNode = instance.getNode(rootId);
-        if (rootNode) rootNode.setProperty('className', 'placeholder-content');
-    } else {
-        // Recursive function to add nodes from the page data structure
-        function recursivelyAddNodesFromPageData(currentVDom: VDom, pageNode: any, parentVNodeId: string | null) {
-            const newVNodeId = currentVDom.addNode(pageNode.type, parentVNodeId);
-            const newVNode = currentVDom.getNode(newVNodeId);
-            if (newVNode) {
-                if (pageNode.props) {
-                    for (const key in pageNode.props) {
-                        newVNode.setProperty(key, pageNode.props[key]);
-                    }
-                }
-                if (pageNode.textContent && !pageNode.props?.textContent) {
-                    newVNode.setProperty('textContent', pageNode.textContent);
-                }
-                if (pageNode.children) {
-                    for (const pageChild of pageNode.children) {
-                        recursivelyAddNodesFromPageData(currentVDom, pageChild, newVNodeId);
-                    }
+    
+    // Create a DOM node for a specific node ID
+    function createDomNodeForId(nodeId) {
+        if (!nodeRegistry.has(nodeId)) {
+            console.warn(`Node ${nodeId} not found in registry`);
+            return null;
+        }
+        
+        const node = nodeRegistry.get(nodeId);
+        const isRoot = node.parentId === null;
+        const isSelected = nodeId === selectedNodeId;
+        
+        // Create the DOM element
+        const element = document.createElement('div');
+        element.id = nodeId;
+        element.setAttribute('data-node-id', nodeId);
+        element.setAttribute('data-node-type', node.tagName);
+        element.className = `node ${node.tagName} reorderable ${isRoot ? 'root' : ''} ${isSelected ? 'selected' : ''}`;
+        element.draggable = true;
+        
+        // Set styles
+        for (const [key, value] of Object.entries(node.styleProps || {})) {
+            const kebabKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+            element.style[kebabKey] = value;
+        }
+        
+        // Set click handler
+        element.onclick = (e) => {
+            e.stopPropagation();
+            window.handleNodeClick(nodeId);
+        };
+        
+        // Add content based on props
+        if (node.props.textContent) {
+            const span = document.createElement('span');
+            span.className = 'node-content';
+            span.textContent = node.props.textContent;
+            element.appendChild(span);
+        }
+        
+        // Add children
+        if (node.children && node.children.length > 0) {
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'children';
+            
+            for (const childId of node.children) {
+                console.log(`Creating DOM element for child ${childId} of ${nodeId}`);
+                const childElement = createDomNodeForId(childId);
+                if (childElement) {
+                    childrenContainer.appendChild(childElement);
                 }
             }
+            
+            element.appendChild(childrenContainer);
         }
-        recursivelyAddNodesFromPageData(instance, pageRootData, null);
-        console.log("[VDom.svelte] populated from page data.");
+        
+        return element;
     }
-    activeVDom?.printTree();
-}
-let activeVDom = $state(new VDom());
-
-// Convert to writable stores for drag state
-export const draggedElement = writable<string | null>(null);
-export const draggedCurrentX = writable(0);
-export const draggedCurrentY = writable(0);
-
-// Helper update functions
-export function updateDraggedElement(id: string | null) {
-    draggedElement.set(id);
-}
-
-export function updateDraggedPosition(x: number, y: number) {
-    draggedCurrentX.set(x);
-    draggedCurrentY.set(y);
-}
-
-export function resetDragState() {
-    draggedElement.set(null);
-    draggedCurrentX.set(0);
-    draggedCurrentY.set(0);
-}
-
-export { VNode, VDom, initializeActiveVDom, activeVDom };
+    
+    // Handle node selection
+    function handleNodeClick(id) {
+        console.log(`Node clicked: ${id}`);
+        selectedNodeId = id;
+    }
+    
+    // Helper to render a node and its children
+    function renderNode(nodeId) {
+        if (!nodeRegistry.has(nodeId)) {
+            console.log(`Cannot render node ${nodeId}, not in registry`);
+            return '';
+        }
+        
+        const node = nodeRegistry.get(nodeId);
+        const isRoot = node.parentId === null;
+        const isSelected = nodeId === selectedNodeId;
+        
+        // Convert style object to inline style string
+        const styleStr = Object.entries(node.styleProps || {})
+            .map(([key, value]) => {
+                const kebabKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+                return `${kebabKey}: ${value}`;
+            })
+            .join('; ');
+            
+        // Start of element - making sure to add reorderable class
+    let html = `<div 
+        id="${nodeId}" 
+        data-node-id="${nodeId}" 
+        data-node-type="${node.tagName}"
+        class="node ${node.tagName} reorderable ${isRoot ? 'root' : ''} ${isSelected ? 'selected' : ''}"
+        style="${styleStr}"
+        onclick="window.handleNodeClick('${nodeId}');"
+        draggable="true"
+    >`;
+        
+        // Add content based on props
+        if (node.props.textContent) {
+            html += `<span class="node-content">${node.props.textContent}</span>`;
+        }
+        
+        // Add children
+        // Loop through all children
+            if (node.children && node.children.length > 0) {
+                html += `<div class="children">`;
+                for (const childId of node.children) {
+                    console.log(`Rendering child ${childId} of ${nodeId}`);
+                    if (nodeRegistry.has(childId)) {
+                        html += renderNode(childId);
+                    } else if (globalRegistry && globalRegistry.has(childId)) {
+                        // Try to recover from global registry if available
+                        nodeRegistry.set(childId, globalRegistry.get(childId));
+                        html += renderNode(childId);
+                    } else {
+                        console.warn(`Child ${childId} not found in registry!`);
+                    }
+                }
+                html += `</div>`;
+            }
+        
+        // Close element
+        html += `</div>`;
+        
+        return html;
+    }
+    
+    // Make the click handler global so it can be called from rendered HTML
+    onMount(() => {
+        window.handleNodeClick = (id) => {
+            console.log(`Node clicked via global handler: ${id}`);
+            selectedNodeId = id;
+            forceRefresh();
+        };
+        
+        // Initial render - create DOM nodes directly
+        setTimeout(() => {
+            console.log('Initial render, nodes in registry:', nodeRegistry.size);
+            console.log('Nodes:', Array.from(nodeRegistry.keys()));
+            
+            // Create DOM nodes directly
+            const vdomContainer = document.querySelector('.vdom-container');
+            if (vdomContainer) {
+                createDomNodesDirectly(vdomContainer);
+                
+                // Check for reorderable elements
+                setTimeout(() => {
+                    const reorderables = document.querySelectorAll('.reorderable');
+                    console.log(`Found ${reorderables.length} reorderable elements after direct creation`);
+                }, 50);
+            }
+        }, 100);
+        
+        return () => {
+            delete window.handleNodeClick;
+        };
+    });
+    
+    // Export functions for external use
+    export { rootNodeId, addNode, getNode, forceRefresh };
 </script>
+
+<!-- Render the node tree using direct DOM creation -->
+<div class="vdom-container" id="vdom-container">
+    <!-- Container for nodes created by createDomNodesDirectly -->
+    <!-- Invisible counter to force reactivity: {nodeCount} -->
+</div>
+
+<!-- Debug button to force DOM regeneration -->
+<button 
+    class="debug-button" 
+    on:click={() => {
+        const container = document.querySelector('.vdom-container');
+        if (container) createDomNodesDirectly(container);
+    }}
+>
+    Regenerate DOM
+</button>
+
+<!-- Debug info -->
+<div class="debug-overlay">
+    <div>Root ID: {rootNodeId}</div>
+    <div>Nodes: {nodeRegistry.size}</div>
+    <div>Updates: {nodeCount}</div>
+    <div>Selected: {selectedNodeId || 'none'}</div>
+</div>
+
+<style>
+    .vdom-container {
+        width: 100%;
+        height: 100%;
+        position: relative;
+    }
+    
+    :global(.node) {
+        position: relative;
+        min-height: 20px;
+        min-width: 20px;
+        box-sizing: border-box;
+        transition: background-color 0.15s ease, outline 0.15s ease;
+        z-index: 1;
+    }
+    
+    :global(.node.selected) {
+        outline: 2px solid #4299e1;
+        z-index: 10;
+        box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.5);
+    }
+    
+    :global(.children) {
+        margin-left: 10px;
+        position: relative;
+        z-index: 2;
+    }
+    
+    :global(.root) {
+        width: 100%;
+        height: 100%;
+    }
+    
+    :global(.node-content) {
+        display: inline-block;
+    }
+    
+    .debug-overlay {
+        position: fixed;
+        bottom: 10px;
+        left: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 5px 10px;
+        font-family: monospace;
+        font-size: 12px;
+        border-radius: 4px;
+        z-index: 9999;
+    }
+    
+    .debug-button {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(66, 153, 225, 0.9);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 9999;
+        cursor: pointer;
+        border: none;
+    }
+    
+    .debug-button:hover {
+        background: rgba(66, 153, 225, 1);
+    }
+</style>
