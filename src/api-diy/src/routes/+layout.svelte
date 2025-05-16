@@ -1,4 +1,6 @@
 <script lang="ts">
+    import "../app.css";
+
     import { onMount } from "svelte";
     import Node from "$lib/Node.svelte";
     import Document from "$lib/components/Document.svelte";
@@ -6,6 +8,7 @@
     import { tweened } from "svelte/motion";
     import { fade, fly } from "svelte/transition";
     import Viewport from "$lib/components/Viewport.svelte";
+    import Tailwind from "$lib/Tailwind.svelte";
 
     // Camera and viewport state
     let virtualScale = 0.2;
@@ -258,7 +261,7 @@
             styles: {
                 position: "absolute",
                 top: "250px",
-                left: "50px",
+                left: "35px",
                 background: "#4f46e5",
                 color: "white",
                 padding: "8px 16px",
@@ -286,9 +289,12 @@
 </script>
 
 <div
-    class="grid h-screen w-full grid-cols-[auto_1fr_auto] grid-rows-[2.25rem_1fr] bg-black"
+    class="bg-black grid grid-cols-[35px_1fr_auto] grid-rows-[35px_1fr] h-screen"
 >
-    <header class="col-span-3 bg-black z-10 flex items-center justify-center">
+    <!-- Header (top bar) -->
+    <header
+        class="col-span-3 row-start-1 bg-black flex items-center justify-center p-2"
+    >
         <select
             class="bg-[#27272a] text-white text-sm rounded px-2 py-1 mr-4"
             bind:value={currentVirtualDeviceIndex}
@@ -298,7 +304,6 @@
                 <option value={i}>{device.name}</option>
             {/each}
         </select>
-
         <button
             class="ml-4 px-3 py-1 rounded text-xs bg-[#27272a] border border-gray-600 hover:bg-[#3f3f46]"
             on:click={toggleBlueprintMode}
@@ -307,16 +312,27 @@
         </button>
     </header>
 
-    <nav class="col-start-1 row-start-2 flex flex-col items-center"></nav>
+    <!-- Left sidebar -->
+    <nav class="col-start-1 row-span-3 bg-black flex flex-col items-center">
+        d
+    </nav>
 
-    <Viewport
-        {vdom}
-        {selectedNodeId}
-        {showBlueprintMode}
-        {virtualDevices}
-        dispatch={(event: string, detail: any) =>
-            handleNodeEvent(event, detail)}><slot /></Viewport
-    >
+    <!-- Main content area with viewport -->
+    <div class="col-start-2 row-start-2 overflow-hidden">
+        <Viewport
+            {vdom}
+            {selectedNodeId}
+            {showBlueprintMode}
+            {virtualDevices}
+            {virtualScale}
+            {mouseX}
+            {mouseY}
+            dispatch={(event: string, detail: any) =>
+                handleNodeEvent(event, detail)}><slot /></Viewport
+        >
+    </div>
+
+    <!-- Right sidebar -->
     <aside
         class="col-start-3 row-start-2 bg-black text-white overflow-hidden transition-all duration-300 ease-out"
         style="width: {$sidebarWidth}px;"

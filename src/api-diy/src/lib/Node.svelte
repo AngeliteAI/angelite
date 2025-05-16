@@ -17,6 +17,7 @@
         styleProps = {},
         selectedNodeId = $bindable<NodeId | null>(null),
         showBlueprintMode = false,
+        virtualScale = $bindable(0.2),
     } = $props();
 
     // Node registry for the entire tree
@@ -38,18 +39,24 @@
     });
 
     console.log(`Node registered: ${id} (${tagName})`);
-    
+
     // Also register on mount for safety
     onMount(() => {
         console.log(`Node mounted: ${id} (${tagName})`);
-        
+
         // Force styling update
         const domElement = document.querySelector(`[data-node-id="${id}"]`);
         if (domElement) {
             console.log(`DOM element found for node ${id}`);
             Object.entries(styleProps || {}).forEach(([key, value]) => {
-                const propertyName = key.replace(/([A-Z])/g, (match) => `-${match.toLowerCase()}`);
-                (domElement as HTMLElement).style.setProperty(propertyName, value as string);
+                const propertyName = key.replace(
+                    /([A-Z])/g,
+                    (match) => `-${match.toLowerCase()}`,
+                );
+                (domElement as HTMLElement).style.setProperty(
+                    propertyName,
+                    value as string,
+                );
             });
         } else {
             console.warn(`DOM element NOT found for node ${id}`);
@@ -144,6 +151,9 @@
     }
 
     // UI event handlers
+    import { createEventDispatcher } from "svelte";
+    const dispatch = createEventDispatcher();
+
     function handleClick(event: MouseEvent) {
         // Important fix for the parent selection issue
         // Get the actual DOM element at the exact click position
@@ -173,8 +183,9 @@
         event.stopPropagation();
         event.preventDefault();
 
-        // Select this node
+        // Select this node and dispatch event
         selectedNodeId = id;
+        dispatch("select", { id });
     }
 
     // Helper functions
@@ -232,13 +243,13 @@
     }
 </script>
 
-<Snappable>
+<Snappable virtualScale={virtualScale}>
     <div
         class="node {tagName} reorderable"
         class:root={parentId == null}
         class:selected={isSelected()}
         class:blueprint={showBlueprintMode}
-        id={id}
+        {id}
         data-node-id={id}
         data-node-type={tagName}
         draggable={isSelected()}
@@ -246,7 +257,9 @@
         role="button"
         tabindex="0"
         onkeydown={(e) => e.key === "Enter" && handleClick(e)}
-        style={Object.entries(styleProps || {}).map(([k, v]) => `${camelToKebab(k)}: ${v}`).join('; ')}
+        style={Object.entries(styleProps || {})
+            .map(([k, v]) => `${camelToKebab(k)}: ${v}`)
+            .join("; ")}
     >
         {#if showBlueprintMode}
             <div class="node-content">
@@ -265,7 +278,8 @@
                     {#if nodesRegistry.has(childId)}
                         <svelte:self
                             id={childId}
-                            tagName={nodesRegistry.get(childId)?.tagName || 'div'}
+                            tagName={nodesRegistry.get(childId)?.tagName ||
+                                "div"}
                             parentId={id}
                             children={nodesRegistry.get(childId)?.children ||
                                 []}
@@ -274,6 +288,8 @@
                                 ?.styleProps || {}}
                             {selectedNodeId}
                             {showBlueprintMode}
+                            {virtualScale}
+                            on:select
                         />
                     {/if}
                 {/each}

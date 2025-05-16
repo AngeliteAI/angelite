@@ -35,10 +35,11 @@
         data-document="true"
     >
         <!-- Root node with all children -->
-        <VDom 
-            bind:this={activeVDom} 
-            bind:selectedNodeId={selectedNodeId}
+        <VDom
+            bind:this={activeVDom}
+            bind:selectedNodeId
             {showBlueprintMode}
+            {virtualScale}
         />
         <!-- Snap grid guide (subtle visual cue) -->
         <div class="snap-grid"></div>
@@ -69,8 +70,7 @@
     .virtual-container {
         position: relative;
         display: block;
-        transform: translate(var(--camera-x, 0px), var(--camera-y, 0px))
-            scale(var(--virtual-scale));
+        transform: translate(var(--camera-x, 0px), var(--camera-y, 0px));
         cursor: move;
         touch-action: none;
         will-change: transform;

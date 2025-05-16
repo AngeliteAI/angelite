@@ -9,6 +9,7 @@
         startY = 0,
         mouseX = 0,
         mouseY = 0,
+        virtualScale = 0.2,
         selected = false,
         disabled = false,
         bounds = null,
@@ -35,6 +36,12 @@
     let aspectRatio = $state(1);
     let boundingRect = $state(null);
 
+    // Variables to track movement
+    let startMouseX = $state(0);
+    let startMouseY = $state(0);
+    let startPosX = $state(0);
+    let startPosY = $state(0);
+    
     // Tracking for velocity calculations
     let lastX = $state(0);
     let lastY = $state(0);
@@ -69,6 +76,7 @@
     // Initialize position from props
     $effect(() => {
         position = { x: startX, y: startY };
+        console.log(`Draggable ${id}: virtualScale = ${virtualScale}`);
     });
 
     // Prepare bounds if provided
@@ -122,11 +130,12 @@
 
         // Prevent default browser behavior
         event.preventDefault();
-
-        // Get element position and mouse offset
-        const rect = element.getBoundingClientRect();
-        mouseX = event.clientX - rect.left;
-        mouseY = event.clientY - rect.top;
+        
+        // Save starting positions for calculating deltas
+        startMouseX = event.clientX;
+        startMouseY = event.clientY;
+        startPosX = position.x;
+        startPosY = position.y;
 
         // Mark as dragging
         isDragging = true;
@@ -159,9 +168,16 @@
     function onPointerMove(event: PointerEvent) {
         if (!isDragging) return;
 
-        // Calculate new position
-        let newX = event.clientX - mouseX;
-        let newY = event.clientY - mouseY;
+        // Get the scale factor
+        const scaleFactor = virtualScale > 0 ? virtualScale : 0.2;
+        
+        // Calculate the movement delta
+        const deltaX = event.clientX - startMouseX;
+        const deltaY = event.clientY - startMouseY;
+        
+        // Apply the delta to the starting position, accounting for scale
+        let newX = startPosX + (deltaX / scaleFactor);
+        let newY = startPosY + (deltaY / scaleFactor);
 
         // Apply aspect ratio constraint if needed
         if (preserveAspectRatio) {
@@ -179,11 +195,11 @@
         if (boundingRect) {
             const elemRect = element.getBoundingClientRect();
 
-            // Calculate limits
-            const minX = boundingRect.left;
-            const maxX = boundingRect.right - elemRect.width;
-            const minY = boundingRect.top;
-            const maxY = boundingRect.bottom - elemRect.height;
+            // Calculate limits - adjust for scale
+            const minX = boundingRect.left / scaleFactor;
+            const maxX = boundingRect.right / scaleFactor - elemRect.width / scaleFactor;
+            const minY = boundingRect.top / scaleFactor;
+            const maxY = boundingRect.bottom / scaleFactor - elemRect.height / scaleFactor;
 
             // Apply constraints
             newX = Math.max(minX, Math.min(maxX, newX));
@@ -213,7 +229,7 @@
         // Check for potential snap positions if enabled
         let snappedPosition = snapToGrid ? findSnapPosition(newX, newY) : null;
         let finalPosition = snappedPosition || { x: newX, y: newY };
-
+        
         // Update position
         position = finalPosition;
 
@@ -292,6 +308,7 @@
     class="relative {classNames}"
     style="{positionStyle}; {zIndexStyle} {customStyles}"
     onpointerdown={onPointerDown}
+    onpointerup={onPointerUp}
 >
     {@render children()}
 </div>

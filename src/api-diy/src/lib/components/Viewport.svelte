@@ -1,5 +1,11 @@
 <script lang="ts">
-    let { children, virtualScale, selectedNodeId, mouseX, mouseY } = $props();
+    let {
+        children,
+        virtualScale = 0.2,
+        selectedNodeId,
+        mouseX,
+        mouseY,
+    } = $props();
     import Node from "../Node.svelte";
 
     import { createEventDispatcher } from "svelte";
@@ -16,8 +22,10 @@
     // Get the current VDOM state
 </script>
 
-<div id="viewport" class="--virtual-scale: {virtualScale}; relative">
-    {@render children()}
+<div id="viewport">
+    <div style="transform: scale({virtualScale});">
+        {@render children()}
+    </div>
 </div>
 
 <style>
@@ -27,8 +35,9 @@
             linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
             linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
         background-size: 20px 20px;
-        min-height: 100%;
-        min-width: 100%;
         position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
     }
 </style>
