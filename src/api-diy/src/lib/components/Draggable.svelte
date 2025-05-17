@@ -25,6 +25,7 @@
         customDraggableClass = "",
         customSelectedClass = "",
         customDraggingClass = "",
+        position = $bindable({ x: startX, y: startY }),
     } = $props();
 
     const dispatch = createEventDispatcher();
@@ -32,7 +33,6 @@
     // State variables
     let element: HTMLElement;
     let isDragging = $state(false);
-    let position = $state({ x: startX, y: startY });
     let aspectRatio = $state(1);
     let boundingRect = $state(null);
 
@@ -41,7 +41,7 @@
     let startMouseY = $state(0);
     let startPosX = $state(0);
     let startPosY = $state(0);
-    
+
     // Tracking for velocity calculations
     let lastX = $state(0);
     let lastY = $state(0);
@@ -130,7 +130,7 @@
 
         // Prevent default browser behavior
         event.preventDefault();
-        
+
         // Save starting positions for calculating deltas
         startMouseX = event.clientX;
         startMouseY = event.clientY;
@@ -170,14 +170,14 @@
 
         // Get the scale factor
         const scaleFactor = virtualScale > 0 ? virtualScale : 0.2;
-        
+
         // Calculate the movement delta
         const deltaX = event.clientX - startMouseX;
         const deltaY = event.clientY - startMouseY;
-        
+
         // Apply the delta to the starting position, accounting for scale
-        let newX = startPosX + (deltaX / scaleFactor);
-        let newY = startPosY + (deltaY / scaleFactor);
+        let newX = startPosX + deltaX / scaleFactor;
+        let newY = startPosY + deltaY / scaleFactor;
 
         // Apply aspect ratio constraint if needed
         if (preserveAspectRatio) {
@@ -197,9 +197,12 @@
 
             // Calculate limits - adjust for scale
             const minX = boundingRect.left / scaleFactor;
-            const maxX = boundingRect.right / scaleFactor - elemRect.width / scaleFactor;
+            const maxX =
+                boundingRect.right / scaleFactor - elemRect.width / scaleFactor;
             const minY = boundingRect.top / scaleFactor;
-            const maxY = boundingRect.bottom / scaleFactor - elemRect.height / scaleFactor;
+            const maxY =
+                boundingRect.bottom / scaleFactor -
+                elemRect.height / scaleFactor;
 
             // Apply constraints
             newX = Math.max(minX, Math.min(maxX, newX));
@@ -229,7 +232,7 @@
         // Check for potential snap positions if enabled
         let snappedPosition = snapToGrid ? findSnapPosition(newX, newY) : null;
         let finalPosition = snappedPosition || { x: newX, y: newY };
-        
+
         // Update position
         position = finalPosition;
 
