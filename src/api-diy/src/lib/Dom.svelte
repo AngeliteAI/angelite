@@ -1,6 +1,5 @@
 <script lang="ts">
     // Root component that manages the VDom
-    import Node from "./Node.svelte";
     import { onMount } from "svelte";
 
     // Props - only make selectedNodeId bindable

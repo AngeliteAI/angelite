@@ -3,238 +3,25 @@
     import Dom from "$lib/Dom.svelte";
     import { onMount } from "svelte";
     import Document from "$lib/components/Document.svelte";
+    import {get} from "svelte/store";
     import VDom from "$lib/VDom.svelte";
+    import { virtualScale, activeDocuments } from "$lib/store";
 
-    let activeVDom = $state();
+    let localVirtualScale = $derived(get(virtualScale));
 
-    // Use $derived to read store values
-    let selectedNodeId = $state(null);
-
-    // Flag to track when DOM is ready
-    let isVDomReady = $state(false);
-
-    // Debugging state
-
-    let mouseX = $state(0);
-    let mouseY = $state(0);
-
-    function handleMouseMove(event: MouseEvent) {
-        mouseX.set(event.clientX);
-        mouseY.set(event.clientY);
-    }
-
-    function populate() {
-        if (!activeVDom) {
-            return;
-        }
-
-        let rootId = activeVDom.rootNodeId;
-        console.log("Root node for population:", rootId);
-
-        // Add h1 heading
-        const h1Id = activeVDom.addNode("h1", rootId);
-        console.log("Created h1 with id:", h1Id);
-        const h1Node = activeVDom.getNode(h1Id);
-        if (h1Node) {
-            console.log("Setting h1 properties");
-            h1Node.setProperty(
-                "textContent",
-                "Virtual DOM Test from +page.svelte",
-            );
-            h1Node.setStyle("color", "blue");
-            h1Node.setStyle("textAlign", "center");
-            h1Node.setStyle("marginTop", "20px");
-        } else {
-            console.error("Failed to get h1Node");
-        }
-
-        // Add paragraph
-        const pId = activeVDom.addNode("p", rootId);
-        console.log("Created p with id:", pId);
-        const pNode = activeVDom.getNode(pId);
-        if (pNode) {
-            console.log("Setting p properties");
-            pNode.setProperty(
-                "textContent",
-                "Hello, Youtube! This is draggable content.",
-            );
-            pNode.setStyle("margin", "20px");
-            pNode.setStyle("fontFamily", "Arial, sans-serif");
-        } else {
-            console.error("Failed to get pNode");
-        }
-
-        // Add button
-        const btnId = activeVDom.addNode("button", rootId);
-        console.log("Created button with id:", btnId);
-        const btnNode = activeVDom.getNode(btnId);
-        if (btnNode) {
-            console.log("Setting button properties");
-            btnNode.setProperty("textContent", "Click Me");
-            btnNode.setStyle("padding", "10px 20px");
-            btnNode.setStyle("backgroundColor", "#4CAF50");
-            btnNode.setStyle("color", "white");
-            btnNode.setStyle("border", "none");
-            btnNode.setStyle("borderRadius", "4px");
-            btnNode.setStyle("cursor", "pointer");
-            btnNode.setStyle("margin", "20px");
-            btnNode.setProperty("onClick", () => alert("Button clicked!"));
-        } else {
-            console.error("Failed to get btnNode");
-        }
-
-        // Add list
-        const ulId = activeVDom.addNode("ul", rootId);
-        console.log("Created ul with id:", ulId);
-        const ulNode = activeVDom.getNode(ulId);
-        if (ulNode) {
-            console.log("Setting ul properties");
-            ulNode.setStyle("listStyleType", "disc");
-            ulNode.setStyle("margin", "20px");
-            ulNode.setStyle("backgroundColor", "#ffaaaa");
-            ulNode.setStyle("padding", "15px");
-            ulNode.setStyle("borderRadius", "8px");
-            ulNode.setStyle("borderLeft", "5px solid #ff5555");
-            
-            // Add list items
-            for (let i = 1; i <= 3; i++) {
-                const liId = activeVDom.addNode("li", ulId);
-                console.log(`Created li ${i} with id:`, liId);
-                const liNode = activeVDom.getNode(liId);
-                if (liNode) {
-                    console.log(`Setting li ${i} properties`);
-                    liNode.setProperty("textContent", `List item ${i}`);
-                    liNode.setStyle("padding", "5px");
-                    liNode.setStyle("margin", "8px 0");
-                    liNode.setStyle("color", "#aa0000");
-                    liNode.setStyle("fontWeight", "bold");
-                } else {
-                    console.error(`Failed to get liNode ${i}`);
-                }
-            }
-        } else {
-            console.error("Failed to get ulNode");
-        }
-
-        // Helper to convert VNode and its children to the PageContentNode structure
-        function convertToPageContentStructure(
-            nodeId: string | null,
-            sourceVDom: VDom,
-        ): any | null {
-            if (!nodeId) return null;
-            const node = sourceVDom.getNode(nodeId);
-            if (!node) return null;
-            return {
-                id: node.id, // Assuming initializeActiveVDom can handle existing IDs or VDom class needs adjustment
-                type: node.tagName,
-                props: { ...node.props },
-                styleProps: { ...node.styleProps },
-                children: node.children
-                    .map((childId) =>
-                        convertToPageContentStructure(childId, sourceVDom),
-                    )
-                    .filter((c) => c !== null),
-            };
-        }
-
-        // Convert the root of activeVDom to the data structure expected by initializeActiveVDom
-        const pageRootData = convertToPageContentStructure(
-            activeVDom.rootNodeId,
-            activeVDom,
-        );
-        // Initialize/update the shared activeVDom via the exported function
-
-        isVDomReady = true;
-
-        // Log DOM structure to help debug
-        setTimeout(() => {
-            console.log("Checking for reorderable elements:");
-            const reorderables = document.querySelectorAll(".reorderable");
-            console.log(`Found ${reorderables.length} reorderable elements`);
-
-            reorderables.forEach((el) => {
-                console.log(
-                    `Reorderable: ${el.tagName} - ID: ${el.id}, data-node-id: ${el.getAttribute("data-node-id")}`,
-                );
-            });
-        }, 1000);
-    }
-
-    let isInitialized = $state(false);
-
-    // Debug selected node changes
-    $effect(() => {
-        if (activeVDom && activeVDom.rootNodeId && !isInitialized) {
-            console.log("activeVDom ready, initializing...");
-            // Delay to ensure components are fully mounted
-            setTimeout(() => {
-                populate();
-                isInitialized = true;
-                
-                // Check what elements are visible
-                setTimeout(() => {
-                    checkVisibleElements();
-                }, 500);
-            }, 200);
-        }
-    });
-
-    function checkVisibleElements() {
-        console.log("Checking visible elements...");
-        // Find all .node elements and log them
-        const nodes = document.querySelectorAll('.node');
-        console.log(`Found ${nodes.length} node elements:`, nodes);
-        
-        // Find all reorderable elements
-        const reorderables = document.querySelectorAll('.reorderable');
-        console.log(`Found ${reorderables.length} reorderable elements:`, reorderables);
-    }
-
-    onMount(() => {
-        console.log("Component mounted");
-    });
 </script>
 
+{#if $activeDocuments.length != 0}
+{#each $activeDocuments as _, i}
 <Document
-    on:mousemove={handleMouseMove}
-    bind:activeVDom
-    {mouseX}
-    {mouseY}
-    bind:selectedNodeId
+    bind:activeVDom={$activeDocuments[i].activeVDom}
+    virtualScale={localVirtualScale}
+    width={$activeDocuments[i].width || 1337}
+    height={$activeDocuments[i].height || 1337 }
+    selectedNodeId={$activeDocuments[i].selectedNodeId}
 />
-
-<div class="debug-panel">
-    <h3>Debug Info</h3>
-    <p>Selected Node: {selectedNodeId || "none"}</p>
-    <p>VDom Ready: {isVDomReady ? "Yes" : "No"}</p>
-    <p>Root Node ID: {activeVDom?.rootNodeId}</p>
-    <p>
-        Has addNode method: {activeVDom &&
-        typeof activeVDom.addNode === "function"
-            ? "Yes"
-            : "No"}
-    </p>
-
-    <div class="button-row">
-        <button
-            class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-2 mr-2"
-            on:click={() => {
-                if (activeVDom) populate();
-            }}
-        >
-            Repopulate Nodes
-        </button>
-        
-        <button
-            class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded mb-2"
-            on:click={() => {
-                checkVisibleElements();
-            }}
-        >
-            Check Elements
-        </button>
-    </div>
-</div>
+{/each}
+{/if}
 
 <style>
     .debug-panel {

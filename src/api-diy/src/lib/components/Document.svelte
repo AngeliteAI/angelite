@@ -1,7 +1,6 @@
 <script lang="ts">
-    import Node from "../Node.svelte";
-
     // Props - using $props() rune syntax
+    import { virtualScale } from "$lib/store";
     var {
         activeVDom = $bindable(),
         selectedNodeId = $bindable(),
@@ -10,13 +9,15 @@
         cameraY = 0,
         mouseX = 0,
         mouseY = 0,
-        virtualScale = 0.2,
         offsetX = 0,
         offsetY = 0,
         // Viewport dimensions
-        width = 1179,
-        height = 2556,
+        width = 0,
+        height = 0,
     } = $props();
+
+    // Use the store value directly
+    let currentVirtualScale = $state($virtualScale);
 
     // State for dragging
     let isDragging = $state(false);
@@ -35,9 +36,8 @@
     });
 </script>
 
-<Draggable {mouseX} {mouseY} {startX} {startY}>
+<Draggable absolute={true}>
     <div
-        class=""
         on:click={() => {
             isDragging = true;
             console.log("deez");
@@ -54,7 +54,6 @@
             {offsetY}
             {width}
             {height}
-            {virtualScale}
         ></Container>
     </div>
 </Draggable>

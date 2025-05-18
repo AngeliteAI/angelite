@@ -2,16 +2,16 @@
     import "../app.css";
 
     import { onMount } from "svelte";
-    import Node from "$lib/Node.svelte";
     import Document from "$lib/components/Document.svelte";
     import { cubicOut, quartOut } from "svelte/easing";
     import { tweened } from "svelte/motion";
     import { fade, fly } from "svelte/transition";
     import Viewport from "$lib/components/Viewport.svelte";
     import Tailwind from "$lib/Tailwind.svelte";
+    import { virtualScale, activeDocuments } from "$lib/store";
 
     // Camera and viewport state
-    let virtualScale = 0.2;
+    let localVirtualScale = $state(0.2);
     let offsetX = 0; // Content panning X relative to container
     let offsetY = 0; // Content panning Y relative to container
     let mouseX = 0; // Raw mouse X in viewport
@@ -24,94 +24,6 @@
     let activeSidebarTab = "Style"; // "Style", "Settings", "Interactions"
     let selectedNodeId = null;
     let showBlueprintMode = false;
-
-    // VDOM structure for our application
-    let vdom = {
-        rootId: "root",
-        nodes: {
-            root: {
-                id: "root",
-                type: "div",
-                styles: {
-                    position: "relative",
-                    width: "100%",
-                    height: "100%",
-                    padding: "20px",
-                },
-                children: [],
-            },
-        },
-        getNode(id) {
-            return this.nodes[id];
-        },
-        addNode(node) {
-            this.nodes[node.id] = node;
-            return node.id;
-        },
-        updateNode(id, updates) {
-            this.nodes[id] = { ...this.nodes[id], ...updates };
-            vdom = vdom; // Trigger reactive update
-        },
-        moveNode(nodeId, targetId, position) {
-            const node = this.nodes[nodeId];
-            const target = this.nodes[targetId];
-            if (!node || !target) return false;
-
-            // Find the current parent of the node
-            let oldParentId = null;
-            for (const id in this.nodes) {
-                if (
-                    this.nodes[id].children &&
-                    this.nodes[id].children.includes(nodeId)
-                ) {
-                    oldParentId = id;
-                    break;
-                }
-            }
-
-            if (!oldParentId) return false;
-
-            // Remove from old parent
-            this.nodes[oldParentId].children = this.nodes[
-                oldParentId
-            ].children.filter((id) => id !== nodeId);
-
-            if (position === "inside") {
-                // Add as child of final target
-                const finalTargetNode = vdom.getNode(finalTargetId);
-                if (!finalTargetNode.children) finalTargetNode.children = [];
-                finalTargetNode.children.push(nodeId);
-            } else {
-                // Find target's parent
-                let targetParentId = null;
-                for (const id in this.nodes) {
-                    if (
-                        this.nodes[id].children &&
-                        this.nodes[id].children.includes(targetId)
-                    ) {
-                        targetParentId = id;
-                        break;
-                    }
-                }
-
-                if (!targetParentId) return false;
-
-                // Add to target's parent at the right position
-                const targetParent = this.nodes[targetParentId];
-                const targetIndex = targetParent.children.indexOf(targetId);
-
-                if (position === "before") {
-                    targetParent.children.splice(targetIndex, 0, nodeId);
-                } else if (position === "after") {
-                    targetParent.children.splice(targetIndex + 1, 0, nodeId);
-                }
-            }
-
-            // Update VDOM to trigger re-render
-            vdom = { ...vdom };
-            return true;
-        },
-    };
 
     // Device settings
     const tweenedWidth = tweened(1179, { duration: 300, easing: quartOut });
@@ -129,47 +41,16 @@
             height: 1080,
         },
     ];
-    let currentVirtualDeviceIndex = 0;
-    $: currentVirtualDevice = virtualDevices[currentVirtualDeviceIndex];
+    let currentVirtualDeviceIndex = $state(0);
+    let currentVirtualDevice = $derived(virtualDevices[currentVirtualDeviceIndex]);
+
+    $effect(() => {
+        $activeDocuments[0].width = currentVirtualDevice.width;
+        $activeDocuments[0].height = currentVirtualDevice.height;
+    })
 
     // Update device viewport dimensions
-    function updateDeviceViewport() {
-        const newWidth = currentVirtualDevice.width;
-        const newHeight = currentVirtualDevice.height;
-
-        // Reset camera/pan on device change
-        cameraX = 0;
-        cameraY = 0;
-        offsetX = 0;
-        offsetY = 0;
-        virtualScale = 0.2;
-
-        document.documentElement.style.setProperty(
-            "--virtual-scale",
-            virtualScale.toString(),
-        );
-        document.documentElement.style.setProperty(
-            "--camera-x",
-            `${cameraX}px`,
-        );
-        document.documentElement.style.setProperty(
-            "--camera-y",
-            `${cameraY}px`,
-        );
-        document.documentElement.style.setProperty(
-            "--offset-x",
-            `${offsetX}px`,
-        );
-        document.documentElement.style.setProperty(
-            "--offset-y",
-            `${offsetY}px`,
-        );
-
-        tweenedWidth.set(newWidth);
-        tweenedHeight.set(newHeight);
-    }
-
-    // Sidebar state
+     // Sidebar state
     const sidebarWidth = tweened(showRightSidebar ? 300 : 36, {
         duration: 400,
         easing: quartOut,
@@ -215,77 +96,112 @@
         showBlueprintMode = !showBlueprintMode;
     }
 
-    // Initialize demo content
+
+    function populate(activeVDom) {
+        let rootId = activeVDom.rootNodeId;
+        console.log("Root node for population:", rootId);
+
+        // Add h1 heading
+        const h1Id = activeVDom.addNode("h1", rootId);
+        console.log("Created h1 with id:", h1Id);
+        const h1Node = activeVDom.getNode(h1Id);
+        if (h1Node) {
+            console.log("Setting h1 properties");
+            h1Node.setProperty(
+                "textContent",
+                "Virtual DOM Test from +page.svelte",
+            );
+            h1Node.setStyle("color", "blue");
+            h1Node.setStyle("textAlign", "center");
+            h1Node.setStyle("marginTop", "20px");
+        } else {
+            console.error("Failed to get h1Node");
+        }
+
+        // Add paragraph
+        const pId = activeVDom.addNode("p", rootId);
+        console.log("Created p with id:", pId);
+        const pNode = activeVDom.getNode(pId);
+        if (pNode) {
+            console.log("Setting p properties");
+            pNode.setProperty(
+                "textContent",
+                "Hello, Youtube! This is draggable content.",
+            );
+            pNode.setStyle("margin", "20px");
+            pNode.setStyle("fontFamily", "Arial, sans-serif");
+        } else {
+            console.error("Failed to get pNode");
+        }
+
+        // Add button
+        const btnId = activeVDom.addNode("button", rootId);
+        console.log("Created button with id:", btnId);
+        const btnNode = activeVDom.getNode(btnId);
+        if (btnNode) {
+            console.log("Setting button properties");
+            btnNode.setProperty("textContent", "Click Me");
+            btnNode.setStyle("padding", "10px 20px");
+            btnNode.setStyle("backgroundColor", "#4CAF50");
+            btnNode.setStyle("color", "white");
+            btnNode.setStyle("border", "none");
+            btnNode.setStyle("borderRadius", "4px");
+            btnNode.setStyle("cursor", "pointer");
+            btnNode.setStyle("margin", "20px");
+            btnNode.setProperty("onClick", () => alert("Button clicked!"));
+        } else {
+            console.error("Failed to get btnNode");
+        }
+
+        // Add list
+        const ulId = activeVDom.addNode("ul", rootId);
+        console.log("Created ul with id:", ulId);
+        const ulNode = activeVDom.getNode(ulId);
+        if (ulNode) {
+            console.log("Setting ul properties");
+            ulNode.setStyle("listStyleType", "disc");
+            ulNode.setStyle("margin", "20px");
+            ulNode.setStyle("backgroundColor", "#ffaaaa");
+            ulNode.setStyle("padding", "15px");
+            ulNode.setStyle("borderRadius", "8px");
+            ulNode.setStyle("borderLeft", "5px solid #ff5555");
+
+            // Add list items
+            for (let i = 1; i <= 3; i++) {
+                const liId = activeVDom.addNode("li", ulId);
+                console.log(`Created li ${i} with id:`, liId);
+                const liNode = activeVDom.getNode(liId);
+                if (liNode) {
+                    console.log(`Setting li ${i} properties`);
+                    liNode.setProperty("textContent", `List item ${i}`);
+                    liNode.setStyle("padding", "5px");
+                    liNode.setStyle("margin", "8px 0");
+                    liNode.setStyle("color", "#aa0000");
+                    liNode.setStyle("fontWeight", "bold");
+                } else {
+                    console.error(`Failed to get liNode ${i}`);
+                }
+            }
+        } else {
+            console.error("Failed to get ulNode");
+        }
+
+        // Helper to convert VNode and its children to the PageContentNode structure
+
+    }
+
+    let isInitialized = $state(false);
+
+    // Debug selected node changes
     onMount(() => {
-        // Create some sample nodes
-        const header = {
-            id: "header-1",
-            type: "header",
-            styles: {
-                position: "absolute",
-                top: "50px",
-                left: "50px",
-                background: "#f3f4f6",
-                padding: "10px",
-                borderRadius: "4px",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-            },
-            props: {
-                textContent: "Drag me around!",
-            },
-            children: [],
-        };
-
-        const paragraph = {
-            id: "paragraph-1",
-            type: "p",
-            styles: {
-                position: "absolute",
-                top: "150px",
-                left: "50px",
-                background: "#e0f2fe",
-                padding: "12px",
-                borderRadius: "4px",
-                maxWidth: "300px",
-            },
-            props: {
-                textContent:
-                    "This is a simplified drag and drop builder. Select elements and move them around!",
-            },
-            children: [],
-        };
-
-        const button = {
-            id: "button-1",
-            type: "button",
-            styles: {
-                position: "absolute",
-                top: "250px",
-                left: "35px",
-                background: "#4f46e5",
-                color: "white",
-                padding: "8px 16px",
-                border: "none",
-                borderRadius: "4px",
-                cursor: "pointer",
-            },
-            props: {
-                textContent: "Click Me",
-            },
-            children: [],
-        };
-
-        // Add nodes to VDOM
-        vdom.addNode(header);
-        vdom.addNode(paragraph);
-        vdom.addNode(button);
-
-        // Add them as children of root
-        vdom.nodes.root.children = ["header-1", "paragraph-1", "button-1"];
-
-        // Set initial device properties
-        updateDeviceViewport();
+        console.log("activeDocuments:", $activeDocuments);
+        if ($activeDocuments.length == 0 && !isInitialized) {
+            isInitialized = true;
+            populate($activeDocuments[0].activeVDom);
+        }
     });
+
+
 </script>
 
 <div
@@ -319,17 +235,9 @@
 
     <!-- Main content area with viewport -->
     <div class="col-start-2 row-start-2 overflow-hidden">
-        <Viewport
-            {vdom}
-            {selectedNodeId}
-            {showBlueprintMode}
-            {virtualDevices}
-            {virtualScale}
-            {mouseX}
-            {mouseY}
-            dispatch={(event: string, detail: any) =>
-                handleNodeEvent(event, detail)}><slot /></Viewport
-        >
+        <Viewport {selectedNodeId}>
+        <slot/>
+        </Viewport>
     </div>
 
     <!-- Right sidebar -->

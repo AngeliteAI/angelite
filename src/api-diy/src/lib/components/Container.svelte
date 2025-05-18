@@ -1,7 +1,7 @@
 <script>
-    import Node from "$lib/Node.svelte";
     import VDom from "$lib/VDom.svelte";
     import { createEventDispatcher } from "svelte";
+    import { virtualScale } from "$lib/store";
     let {
         children,
         activeVDom = $bindable(),
@@ -11,13 +11,13 @@
         cameraY = 0,
         mouseX = 0,
         mouseY = 0,
-        virtualScale = 0.2,
         offsetX = 0,
         offsetY = 0,
         // Viewport dimensions
         width = 1179,
         height = 2556,
     } = $props();
+    let currentScale = $state($virtualScale);
 
     const dispatch = createEventDispatcher();
     function handleNodeEvent(event, detail) {
@@ -39,7 +39,7 @@
             bind:this={activeVDom}
             bind:selectedNodeId
             {showBlueprintMode}
-            {virtualScale}
+            {currentScale}
         />
         <!-- Snap grid guide (subtle visual cue) -->
         <div class="snap-grid"></div>
@@ -81,6 +81,7 @@
         background: white;
         width: var(--virtual-width);
         height: var(--virtual-height);
+        transition: width 0.2s ease-in-out, height 0.2s ease-in-out;
         cursor: grab;
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
         border-radius: 8px;

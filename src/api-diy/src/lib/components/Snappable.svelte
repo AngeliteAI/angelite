@@ -1,15 +1,20 @@
 <script>
-    let { virtualScale = $bindable(0.2) } = $props();
     import Draggable from "./Draggable.svelte";
-    
-    // Log when virtualScale changes
-    $effect(() => {
-        console.log(`Snappable received virtualScale: ${virtualScale}`);
-    });
+    let { children,
+        virtualScale = 0.2, 
+     } = $props();
+
 </script>
 
-<div class="relative">
-    <Draggable virtualScale={virtualScale}>
-        <slot />
-    </Draggable>
-</div>
+<!-- Just a basic wrapper div that passes all the content through -->
+<Draggable>
+    {@render children()}
+</Draggable>
+
+<style>
+    .snappable {
+        position: relative;
+        width: 100%;
+        height: 100%;
+    }
+</style>

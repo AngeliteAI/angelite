@@ -1,15 +1,15 @@
 <script lang="ts">
-    import { createEventDispatcher } from "svelte";
+    import { createEventDispatcher, onMount } from "svelte";
 
     // Props with default values
+    import { virtualScale, mouseX, mouseY } from "$lib/store";
     let {
         children,
         id = crypto.randomUUID(),
+        absolute=false,
         startX = 0,
         startY = 0,
-        mouseX = 0,
-        mouseY = 0,
-        virtualScale = 0.2,
+        screenspace = false,
         selected = false,
         disabled = false,
         bounds = null,
@@ -27,9 +27,11 @@
         customDraggingClass = "",
         position = $bindable({ x: startX, y: startY }),
     } = $props();
-
+    let currentScale = $state(0.2);
+    let oldScale = 0;
     const dispatch = createEventDispatcher();
 
+   
     // State variables
     let element: HTMLElement;
     let isDragging = $state(false);
@@ -46,12 +48,24 @@
     let lastX = $state(0);
     let lastY = $state(0);
     let lastTimestamp = $state(0);
+    let offset = $state({x: 0, y: 0});
+    let modified = $derived({x: position.x - offset.x, y: position.y - offset.y});
+ $effect(() => {
+        currentScale = $virtualScale;
 
+        // Calculate the shift required for zoom-on-mouse
+        if(absolute) {
+            offset.x = ($mouseX - offset.x) * (oldScale / currentScale - 1);
+            offset.y = ($mouseY - offset.y) * (oldScale / currentScale - 1);
+        }
+        
+            oldScale = currentScale;
+    });
     // Derived values
     let positionStyle = $derived(
         useTransform
-            ? `transform: translate(${position.x}px, ${position.y}px)`
-            : `left: ${position.x}px; top: ${position.y}px`,
+            ? `transform: translate(${modified.x}px, ${modified.y}px)`
+            : `left: ${modified.x}px; top: ${modified.y}px`,
     );
 
     let zIndexStyle = $derived(
@@ -79,6 +93,9 @@
         console.log(`Draggable ${id}: virtualScale = ${virtualScale}`);
     });
 
+    onMount(() => {
+        virtualScale.subscribe((value) => (currentScale = value));
+    });
     // Prepare bounds if provided
     function initializeBounds() {
         if (bounds && typeof bounds === "string") {
@@ -128,8 +145,9 @@
             dispatch("select", { id });
         }
 
-        // Prevent default browser behavior
+        // Prevent default browser behavior and stop propagation to avoid double drag
         event.preventDefault();
+        event.stopPropagation();
 
         // Save starting positions for calculating deltas
         startMouseX = event.clientX;
@@ -168,16 +186,15 @@
     function onPointerMove(event: PointerEvent) {
         if (!isDragging) return;
 
-        // Get the scale factor
-        const scaleFactor = virtualScale > 0 ? virtualScale : 0.2;
-
         // Calculate the movement delta
-        const deltaX = event.clientX - startMouseX;
-        const deltaY = event.clientY - startMouseY;
+        const deltaX =
+            (event.clientX - startMouseX) * (screenspace ? currentScale : 1 / currentScale);
+        const deltaY =
+            (event.clientY - startMouseY) * (screenspace ? currentScale : 1 / currentScale);
 
-        // Apply the delta to the starting position, accounting for scale
-        let newX = startPosX + deltaX / scaleFactor;
-        let newY = startPosY + deltaY / scaleFactor;
+        // Apply the delta to the starting position
+        let newX = startPosX + deltaX;
+        let newY = startPosY + deltaY;
 
         // Apply aspect ratio constraint if needed
         if (preserveAspectRatio) {
@@ -185,9 +202,9 @@
             const deltaX = newX - position.x;
             const deltaY = newY - position.y;
             if (Math.abs(deltaX) > Math.abs(deltaY)) {
-                newY = position.y + deltaX / aspectRatio;
+                newY = position.y + (deltaX) / aspectRatio;
             } else {
-                newX = position.x + deltaY * aspectRatio;
+                newX = position.x + (deltaY) * aspectRatio;
             }
         }
 
@@ -196,13 +213,13 @@
             const elemRect = element.getBoundingClientRect();
 
             // Calculate limits - adjust for scale
-            const minX = boundingRect.left / scaleFactor;
+            const minX = boundingRect.left / currentScale;
             const maxX =
-                boundingRect.right / scaleFactor - elemRect.width / scaleFactor;
-            const minY = boundingRect.top / scaleFactor;
+                boundingRect.right / currentScale - elemRect.width / currentScale;
+            const minY = boundingRect.top / currentScale;
             const maxY =
-                boundingRect.bottom / scaleFactor -
-                elemRect.height / scaleFactor;
+                boundingRect.bottom / currentScale -
+                elemRect.height / currentScale;
 
             // Apply constraints
             newX = Math.max(minX, Math.min(maxX, newX));
@@ -308,8 +325,10 @@
 
 <div
     bind:this={element}
-    class="relative {classNames}"
-    style="{positionStyle}; {zIndexStyle} {customStyles}"
+    class:absolute={absolute}
+    class:relative={!absolute}
+    class="{classNames}"
+    style="{positionStyle}; {zIndexStyle} {customStyles}; width: 100%; height: max-content;"
     onpointerdown={onPointerDown}
     onpointerup={onPointerUp}
 >
@@ -318,8 +337,8 @@
 
 <style>
     .draggable {
-        position: absolute;
         top: 0;
+        bottom: 0;
         left: 0;
         cursor: move;
         will-change: transform;

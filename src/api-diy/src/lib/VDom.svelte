@@ -1,158 +1,157 @@
 <script lang="ts">
-    import Node from "./Node.svelte";
+    import { onMount } from "svelte";
+    import VNode from "./VNode.svelte";
+    import { virtualScale } from "$lib/store";
 
     // Props
     let {
-        selectedNodeId = $bindable<string | null>(null),
-        showBlueprintMode = false,
-        virtualScale = $bindable(0.2),
+        selectedNodeId = $bindable<string | null>(),
+        showBlueprintMode = $bindable(true), // Default to true for debugging
     } = $props();
+    let currentScale = $state($virtualScale);
 
-    // Create a simple registry
-    let nodeRegistry = $state(new Map());
-    let nodeCount = $state(0);
-    let rootNodeId = $state("root");
+    // Simple node type definition
+    type Node = {
+        id: string;
+        tagName: string;
+        parentId: string | null;
+        children: string[];
+        props: Record<string, any>;
+        styles: Record<string, string>;
+    };
 
-    // Check if root node is already present
-    if (!nodeRegistry.has(rootNodeId)) {
-        // Initialize root node
-        nodeRegistry.set(rootNodeId, {
-            id: rootNodeId,
-            tagName: "div",
-            parentId: null,
-            children: [],
-            props: {},
-            styleProps: {
-                width: "100%",
-                height: "100%",
-                position: "relative",
-                padding: "20px",
-            },
-        });
-    }
+    // Nodes collection using reactive state
+    let nodes = $state<Record<string, Node>>({});
+    let updateCount = $state(0);
 
-    // Listen for changes to virtualScale
-    $effect(() => {
-        console.log(`VDom: virtualScale updated to ${virtualScale}`);
-    });
-
-    // Simple node methods
-    function addNode(elementType, parentId = null) {
-        // Default to root if no parent specified
-        if (parentId === null) {
-            parentId = rootNodeId;
+    // Initialize root node
+    const rootId = "root";
+    nodes[rootId] = {
+        id: rootId,
+        tagName: "div",
+        parentId: null,
+        children: [],
+        props: { textContent: "Root Node" },
+        styles: {
+            width: "100%",
+            height: "100%",
+            padding: "20px",
+            border: "1px dashed blue",
+            background: "rgba(240, 240, 255, 0.2)",
         }
+    };
 
-        // Generate ID
+    // Add a new node
+    function addNode(tagName: string, parentId: string | null = null): string {
+        // Use root as default parent if none provided
+        if (parentId === null) parentId = rootId;
+        
+        // Generate node ID
         const nodeId = crypto.randomUUID();
-        console.log(
-            `Adding node ${nodeId} (${elementType}) to parent ${parentId}`,
-        );
-
-        // Create node object
-        nodeRegistry.set(nodeId, {
+        
+        // Create node
+        nodes[nodeId] = {
             id: nodeId,
-            tagName: elementType,
-            parentId: parentId,
+            tagName,
+            parentId,
             children: [],
             props: {},
-            styleProps: {},
-        });
-        nodeCount++; // Increment counter to trigger reactivity
-
-        // Add to parent's children list
-        if (parentId && nodeRegistry.has(parentId)) {
-            const parentNode = nodeRegistry.get(parentId);
-            parentNode.children.push(nodeId);
-            nodeRegistry.set(parentId, { ...parentNode }); // Update parent in registry
-            console.log(
-                `Added ${nodeId} to parent ${parentId}, children count: ${parentNode.children.length}`,
-            );
+            styles: {}
+        };
+        
+        // Add to parent's children
+        if (parentId && nodes[parentId]) {
+            nodes[parentId].children.push(nodeId);
         }
-
+        
+        // Force update
+        updateCount++;
         return nodeId;
     }
 
-    function getNode(id) {
-        if (!nodeRegistry.has(id)) {
-            console.log(`Node ${id} not found in registry`);
-            return null;
-        }
-
-        const node = nodeRegistry.get(id);
-
-        // Return node with methods
+    // Get a node with helper methods
+    function getNode(id: string) {
+        if (!nodes[id]) return null;
+        
+        const node = nodes[id];
+        
         return {
             ...node,
-            setProperty: (name, value) => {
-                console.log(`Setting property ${name}=${value} on node ${id}`);
-                node.props[name] = value;
-                // This forces Svelte to recognize the change
-                nodeRegistry.set(id, { ...node });
-                nodeCount++; // Increment counter to trigger reactivity
+            setProperty(name: string, value: any) {
+                nodes[id].props[name] = value;
+                updateCount++;
             },
-            setStyle: (property, value) => {
-                console.log(`Setting style ${property}=${value} on node ${id}`);
-                node.styleProps[property] = value;
-                // This forces Svelte to recognize the change
-                nodeRegistry.set(id, { ...node });
-                nodeCount++; // Increment counter to trigger reactivity
+            setStyle(name: string, value: string) {
+                nodes[id].styles[name] = value;
+                updateCount++;
             },
-        };
-    }
-
-    // Recursively render a node and its children using Svelte components
-    function renderNodes(nodeId) {
-        if (!nodeRegistry.has(nodeId)) {
-            return null;
-        }
-        
-        const node = nodeRegistry.get(nodeId);
-        
-        return {
-            id: node.id,
-            tagName: node.tagName,
-            parentId: node.parentId,
-            children: node.children,
-            props: node.props,
-            styleProps: node.styleProps
+            appendChild(childId: string) {
+                if (nodes[childId] && !nodes[id].children.includes(childId)) {
+                    // Update parent reference
+                    nodes[childId].parentId = id;
+                    // Add to children array
+                    nodes[id].children.push(childId);
+                    updateCount++;
+                }
+            },
+            removeChild(childId: string) {
+                const index = nodes[id].children.indexOf(childId);
+                if (index !== -1) {
+                    nodes[id].children.splice(index, 1);
+                    updateCount++;
+                }
+            }
         };
     }
 
     // Handle node selection
     function handleNodeSelect(event) {
-        console.log(`Node selected: ${event.detail.id}`);
         selectedNodeId = event.detail.id;
+        console.log(`Selected node: ${selectedNodeId}`);
     }
 
-    // Export functions for external use
-    export { rootNodeId, addNode, getNode };
+    // Add some sample content on mount
+    onMount(() => {
+        // Add a div node
+        const divId = addNode("div");
+        const div = getNode(divId);
+        div.setStyle("width", "200px");
+        div.setStyle("height", "100px");
+        div.setStyle("background", "lightblue");
+        div.setStyle("margin", "20px");
+        div.setProperty("textContent", "Hello, Virtual DOM!");
+
+        // Add a child element
+        const spanId = addNode("span", divId);
+        const span = getNode(spanId);
+        span.setStyle("color", "red");
+        span.setStyle("fontWeight", "bold");
+        span.setProperty("textContent", "I am a child element");
+        
+        console.log("Sample nodes created:", nodes);
+    });
+
+    // Expose the API
+    export { addNode, getNode };
 </script>
 
 <div class="vdom-container">
-    {#if nodeRegistry.has(rootNodeId)}
-        <Node 
-            id={rootNodeId}
-            tagName={nodeRegistry.get(rootNodeId).tagName}
-            parentId={null}
-            children={nodeRegistry.get(rootNodeId).children}
-            props={nodeRegistry.get(rootNodeId).props}
-            styleProps={nodeRegistry.get(rootNodeId).styleProps}
-            selectedNodeId={selectedNodeId}
-            showBlueprintMode={showBlueprintMode}
-            {virtualScale}
-            on:select={handleNodeSelect}
-        />
-    {/if}
+    <VNode
+        id={rootId}
+        nodes={nodes}
+        selectedNodeId={selectedNodeId}
+        showBlueprintMode={showBlueprintMode}
+        updateCount={updateCount}
+        on:select={handleNodeSelect}
+    />
 </div>
 
 <!-- Debug info -->
 <div class="debug-overlay">
-    <div>Root ID: {rootNodeId}</div>
-    <div>Nodes: {nodeRegistry.size}</div>
-    <div>Updates: {nodeCount}</div>
+    <div>Root ID: {rootId}</div>
+    <div>Nodes: {Object.keys(nodes).length}</div>
+    <div>Updates: {updateCount}</div>
     <div>Selected: {selectedNodeId || "none"}</div>
-    <div>Scale: {virtualScale.toFixed(2)}</div>
 </div>
 
 <style>
