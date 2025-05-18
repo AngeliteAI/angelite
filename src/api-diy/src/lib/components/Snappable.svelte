@@ -3,15 +3,25 @@
     let { children,
         virtualScale = 0.2, 
      } = $props();
+     let clientWidth = $state();
+     let clientHeight = $state();
 
+    function triggerSnap(e) {
+        console.log(clientWidth, clientHeight);
+    }
 </script>
 
 <!-- Just a basic wrapper div that passes all the content through -->
 <Draggable>
-    {@render children()}
+    <div bind:clientWidth bind:clientHeight onclick={triggerSnap}>
+        {@render children()}
+    </div>
 </Draggable>
 
 <style>
+    .snapper {
+
+    }
     .snappable {
         position: relative;
         width: 100%;

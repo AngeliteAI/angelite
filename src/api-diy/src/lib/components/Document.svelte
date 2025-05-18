@@ -37,12 +37,6 @@
 </script>
 
 <Draggable absolute={true}>
-    <div
-        on:click={() => {
-            isDragging = true;
-            console.log("deez");
-        }}
-    >
         <Container
             bind:activeVDom
             bind:selectedNodeId
@@ -55,7 +49,6 @@
             {width}
             {height}
         ></Container>
-    </div>
 </Draggable>
 
 <style>

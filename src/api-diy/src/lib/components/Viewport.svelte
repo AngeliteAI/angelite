@@ -23,42 +23,64 @@
         h = $state();
     // Get the current VDOM state
     var position = $state({ x: 0, y: 0 });
+    var lastPos = $state(0)
 
     var modified = $derived({
         x: position.x / currentScale + offsetX,
         y: position.y / currentScale + offsetY,
+    });
+    var origin = $derived({
+        x: position.x,
+        y: position.y ,
+
     });
     var localVirtualScale = $derived($virtualScale);
 </script>
 
 <div
     id="viewport"
+    style="--background-scale: {currentScale / 5 * 1000}px"
     bind:clientWidth={w}
     bind:clientHeight={h}
+    role="region"
+    onmousemove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+const storeMouseX = e.clientX - rect.left - w / 2;
+        const storeMouseY = e.clientY - rect.top;
+        mouseX.set(storeMouseX);
+        mouseY.set(storeMouseY);
+    }}
     onwheel={(e) => {
         // Get mouse position relative to the viewport
         const rect = e.currentTarget.getBoundingClientRect();
-        const localMouseX = e.clientX - rect.left - w / 2;
-        const localMouseY = e.clientY - rect.top;
+        
+        const zoomCalcMouseX = e.clientX - rect.left - w / 2;
+        const zoomCalcMouseY = e.clientY - rect.top; // This is identical to storeMouseY
 
-        mouseX.set(localMouseX);
-        mouseY.set(localMouseY);
-
-        // Calculate scale change
         const oldScale = currentScale;
         currentScale *= e.deltaY > 0 ? 1 / 1.05 : 1.05;
         currentScale = Math.max(Math.min(currentScale, 5), 0.1);
         virtualScale.set(currentScale);
-        console.log(currentScale);
 
-        // Calculate the shift required for zoom-on-mouse
-        offsetX += (($mouseX - offsetX) * (oldScale / currentScale - 1)) / oldScale * currentScale; 
-        offsetY += (($mouseY - offsetY) * (oldScale / currentScale - 1)) / oldScale * currentScale;
+        const S_prime = oldScale; // Scale before zoom
+        const S_new = currentScale;   // Scale after zoom
+
+        const px_drag = position.x; // Viewport's current drag offset X
+        const py_drag = position.y; // Viewport's current drag offset Y
+
+        const ox_old = offsetX;     // Content's pan offset X before this zoom
+        const oy_old = offsetY;     // Content's pan offset Y before this zoom
+
+        const c_mouse_x = (zoomCalcMouseX - px_drag/S_prime - ox_old) / S_prime;
+        const c_mouse_y = (zoomCalcMouseY - py_drag/S_prime - oy_old) / S_prime;
+
+        offsetX = zoomCalcMouseX - px_drag/S_new - c_mouse_x * S_new;
+        offsetY = zoomCalcMouseY - py_drag/S_new - c_mouse_y * S_new;
 
         e.preventDefault();
     }}
 >
-    <Draggable bind:position absolute={true} screenspace={true}>
+    <Draggable bind:position screenspace={true}>
         <div
             id="camera"
             class="absolute"
@@ -79,7 +101,7 @@
         background-image:
             linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
             linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
-        background-size: 20px 20px;
+        background-size: var(--background-scale) var(--background-scale);
         position: relative;
         width: 100%;
         height: 100%;

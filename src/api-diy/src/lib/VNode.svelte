@@ -41,7 +41,6 @@
         }
         
         // We're the actual target, so handle it
-        event.stopPropagation();
         
         // Select this node
         selectedNodeId = id;
@@ -99,7 +98,6 @@
                     {selectedNodeId}
                     {showBlueprintMode}
                     {updateCount}
-                    on:select
                 />
             {/each}
         </div>

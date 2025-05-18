@@ -7,6 +7,7 @@
         children,
         id = crypto.randomUUID(),
         absolute=false,
+        scaleShift = false,
         startX = 0,
         startY = 0,
         screenspace = false,
@@ -16,7 +17,6 @@
         snapToGrid = false,
         gridSize = 10,
         snapThreshold = 10,
-        dragHandleSelector = null,
         zIndexSelected = 10,
         zIndexDragging = 100,
         useTransform = true,
@@ -28,7 +28,8 @@
         position = $bindable({ x: startX, y: startY }),
     } = $props();
     let currentScale = $state(0.2);
-    let oldScale = 0;
+    let clientWidth = $state();
+    let clientHeight = $state();
     const dispatch = createEventDispatcher();
 
    
@@ -43,30 +44,45 @@
     let startMouseY = $state(0);
     let startPosX = $state(0);
     let startPosY = $state(0);
+    let velocityX = $state(0);
+    let velocityY = $state(0);
+    let targetX = $state(0);
+    let targetY = $state(0);
+    let rotationAngle = $state(0);
+let animationFrame = $state(null);
+let friction = $state(0.99);
+let maxRotation = $state(3);
 
     // Tracking for velocity calculations
     let lastX = $state(0);
     let lastY = $state(0);
     let lastTimestamp = $state(0);
     let offset = $state({x: 0, y: 0});
-    let modified = $derived({x: position.x - offset.x, y: position.y - offset.y});
- $effect(() => {
-        currentScale = $virtualScale;
+    let modified = $derived(position);
 
-        // Calculate the shift required for zoom-on-mouse
-        if(absolute) {
-            offset.x = ($mouseX - offset.x) * (oldScale / currentScale - 1);
-            offset.y = ($mouseY - offset.y) * (oldScale / currentScale - 1);
-        }
-        
-            oldScale = currentScale;
+     let oldScale = 0;
+     let baseMinRotation = $state(0.2);
+    let baseMaxRotation = $state(2.0); 
+    $effect(() => {
+        if (!element) return;
+    
+    // Calculate a size factor (smaller = higher value)
+    // Reference size is 100px (gives max rotation)
+    // 1000px will give about 1/10th of the rotation
+    const sizeFactor =  Math.sqrt(clientWidth * clientHeight);
+    
+    // Clamp the factor between 0.1 and 1 (so very large elements don't get too little rotation)
+    const sizeRatio = (sizeFactor - 100) / (1000 - 100);
+        maxRotation = baseMinRotation + sizeRatio * (baseMaxRotation - baseMinRotation);
     });
+
     // Derived values
     let positionStyle = $derived(
-        useTransform
-            ? `transform: translate(${modified.x}px, ${modified.y}px)`
-            : `left: ${modified.x}px; top: ${modified.y}px`,
-    );
+    useTransform
+        ? `transform: translate(${modified.x}px, ${modified.y}px) rotate(${rotationAngle}deg)`
+        : `left: ${modified.x}px; top: ${modified.y}px; transform: rotate(${rotationAngle}deg)`,
+);
+
 
     let zIndexStyle = $derived(
         selected
@@ -116,6 +132,106 @@
         }
     }
 
+    function startAnimation() {
+    // Cancel any existing animation
+    if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+    }
+    
+    const animate = () => {
+        // If dragging, move towards target position with some easing
+        if (isDragging) {
+            // Simple easing towards target position (80% of the way there)
+            position.x += (targetX - position.x) * 0.2;
+            position.y += (targetY - position.y) * 0.2;
+            
+            // Calculate rotation based on velocity
+            const direction = Math.sign(velocityX);
+            const speed = Math.sqrt(velocityX * velocityX + velocityY * velocityY);
+            const horizontalFactor = Math.abs(velocityX) / (Math.abs(velocityX) + Math.abs(velocityY) + 0.1);
+            
+            // Set rotation based on velocity
+            rotationAngle = direction * Math.min(speed / 50, 1) * maxRotation * horizontalFactor;
+        } 
+        // If not dragging, apply inertia
+        else {
+            // Apply velocity to position with scaling for frame rate
+            position.x += velocityX * (screenspace ? 1 : 1 / currentScale) / 60;
+            position.y += velocityY * (screenspace ? 1 : 1 / currentScale) / 60;
+            
+            // Apply friction
+            velocityX *= friction;
+            velocityY *= friction;
+            
+            // Reduce rotation gradually
+            rotationAngle *= 0.9;
+        }
+        
+        // Apply bounds if needed
+        if (boundingRect) {
+            const elemRect = element.getBoundingClientRect();
+            const minX = boundingRect.left / currentScale;
+            const maxX = boundingRect.right / currentScale - elemRect.width / currentScale;
+            const minY = boundingRect.top / currentScale;
+            const maxY = boundingRect.bottom / currentScale - elemRect.height / currentScale;
+            
+            // Apply bounds with bounce effect
+            if (position.x < minX) {
+                position.x = minX;
+                velocityX *= -0.7;
+            }
+            
+            if (position.x > maxX) {
+                position.x = maxX;
+                velocityX *= -0.7;
+            }
+            
+            if (position.y < minY) {
+                position.y = minY;
+                velocityY *= -0.7;
+            }
+            
+            if (position.y > maxY) {
+                position.y = maxY;
+                velocityY *= -0.7;
+            }
+        }
+        
+        // Apply snap to grid if enabled
+        if (snapToGrid && !isDragging) {
+            const snappedPosition = findSnapPosition(position.x, position.y);
+            if (snappedPosition) {
+                position.x = snappedPosition.x;
+                position.y = snappedPosition.y;
+                // Reset velocity when snapped
+                velocityX = 0;
+                velocityY = 0;
+            }
+        }
+        
+        // Dispatch position update
+        dispatch("positionupdate", {
+            id,
+            position: { x: position.x, y: position.y },
+            velocity: { x: velocityX, y: velocityY },
+            rotation: rotationAngle
+        });
+        
+        // Continue animation if dragging or if there's still significant movement
+        let useful = Math.abs(velocityX) > 0.1 || Math.abs(velocityY) > 0.1 || Math.abs(rotationAngle) > 0.1;
+        let distant = Math.abs(position.x - targetX) > 1 || Math.abs(position.y - targetY) > 1;
+        if (isDragging || useful && distant) {
+            animationFrame = requestAnimationFrame(animate);
+        } else {
+            // Reset rotation when stopped and cancel animation
+            rotationAngle = 0;
+            animationFrame = null;
+        }
+    };
+    
+    animationFrame = requestAnimationFrame(animate);
+}
+
     // Handle drag start
     function onPointerDown(event: PointerEvent) {
         if (disabled) return;
@@ -124,20 +240,20 @@
         if (event.pointerType === "mouse" && event.button !== 0) return;
 
         // Check if we should only allow dragging from specific handle
-        if (dragHandleSelector) {
-            let target = event.target as HTMLElement;
-            let isHandle = false;
-
-            // Check if target or any of its parents match the handle selector
-            while (target && target !== element) {
-                if (target.matches(dragHandleSelector)) {
-                    isHandle = true;
-                    break;
-                }
-                target = target.parentElement as HTMLElement;
+        const treeWalker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT);
+        let isParent = false;
+        while (treeWalker.nextNode()) {
+            if(treeWalker.currentNode == document.elementFromPoint(event.clientX, event.clientY))
+        {
+            break;
+        }
+            if (treeWalker.currentNode.classList.contains("draggable")) {
+                isParent = true;
+                break;
             }
-
-            if (!isHandle) return;
+        }
+        if (isParent) {
+            return;
         }
 
         // Select this element if it's not already selected
@@ -147,27 +263,28 @@
 
         // Prevent default browser behavior and stop propagation to avoid double drag
         event.preventDefault();
-        event.stopPropagation();
 
-        // Save starting positions for calculating deltas
-        startMouseX = event.clientX;
-        startMouseY = event.clientY;
-        startPosX = position.x;
-        startPosY = position.y;
-
-        // Mark as dragging
-        isDragging = true;
-
-        // Initialize bounds if needed
-        initializeBounds();
-
-        // Calculate aspect ratio if needed
-        calculateAspectRatio();
-
-        // Store values for velocity calculation
-        lastX = event.clientX;
-        lastY = event.clientY;
-        lastTimestamp = Date.now();
+        
+    // Save starting positions
+    startMouseX = event.clientX;
+    startMouseY = event.clientY;
+    startPosX = position.x;
+    startPosY = position.y;
+    
+    // Set initial target position to current position
+    targetX = position.x;
+    targetY = position.y;
+    
+    // Mark as dragging
+    isDragging = true;
+    
+    // Initialize bounds if needed
+    initializeBounds();
+    
+    // Start animation loop
+    startAnimation();
+    
+ 
 
         // Add window event listeners
         window.addEventListener("pointermove", onPointerMove);
@@ -192,73 +309,24 @@
         const deltaY =
             (event.clientY - startMouseY) * (screenspace ? currentScale : 1 / currentScale);
 
-        // Apply the delta to the starting position
-        let newX = startPosX + deltaX;
-        let newY = startPosY + deltaY;
 
-        // Apply aspect ratio constraint if needed
-        if (preserveAspectRatio) {
-            // This is simplified - real implementation would be more complex
-            const deltaX = newX - position.x;
-            const deltaY = newY - position.y;
-            if (Math.abs(deltaX) > Math.abs(deltaY)) {
-                newY = position.y + (deltaX) / aspectRatio;
-            } else {
-                newX = position.x + (deltaY) * aspectRatio;
-            }
-        }
-
-        // Apply bounds constraints if specified
-        if (boundingRect) {
-            const elemRect = element.getBoundingClientRect();
-
-            // Calculate limits - adjust for scale
-            const minX = boundingRect.left / currentScale;
-            const maxX =
-                boundingRect.right / currentScale - elemRect.width / currentScale;
-            const minY = boundingRect.top / currentScale;
-            const maxY =
-                boundingRect.bottom / currentScale -
-                elemRect.height / currentScale;
-
-            // Apply constraints
-            newX = Math.max(minX, Math.min(maxX, newX));
-            newY = Math.max(minY, Math.min(maxY, newY));
-        }
-
-        // Calculate velocity
-        const timestamp = Date.now();
-        const dt = timestamp - lastTimestamp;
-        if (dt > 0) {
-            const velocityX = ((event.clientX - lastX) / dt) * 100;
-            const velocityY = ((event.clientY - lastY) / dt) * 100;
-
-            dispatch("velocityupdate", {
-                id,
-                velocityX,
-                velocityY,
-                timestamp,
-            });
-        }
-
-        // Update last values for next velocity calculation
-        lastX = event.clientX;
-        lastY = event.clientY;
-        lastTimestamp = timestamp;
-
-        // Check for potential snap positions if enabled
-        let snappedPosition = snapToGrid ? findSnapPosition(newX, newY) : null;
-        let finalPosition = snappedPosition || { x: newX, y: newY };
-
-        // Update position
-        position = finalPosition;
-
-        // Dispatch position update
-        dispatch("positionupdate", {
-            id,
-            position: finalPosition,
-            isSnapped: !!snappedPosition,
-        });
+    // Update target position based on drag
+    targetX = startPosX + deltaX;
+    targetY = startPosY + deltaY;
+    
+    // Calculate velocity
+    const timestamp = Date.now();
+    const dt = timestamp - lastTimestamp;
+    if (dt > 0) {
+        velocityX = ((event.clientX - lastX) / dt) * 100;
+        velocityY = ((event.clientY - lastY) / dt) * 100;
+    }
+    
+    // Update last values for next velocity calculation
+    lastX = event.clientX;
+    lastY = event.clientY;
+    lastTimestamp = timestamp // Check for potential snap positions if enabled
+      
     }
 
     // Handle drag end
@@ -325,6 +393,8 @@
 
 <div
     bind:this={element}
+    bind:clientWidth
+    bind:clientHeight
     class:absolute={absolute}
     class:relative={!absolute}
     class="{classNames}"
@@ -346,7 +416,7 @@
         touch-action: none;
         transition:
             box-shadow 0.2s ease,
-            transform 0.05s linear;
+            transform 0.05s ease;
     }
 
     .selected {

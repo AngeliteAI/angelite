@@ -142,7 +142,6 @@
         selectedNodeId={selectedNodeId}
         showBlueprintMode={showBlueprintMode}
         updateCount={updateCount}
-        on:select={handleNodeSelect}
     />
 </div>
 

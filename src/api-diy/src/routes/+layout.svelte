@@ -9,6 +9,7 @@
     import Viewport from "$lib/components/Viewport.svelte";
     import Tailwind from "$lib/Tailwind.svelte";
     import { virtualScale, activeDocuments } from "$lib/store";
+    import Sidebar from "$lib/components/Sidebar.svelte";
 
     // Camera and viewport state
     let localVirtualScale = $state(0.2);
@@ -49,8 +50,7 @@
         $activeDocuments[0].height = currentVirtualDevice.height;
     })
 
-    // Update device viewport dimensions
-     // Sidebar state
+    // Sidebar state
     const sidebarWidth = tweened(showRightSidebar ? 300 : 36, {
         duration: 400,
         easing: quartOut,
@@ -243,202 +243,13 @@
     <!-- Right sidebar -->
     <aside
         class="col-start-3 row-start-2 bg-black text-white overflow-hidden transition-all duration-300 ease-out"
-        style="width: {$sidebarWidth}px;"
     >
-        <div class="flex items-center h-[2.25rem] justify-start pl-1">
-            <button
-                class="w-[2.25rem] h-[2.25rem] rounded-md flex items-center justify-center text-white cursor-pointer transition-all duration-200 ease-out"
-                style="transform: {showRightSidebar ? '' : 'rotate(180deg)'}"
-                on:click={toggleSidebar}
-            >
-                {#if showRightSidebar}
-                    <!-- Closed Eye (when sidebar is open) -->
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <path
-                            d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
-                        ></path>
-                        <line x1="1" y1="1" x2="23" y2="23"></line>
-                    </svg>
-                {:else}
-                    <!-- Open Eye (when sidebar is closed) -->
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
-                        ></path>
-                        <circle cx="12" cy="12" r="3"></circle>
-                    </svg>
-                {/if}
-            </button>
-        </div>
-
-        <div
-            class="overflow-hidden transition-all duration-300 ease-out"
-            style="opacity: {$sidebarContentOpacity}; max-height: {$sidebarContentOpacity *
-                100}vh; transform: translateX({(1 - $sidebarContentOpacity) *
-                10}px);"
-        >
-            <!-- Tab Navigation -->
-            <div
-                class="border-b border-[#27272a] overflow-x-auto scrollbar-none"
-            >
-                <div class="min-w-[260px] flex">
-                    <button
-                        class="px-3 py-2 text-xs {activeSidebarTab === 'Style'
-                            ? 'border-b border-white'
-                            : 'text-gray-400'}"
-                        on:click={() => setActiveTab("Style")}
-                    >
-                        Style
-                    </button>
-                    <button
-                        class="px-3 py-2 text-xs {activeSidebarTab ===
-                        'Settings'
-                            ? 'border-b border-white'
-                            : 'text-gray-400'}"
-                        on:click={() => setActiveTab("Settings")}
-                    >
-                        Settings
-                    </button>
-                    <button
-                        class="px-3 py-2 text-xs {activeSidebarTab ===
-                        'Interactions'
-                            ? 'border-b border-white'
-                            : 'text-gray-400'}"
-                        on:click={() => setActiveTab("Interactions")}
-                    >
-                        Interactions
-                    </button>
-                </div>
-            </div>
-
-            <div class="overflow-y-auto h-[calc(100vh-5rem)]">
-                {#if activeSidebarTab === "Style"}
-                    <div
-                        class="p-3"
-                        in:fly={{ y: 10, duration: 200, delay: 50 }}
-                        out:fade={{ duration: 150 }}
-                    >
-                        {#if selectedNodeId && vdom.getNode(selectedNodeId)}
-                            <div class="mb-4">
-                                <h3 class="text-sm font-medium mb-2">
-                                    Selected Element
-                                </h3>
-                                <div class="text-xs text-gray-400">
-                                    <p>
-                                        Type: {vdom.getNode(selectedNodeId)
-                                            .type}
-                                    </p>
-                                    <p>ID: {selectedNodeId}</p>
-                                </div>
-                            </div>
-
-                            <div class="mb-4">
-                                <h3 class="text-sm font-medium mb-2">
-                                    Position
-                                </h3>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <div>
-                                        <label class="text-xs text-gray-400"
-                                            >Top</label
-                                        >
-                                        <input
-                                            type="text"
-                                            class="w-full bg-gray-700 border border-gray-600 text-sm p-1 rounded"
-                                            value={vdom.getNode(selectedNodeId)
-                                                .styles?.top || "0px"}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="text-xs text-gray-400"
-                                            >Left</label
-                                        >
-                                        <input
-                                            type="text"
-                                            class="w-full bg-gray-700 border border-gray-600 text-sm p-1 rounded"
-                                            value={vdom.getNode(selectedNodeId)
-                                                .styles?.left || "0px"}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="mb-4">
-                                <h3 class="text-sm font-medium mb-2">Size</h3>
-                                <div class="grid grid-cols-2 gap-2">
-                                    <div>
-                                        <label class="text-xs text-gray-400"
-                                            >Width</label
-                                        >
-                                        <input
-                                            type="text"
-                                            class="w-full bg-gray-700 border border-gray-600 text-sm p-1 rounded"
-                                            value={vdom.getNode(selectedNodeId)
-                                                .styles?.width || "auto"}
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="text-xs text-gray-400"
-                                            >Height</label
-                                        >
-                                        <input
-                                            type="text"
-                                            class="w-full bg-gray-700 border border-gray-600 text-sm p-1 rounded"
-                                            value={vdom.getNode(selectedNodeId)
-                                                .styles?.height || "auto"}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        {:else}
-                            <p class="text-sm text-gray-400">
-                                No element selected
-                            </p>
-                        {/if}
-                    </div>
-                {:else if activeSidebarTab === "Settings"}
-                    <div
-                        class="p-3"
-                        in:fly={{ y: 10, duration: 200, delay: 50 }}
-                        out:fade={{ duration: 150 }}
-                    >
-                        <h3 class="text-sm font-medium mb-3">Settings</h3>
-                        <p class="text-xs text-gray-400">
-                            Builder settings would go here.
-                        </p>
-                    </div>
-                {:else if activeSidebarTab === "Interactions"}
-                    <div
-                        class="p-3"
-                        in:fly={{ y: 10, duration: 200, delay: 50 }}
-                        out:fade={{ duration: 150 }}
-                    >
-                        <h3 class="text-sm font-medium mb-3">Interactions</h3>
-                        <p class="text-xs text-gray-400">
-                            Interaction settings would go here.
-                        </p>
-                    </div>
-                {/if}
-            </div>
-        </div>
+        <Sidebar
+            selectedNodeId={selectedNodeId}
+            showRightSidebar={showRightSidebar}
+            activeSidebarTab={activeSidebarTab}
+            vdom={$activeDocuments[0].activeVDom}
+        />
     </aside>
 </div>
 
