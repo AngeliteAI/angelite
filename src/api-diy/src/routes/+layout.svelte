@@ -195,7 +195,7 @@
     // Debug selected node changes
     onMount(() => {
         console.log("activeDocuments:", $activeDocuments);
-        if ($activeDocuments.length == 0 && !isInitialized) {
+        if ($activeDocuments.length == 1 && !isInitialized) {
             isInitialized = true;
             populate($activeDocuments[0].activeVDom);
         }

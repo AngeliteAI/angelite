@@ -57,15 +57,31 @@
         // This ensures we re-run this effect when updateCount changes
         updateCount;
     });
+
+    let dropSettings = $state({
+        within: true,
+        append: true,
+        before: true,
+    });
+    let anyDrop = $derived(() => dropSettings.within || dropSettings.append || dropSettings.before);
+    $effect(() => {
+        if (!nodes[id]?.parentId) {
+            dropSettings.append = false;
+            dropSettings.before = false;
+        }
+    })
 </script>
 
 
 <Snappable>
 <div
     class="vnode static h-max {nodes[id]?.tagName || 'div'}"
+    class:drop-zone={anyDrop}
     class:root={!nodes[id]?.parentId}
     class:selected={isSelected()}
     class:blueprint={showBlueprintMode}
+    id={id}
+    data-drop-settings={JSON.stringify(dropSettings)}
     data-node-id={id}
     data-node-type={nodes[id]?.tagName || 'div'}
     on:click={handleClick}

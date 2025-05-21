@@ -10,6 +10,8 @@
         scaleShift = false,
         startX = 0,
         startY = 0,
+        overrideX,
+        overrideY,
         screenspace = false,
         selected = false,
         disabled = false,
@@ -46,11 +48,13 @@
     let startPosY = $state(0);
     let velocityX = $state(0);
     let velocityY = $state(0);
-    let targetX = $state(0);
-    let targetY = $state(0);
+    let dragTargetX = $state(0);
+    let dragTargetY = $state(0);
+    let targetX = $derived(overrideX != null ? overrideX : dragTargetX);
+    let targetY = $derived(overrideY != null ? overrideY : dragTargetY);
     let rotationAngle = $state(0);
 let animationFrame = $state(null);
-let friction = $state(0.99);
+let friction = $state(0.97);
 let maxRotation = $state(3);
 
     // Tracking for velocity calculations
@@ -58,7 +62,7 @@ let maxRotation = $state(3);
     let lastY = $state(0);
     let lastTimestamp = $state(0);
     let offset = $state({x: 0, y: 0});
-    let modified = $derived(position);
+    let modified = $derived( position);
 
      let oldScale = 0;
      let baseMinRotation = $state(0.2);
@@ -104,15 +108,16 @@ let maxRotation = $state(3);
     );
 
     // Initialize position from props
-    $effect(() => {
+    onMount(() => {
+        virtualScale.subscribe((value) => (currentScale = value));
         position = { x: startX, y: startY };
         console.log(`Draggable ${id}: virtualScale = ${virtualScale}`);
     });
-
-    onMount(() => {
-        virtualScale.subscribe((value) => (currentScale = value));
-    });
     // Prepare bounds if provided
+    export function move(x, y) {
+        position.x +=x;
+        position.y +=y;
+    }
     function initializeBounds() {
         if (bounds && typeof bounds === "string") {
             const boundsElement = document.querySelector(bounds);
@@ -132,18 +137,42 @@ let maxRotation = $state(3);
         }
     }
 
-    function startAnimation() {
+    export function impulseDirection(rotation, impulse) {
+        //get the horizontal and vertical component of the impulse via rotation using trig
+        const horizontalComponent = impulse * Math.cos(rotation % (2 * Math.PI));
+        const verticalComponent = impulse * Math.sin(rotation % (2 * Math.PI));
+        console.log(velocityX, velocityY);
+
+        //apply the impulse to the velocity
+        velocityX += horizontalComponent;
+        velocityY += verticalComponent;
+    }
+
+    export function startAnimation() {
     // Cancel any existing animation
     if (animationFrame !== null) {
         cancelAnimationFrame(animationFrame);
     }
     
     const animate = () => {
+    const timestamp = Date.now();
+    const dt = Math.min((timestamp - lastTimestamp)/1000, 1/60);
+
+    // Update last values for next velocity calculation
+    lastX = position.x;
+    lastY = position.y;
+    lastTimestamp = timestamp // Check for potential snap positions if enabled
+        
         // If dragging, move towards target position with some easing
-        if (isDragging) {
+        console.log(Math.sqrt(targetX * targetX + targetY * targetY), Math.sqrt(position.x * position.x + position.y * position.y));
+        let diffX = targetX - position.x ;
+        let diffY = targetY - position.y;
+        impulseDirection(Math.atan2(diffY, diffX), 1000 );
+            console.log("YOOOO");
             // Simple easing towards target position (80% of the way there)
-            position.x += (targetX - position.x) * 0.2;
-            position.y += (targetY - position.y) * 0.2;
+            console.log(velocityX, velocityY);
+            position.x += velocityX * dt* (screenspace ? 1 : 1 / currentScale) / 60;
+            position.y += velocityY * dt* (screenspace ? 1 : 1 / currentScale) / 60;
             
             // Calculate rotation based on velocity
             const direction = Math.sign(velocityX);
@@ -151,13 +180,9 @@ let maxRotation = $state(3);
             const horizontalFactor = Math.abs(velocityX) / (Math.abs(velocityX) + Math.abs(velocityY) + 0.1);
             
             // Set rotation based on velocity
-            rotationAngle = direction * Math.min(speed / 50, 1) * maxRotation * horizontalFactor;
-        } 
+            rotationAngle = speed > Math.sqrt(clientWidth * clientHeight) / $virtualScale ? direction * Math.min(speed / 50, 1) * maxRotation * horizontalFactor : 0;
         // If not dragging, apply inertia
-        else {
-            // Apply velocity to position with scaling for frame rate
-            position.x += velocityX * (screenspace ? 1 : 1 / currentScale) / 60;
-            position.y += velocityY * (screenspace ? 1 : 1 / currentScale) / 60;
+        if (Math.sqrt(diffX * diffX + diffY * diffY) < Math.sqrt(clientWidth * clientHeight)/ $virtualScale) {
             
             // Apply friction
             velocityX *= friction;
@@ -263,6 +288,7 @@ let maxRotation = $state(3);
 
         // Prevent default browser behavior and stop propagation to avoid double drag
         event.preventDefault();
+        event.stopPropagation();
 
         
     // Save starting positions
@@ -272,8 +298,8 @@ let maxRotation = $state(3);
     startPosY = position.y;
     
     // Set initial target position to current position
-    targetX = position.x;
-    targetY = position.y;
+    dragTargetX =  position.x;
+    dragTargetY =  position.y;
     
     // Mark as dragging
     isDragging = true;
@@ -303,6 +329,8 @@ let maxRotation = $state(3);
     function onPointerMove(event: PointerEvent) {
         if (!isDragging) return;
 
+    $mouseX = event.clientX;
+    $mouseY = event.clientY;
         // Calculate the movement delta
         const deltaX =
             (event.clientX - startMouseX) * (screenspace ? currentScale : 1 / currentScale);
@@ -311,22 +339,16 @@ let maxRotation = $state(3);
 
 
     // Update target position based on drag
-    targetX = startPosX + deltaX;
-    targetY = startPosY + deltaY;
+    dragTargetX = startPosX + deltaX;
+    dragTargetY = startPosY + deltaY;
     
     // Calculate velocity
-    const timestamp = Date.now();
-    const dt = timestamp - lastTimestamp;
-    if (dt > 0) {
-        velocityX = ((event.clientX - lastX) / dt) * 100;
-        velocityY = ((event.clientY - lastY) / dt) * 100;
-    }
-    
-    // Update last values for next velocity calculation
-    lastX = event.clientX;
-    lastY = event.clientY;
-    lastTimestamp = timestamp // Check for potential snap positions if enabled
-      
+    console.log("drag move");
+         dispatch("dragmove", {
+            id,
+            position: { x: position.x, y: position.y },
+            event,
+        });
     }
 
     // Handle drag end
@@ -397,8 +419,8 @@ let maxRotation = $state(3);
     bind:clientHeight
     class:absolute={absolute}
     class:relative={!absolute}
-    class="{classNames}"
-    style="{positionStyle}; {zIndexStyle} {customStyles}; width: 100%; height: max-content;"
+    class="{classNames} draggable"
+    style={disabled ? "" : `${positionStyle}; ${zIndexStyle} ${customStyles}; width: 100%; height: max-content;` }
     onpointerdown={onPointerDown}
     onpointerup={onPointerUp}
 >

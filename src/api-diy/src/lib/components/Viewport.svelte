@@ -19,27 +19,30 @@
         dispatch(event, detail);
     }
     var showBlueprintMode = false;
-    var w = $state(),
-        h = $state();
+    var w = $state(0),
+        h = $state(0);
     // Get the current VDOM state
     var position = $state({ x: 0, y: 0 });
     var lastPos = $state(0)
 
     var modified = $derived({
-        x: position.x / currentScale + offsetX,
-        y: position.y / currentScale + offsetY,
+        x: position.x / $virtualScale + offsetX,
+        y: position.y / $virtualScale + offsetY,
     });
     var origin = $derived({
-        x: position.x,
-        y: position.y ,
+        x: position.x / $virtualScale + offsetX,
+        y: position.y / $virtualScale + offsetY,
 
     });
     var localVirtualScale = $derived($virtualScale);
+    var min = 0.05;
+    var max = 10.0;
+    var backgroundScale = $derived($virtualScale * 20);
 </script>
 
 <div
     id="viewport"
-    style="--background-scale: {currentScale / 5 * 1000}px"
+    style="--scale-x: {backgroundScale}%; --scale-y: {backgroundScale * w / h}%; --origin-x: {origin.x + w / 2}px; --origin-y: {origin.y}px;"
     bind:clientWidth={w}
     bind:clientHeight={h}
     role="region"
@@ -101,10 +104,11 @@ const storeMouseX = e.clientX - rect.left - w / 2;
         background-image:
             linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
             linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
-        background-size: var(--background-scale) var(--background-scale);
+        background-size: var(--scale-x) var(--scale-y);
+        background-position: var(--origin-x) var(--origin-y);
         position: relative;
         width: 100%;
         height: 100%;
-        overflow: auto;
+        overflow: hidden;
     }
 </style>
