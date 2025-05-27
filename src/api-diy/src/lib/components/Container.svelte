@@ -5,7 +5,6 @@
     let {
         children,
         activeVDom = $bindable(),
-        selectedNodeId = $bindable(),
         showBlueprintMode = false,
         cameraX = 0,
         cameraY = 0,
@@ -17,6 +16,10 @@
         width = 1179,
         height = 2556,
     } = $props();
+
+    // Track the VDom's internal state
+    let vdomNodes = $state({});
+    let vdomUpdateCount = $state(0);
     let currentScale = $state($virtualScale);
 
     const dispatch = createEventDispatcher();
@@ -37,7 +40,8 @@
         <!-- Root node with all children -->
         <VDom
             bind:this={activeVDom}
-            bind:selectedNodeId
+            bind:nodes={vdomNodes}
+            bind:updateCount={vdomUpdateCount}
             {showBlueprintMode}
             {currentScale}
         />
@@ -81,7 +85,9 @@
         background: white;
         width: var(--virtual-width);
         height: var(--virtual-height);
-        transition: width 0.2s ease-in-out, height 0.2s ease-in-out;
+        transition:
+            width 0.2s ease-in-out,
+            height 0.2s ease-in-out;
         cursor: grab;
         box-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
         border-radius: 8px;

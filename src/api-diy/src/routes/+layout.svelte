@@ -8,10 +8,14 @@
     import { fade, fly } from "svelte/transition";
     import Viewport from "$lib/components/Viewport.svelte";
     import Tailwind from "$lib/Tailwind.svelte";
-    import { virtualScale, activeDocuments } from "$lib/store";
+    import { virtualScale, activeDocuments, selectedNodeId } from "$lib/store";
+    import VDom from "$lib/VDom.svelte";
     import Sidebar from "$lib/components/Sidebar.svelte";
+    import Inspector from "$lib/components/inspector/Inspector.svelte";
 
     // Camera and viewport state
+    let vdomInstance = $state(null);
+    let activeVDom = $derived($activeDocuments[0]?.activeVDom);
     let localVirtualScale = $state(0.2);
     let offsetX = 0; // Content panning X relative to container
     let offsetY = 0; // Content panning Y relative to container
@@ -22,13 +26,19 @@
 
     // UI state
     let showRightSidebar = true;
-    let activeSidebarTab = "Style"; // "Style", "Settings", "Interactions"
-    let selectedNodeId = null;
+    let activeSidebarTab = "styles"; // "styles", "properties", "events"
     let showBlueprintMode = false;
+    let showInspector = true;
 
     // Device settings
     const tweenedWidth = tweened(1179, { duration: 300, easing: quartOut });
     const tweenedHeight = tweened(2556, { duration: 300, easing: quartOut });
+
+    onMount(() => {
+        if (activeDocuments.length > 0 && activeDocuments[0].activeVDom) {
+            populate(activeDocuments[0].activeVDom);
+        }
+    });
 
     let virtualDevices = [
         {
@@ -43,12 +53,14 @@
         },
     ];
     let currentVirtualDeviceIndex = $state(0);
-    let currentVirtualDevice = $derived(virtualDevices[currentVirtualDeviceIndex]);
+    let currentVirtualDevice = $derived(
+        virtualDevices[currentVirtualDeviceIndex],
+    );
 
     $effect(() => {
         $activeDocuments[0].width = currentVirtualDevice.width;
         $activeDocuments[0].height = currentVirtualDevice.height;
-    })
+    });
 
     // Sidebar state
     const sidebarWidth = tweened(showRightSidebar ? 300 : 36, {
@@ -96,8 +108,23 @@
         showBlueprintMode = !showBlueprintMode;
     }
 
-
     function populate(activeVDom) {
+        if (!activeVDom) {
+            console.error("Cannot populate: activeVDom is null");
+            return;
+        }
+
+        if (
+            typeof activeVDom.rootNodeId === "undefined" ||
+            !activeVDom.addNode ||
+            !activeVDom.getNode
+        ) {
+            console.error(
+                "Cannot populate: activeVDom is missing required methods or properties",
+            );
+            return;
+        }
+
         let rootId = activeVDom.rootNodeId;
         console.log("Root node for population:", rootId);
 
@@ -187,21 +214,11 @@
         }
 
         // Helper to convert VNode and its children to the PageContentNode structure
-
     }
 
     let isInitialized = $state(false);
 
     // Debug selected node changes
-    onMount(() => {
-        console.log("activeDocuments:", $activeDocuments);
-        if ($activeDocuments.length == 1 && !isInitialized) {
-            isInitialized = true;
-            populate($activeDocuments[0].activeVDom);
-        }
-    });
-
-
 </script>
 
 <div
@@ -214,7 +231,6 @@
         <select
             class="bg-[#27272a] text-white text-sm rounded px-2 py-1 mr-4"
             bind:value={currentVirtualDeviceIndex}
-            on:change={updateDeviceViewport}
         >
             {#each virtualDevices as device, i}
                 <option value={i}>{device.name}</option>
@@ -235,8 +251,8 @@
 
     <!-- Main content area with viewport -->
     <div class="col-start-2 row-start-2 overflow-hidden">
-        <Viewport {selectedNodeId}>
-        <slot/>
+        <Viewport>
+            <slot />
         </Viewport>
     </div>
 
@@ -244,11 +260,10 @@
     <aside
         class="col-start-3 row-start-2 bg-black text-white overflow-hidden transition-all duration-300 ease-out"
     >
-        <Sidebar
-            selectedNodeId={selectedNodeId}
-            showRightSidebar={showRightSidebar}
-            activeSidebarTab={activeSidebarTab}
-            vdom={$activeDocuments[0].activeVDom}
+        <Inspector
+            vdom={$activeDocuments[0]?.activeVDom}
+            bind:showInspector={showRightSidebar}
+            bind:activeTab={activeSidebarTab}
         />
     </aside>
 </div>
@@ -280,12 +295,7 @@
         background-color: rgba(59, 130, 246, 0.1);
     }
 
-    :global(.node.selected) {
-        outline: 3px solid #3b82f6 !important;
-        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3) !important;
-        position: relative;
-        z-index: 10 !important;
-    }
+    /* Selected node styling handled by Selectable component */
 
     :global(.node-moved) {
         animation: highlight-node 0.5s ease-out;

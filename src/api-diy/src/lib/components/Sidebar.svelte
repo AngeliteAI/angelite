@@ -1,5 +1,4 @@
 <script lang="ts">
-  export let selectedNodeId = null;
   export let showRightSidebar = true;
   export let activeSidebarTab = "Style";
   export let vdom = null;
@@ -17,10 +16,7 @@
   }
   
   function handleStyleUpdate(style) {
-    if (!selectedNodeId) return;
-    
     dispatch('updateStyle', {
-      nodeId: selectedNodeId,
       style
     });
   }

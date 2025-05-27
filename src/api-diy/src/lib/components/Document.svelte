@@ -3,7 +3,6 @@
     import { virtualScale } from "$lib/store";
     var {
         activeVDom = $bindable(),
-        selectedNodeId = $bindable(),
         showBlueprintMode = false,
         cameraX = 0,
         cameraY = 0,
@@ -39,7 +38,6 @@
 <Draggable absolute={true}>
         <Container
             bind:activeVDom
-            bind:selectedNodeId
             {cameraX}
             {cameraY}
             {mouseX}

@@ -2,7 +2,6 @@
     import { virtualScale, mouseX, mouseY } from "$lib/store";
     let {
         children,
-        selectedNodeId,
     } = $props();
     let currentScale = $state($virtualScale);
     var offsetX = 0;

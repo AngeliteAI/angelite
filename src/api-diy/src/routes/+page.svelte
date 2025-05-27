@@ -8,6 +8,7 @@
     import { virtualScale, activeDocuments } from "$lib/store";
 
     let localVirtualScale = $derived(get(virtualScale));
+    let vdomInstance = $state(null);
 
 </script>
 
@@ -18,8 +19,12 @@
     virtualScale={localVirtualScale}
     width={$activeDocuments[i].width || 1337}
     height={$activeDocuments[i].height || 1337 }
-    selectedNodeId={$activeDocuments[i].selectedNodeId}
 />
+
+<!-- Directly instantiate VDom for debugging and Inspector access -->
+<div style="display: none;">
+    <VDom bind:this={vdomInstance} />
+</div>
 {/each}
 {/if}
 
