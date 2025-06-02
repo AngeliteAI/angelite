@@ -10,8 +10,9 @@
         scaleShift = false,
         startX = 0,
         startY = 0,
-        overrideX,
-        overrideY,
+        overridable = false,
+        overrideX = 0,
+        overrideY = 0,
         screenspace = false,
         selected = false,
         disabled = false,
@@ -29,7 +30,6 @@
         customDraggingClass = "",
         position = $bindable({ x: startX, y: startY }),
     } = $props();
-    let currentScale = $state(0.2);
     let clientWidth = $state();
     let clientHeight = $state();
     const dispatch = createEventDispatcher();
@@ -49,8 +49,12 @@
     let velocityY = $state(0);
     let dragTargetX = $state(0);
     let dragTargetY = $state(0);
-    let targetX = $derived(overrideX != null ? overrideX : dragTargetX);
-    let targetY = $derived(overrideY != null ? overrideY : dragTargetY);
+    let targetX = $derived(
+        overridable && overrideX != null ? overrideX : dragTargetX,
+    );
+    let targetY = $derived(
+        overridable && overrideY != null ? overrideY : dragTargetY,
+    );
     let rotationAngle = $state(0);
     let animationFrame = $state(null);
     let friction = $state(0.8);
@@ -111,9 +115,8 @@
 
     // Initialize position from props
     onMount(() => {
-        virtualScale.subscribe((value) => (currentScale = value));
         position = { x: startX, y: startY };
-        console.log(`Draggable ${id}: virtualScale = ${virtualScale}`);
+        console.log(`Draggable ${id}: virtualScale = ${$virtualScale}`);
     });
     // Prepare bounds if provided
     export function move(x, y) {
@@ -173,14 +176,15 @@
             );
             let diffX = targetX - position.x;
             let diffY = targetY - position.y;
+            console.log(targetX, targetY, position);
             impulseDirection(Math.atan2(diffY, diffX), 1000);
             console.log("YOOOO");
             // Simple easing towards target position (80% of the way there)
             console.log(velocityX, velocityY);
             position.x +=
-                (velocityX * dt * (screenspace ? 1 : 1 / currentScale)) / 60;
+                (velocityX * dt * (screenspace ? 1 : 1 / $virtualScale)) / 60;
             position.y +=
-                (velocityY * dt * (screenspace ? 1 : 1 / currentScale)) / 60;
+                (velocityY * dt * (screenspace ? 1 : 1 / $virtualScale)) / 60;
 
             // Calculate rotation based on velocity
             const direction = Math.sign(velocityX);
@@ -212,7 +216,14 @@
                 Math.sqrt(clientWidth * clientHeight) / $virtualScale;
             var decelerating = lastSpeed - speed > 0;
             lastSpeed = speed;
-            if (dragging && decelerating) {
+            console.log();
+
+            let approaching = diffX * velocityX + diffY * velocityY > 0;
+            let close =
+                Math.sqrt(diffX * diffX + diffY * diffY) <
+                20 / (screenspace ? 1 : $virtualScale);
+
+            if ((dragging && decelerating) || (approaching && close)) {
                 // Apply friction
                 velocityX *= friction;
                 velocityY *= friction;
@@ -224,14 +235,14 @@
             // Apply bounds if needed
             if (boundingRect) {
                 const elemRect = element.getBoundingClientRect();
-                const minX = boundingRect.left / currentScale;
+                const minX = boundingRect.left / $virtualScale;
                 const maxX =
-                    boundingRect.right / currentScale -
-                    elemRect.width / currentScale;
-                const minY = boundingRect.top / currentScale;
+                    boundingRect.right / $virtualScale -
+                    elemRect.width / $virtualScale;
+                const minY = boundingRect.top / $virtualScale;
                 const maxY =
-                    boundingRect.bottom / currentScale -
-                    elemRect.height / currentScale;
+                    boundingRect.bottom / $virtualScale -
+                    elemRect.height / $virtualScale;
 
                 // Apply bounds with bounce effect
                 if (position.x < minX) {
@@ -389,10 +400,10 @@
         // Calculate the movement delta
         const deltaX =
             (event.clientX - startMouseX) *
-            (screenspace ? currentScale : 1 / currentScale);
+            (screenspace ? $virtualScale : 1 / $virtualScale);
         const deltaY =
             (event.clientY - startMouseY) *
-            (screenspace ? currentScale : 1 / currentScale);
+            (screenspace ? $virtualScale : 1 / $virtualScale);
 
         // Update target position based on drag
         dragTargetX = startPosX + deltaX;

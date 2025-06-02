@@ -221,51 +221,45 @@
     // Debug selected node changes
 </script>
 
-<div
-    class="bg-black grid grid-cols-[35px_1fr_auto] grid-rows-[35px_1fr] h-screen"
->
+<div class="bg-black h-screen">
     <!-- Header (top bar) -->
     <header
-        class="col-span-3 row-start-1 bg-black flex items-center justify-center p-2"
+        class="absolute top-0 left-0 w-full h-[50px] flex items-center justify-center p-2"
     >
-        <select
-            class="bg-[#27272a] text-white text-sm rounded px-2 py-1 mr-4"
-            bind:value={currentVirtualDeviceIndex}
-        >
-            {#each virtualDevices as device, i}
-                <option value={i}>{device.name}</option>
-            {/each}
-        </select>
-        <button
-            class="ml-4 px-3 py-1 rounded text-xs bg-[#27272a] border border-gray-600 hover:bg-[#3f3f46]"
-            on:click={toggleBlueprintMode}
-        >
-            {showBlueprintMode ? "Show Actual Design" : "Show Blueprint View"}
-        </button>
+        <div class="z-1000 w-[50vw] shadow-xl rounded-md bg-white">
+            <div
+                class="w-full h-full rounded-md shadow-inner border-[1px] border-[#E7E7E7] flex justify-around p-1"
+            >
+                <img src="hand.svg" alt="Pencil Icon" class="w-6 h-6" />
+                <img src="cursor.svg" alt="Pencil Icon" class="w-6 h-6" />
+                <img src="pencil.svg" alt="Pencil Icon" class="w-6 h-6" />
+                <img src="shapes.svg" alt="Pencil Icon" class="w-6 h-6" />
+                <img src="text.svg" alt="Pencil Icon" class="w-6 h-6" />
+                <img src="document.svg" alt="Pencil Icon" class="w-6 h-6" />
+                <img src="code.svg" alt="Screen Icon" class="w-6 h-6" />
+                <img src="servers.svg" alt="Screen Icon" class="w-6 h-6" />
+                <img src="database.svg" alt="Screen Icon" class="w-6 h-6" />
+                <img src="network.svg" alt="Screen Icon" class="w-6 h-6" />
+            </div>
+        </div>
     </header>
 
-    <!-- Left sidebar -->
-    <nav class="col-start-1 row-span-3 bg-black flex flex-col items-center">
-        d
-    </nav>
+    <aside
+        class="absolute top-0 left-0 w-[320px] h-full flex justify-center items-center"
+    >
+        <div class="z-1000 h-[80vh] w-[300px] shadow-xl rounded-md bg-white">
+            <div
+                class="w-full h-full rounded-md shadow-inner border-[1px] border-[#E7E7E7]"
+            ></div>
+        </div>
+    </aside>
 
     <!-- Main content area with viewport -->
-    <div class="col-start-2 row-start-2 overflow-hidden">
+    <div class="absolute top-0 left-0 w-full h-full overflow-hidden">
         <Viewport>
             <slot />
         </Viewport>
     </div>
-
-    <!-- Right sidebar -->
-    <aside
-        class="col-start-3 row-start-2 bg-black text-white overflow-hidden transition-all duration-300 ease-out"
-    >
-        <Inspector
-            vdom={$activeDocuments[0]?.activeVDom}
-            bind:showInspector={showRightSidebar}
-            bind:activeTab={activeSidebarTab}
-        />
-    </aside>
 </div>
 
 <style>

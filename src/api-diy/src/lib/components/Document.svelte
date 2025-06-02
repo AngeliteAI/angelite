@@ -27,15 +27,22 @@
     import Draggable from "./Draggable.svelte";
     import Container from "./Container.svelte";
     import { onMount } from "svelte";
+    import { stopPropagation } from "svelte/legacy";
     $effect(() => {
         if (!isDragging) {
             startX = mouseX;
             startY = mouseY;
         }
     });
+    var draggableComponent = $state();
 </script>
 
-<Draggable absolute={true}>
+<Draggable bind:this={draggableComponent} absolute={true}>
+    <div
+        onmousedown={(e) => {
+            draggableComponent.startDrag(e);
+        }}
+    >
         <Container
             bind:activeVDom
             {cameraX}
@@ -47,6 +54,7 @@
             {width}
             {height}
         ></Container>
+    </div>
 </Draggable>
 
 <style>

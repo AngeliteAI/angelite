@@ -595,6 +595,7 @@
     <Draggable
         bind:this={draggableComponent}
         {id}
+        overridable={true}
         {overrideX}
         {overrideY}
         bind:position
