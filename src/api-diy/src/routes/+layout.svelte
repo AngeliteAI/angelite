@@ -224,24 +224,42 @@
 <div class="bg-black h-screen">
     <!-- Header (top bar) -->
     <header
-        class="absolute top-0 left-0 w-full h-[50px] flex items-center justify-center p-2"
+        class="absolute top-0 left-0 w-full h-[50px] flex justify-center items-center p-2"
     >
-        <div class="z-1000 w-[50vw] shadow-xl rounded-md bg-white">
-            <div
-                class="w-full h-full rounded-md shadow-inner border-[1px] border-[#E7E7E7] flex justify-around p-1"
-            >
-                <img src="hand.svg" alt="Pencil Icon" class="w-6 h-6" />
-                <img src="cursor.svg" alt="Pencil Icon" class="w-6 h-6" />
-                <img src="pencil.svg" alt="Pencil Icon" class="w-6 h-6" />
-                <img src="shapes.svg" alt="Pencil Icon" class="w-6 h-6" />
-                <img src="text.svg" alt="Pencil Icon" class="w-6 h-6" />
-                <img src="document.svg" alt="Pencil Icon" class="w-6 h-6" />
-                <img src="code.svg" alt="Screen Icon" class="w-6 h-6" />
-                <img src="servers.svg" alt="Screen Icon" class="w-6 h-6" />
-                <img src="database.svg" alt="Screen Icon" class="w-6 h-6" />
-                <img src="network.svg" alt="Screen Icon" class="w-6 h-6" />
+        <span class="z-1000 relative h-full shadow-xl flex justify-center">
+            <div class="w-[20vw] rounded-l-md bg-white">
+                <div
+                    class="w-full h-full rounded-l-md border-[1px]
+                border-[#E7E7E7] border-r-[0] flex justify-around p-1"
+                >
+                    quick settings
+                </div>
             </div>
-        </div>
+            <div class="z-1000 w-[50vw] bg-white">
+                <div
+                    class="w-full h-full border-[1px] border-[#E7E7E7] border-l-[0] border-r-[0] flex justify-around p-1"
+                >
+                    <img src="hand.svg" alt="Pencil Icon" class="w-6 h-6" />
+                    <img src="cursor.svg" alt="Pencil Icon" class="w-6 h-6" />
+                    <img src="pencil.svg" alt="Pencil Icon" class="w-6 h-6" />
+                    <img src="shapes.svg" alt="Pencil Icon" class="w-6 h-6" />
+                    <img src="text.svg" alt="Pencil Icon" class="w-6 h-6" />
+                    <img src="document.svg" alt="Pencil Icon" class="w-6 h-6" />
+                    <img src="code.svg" alt="Screen Icon" class="w-6 h-6" />
+                    <img src="servers.svg" alt="Screen Icon" class="w-6 h-6" />
+                    <img src="database.svg" alt="Screen Icon" class="w-6 h-6" />
+                    <img src="network.svg" alt="Screen Icon" class="w-6 h-6" />
+                </div>
+            </div>
+            <div class="z-1000 w-[20vw] rounded-r-md bg-white">
+                <div
+                    class="w-full h-full rounded-r-md border-[1px]
+                border-[#E7E7E7] border-l-[0] flex justify-around p-1"
+                >
+                    Profile
+                </div>
+            </div></span
+        >
     </header>
 
     <aside
@@ -249,7 +267,7 @@
     >
         <div class="z-1000 h-[80vh] w-[300px] shadow-xl rounded-md bg-white">
             <div
-                class="w-full h-full rounded-md shadow-inner border-[1px] border-[#E7E7E7]"
+                class="w-full h-full rounded-md border-[1px] border-[#E7E7E7]"
             ></div>
         </div>
     </aside>
