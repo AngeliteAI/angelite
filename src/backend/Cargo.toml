@@ -1,0 +1,14 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+derive_more = { version = "*", features = ["full"]}
+axum = { version = "*", features=["tokio", "http1", "macros"]}
+tokio = { version = "*", features = ["full"] }
+tower = { version = "*", features = ["full"] }
+rand = "0.9.1"
+anyhow = "1.0.98"
+tokio-postgres = "0.7.13"
