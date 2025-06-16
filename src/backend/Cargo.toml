@@ -6,9 +6,10 @@ edition = "2024"
 [dependencies]
 
 derive_more = { version = "*", features = ["full"]}
-axum = { version = "*", features=["tokio", "http1", "macros"]}
 tokio = { version = "*", features = ["full"] }
+span = { path = "../span"}
 tower = { version = "*", features = ["full"] }
 rand = "0.9.1"
 anyhow = "1.0.98"
 tokio-postgres = "0.7.13"
+http = "*"

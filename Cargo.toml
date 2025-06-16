@@ -1,5 +1,5 @@
 [workspace]
-members = [ "src/prism"]
+members = [ "src/prism", "src/backend", "src/span"]
 
 [profile.release]
 panic = 'abort'
