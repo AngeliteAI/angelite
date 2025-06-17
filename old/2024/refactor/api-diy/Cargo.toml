@@ -1,0 +1,10 @@
+[package]
+name = "api-diy"
+version = "0.1.0"
+edition = "2024"
+
+[profile.dev]
+panic = "abort"
+
+[dependencies]
+http = {path = "../http"}

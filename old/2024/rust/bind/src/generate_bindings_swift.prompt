@@ -1,0 +1,232 @@
+# Swift FFI Bindings Generator
+
+This guide focuses specifically on creating Swift FFI bindings for any language that exposes a C ABI interface (such as C, C++, Zig, Rust, or any other language that can generate C-compatible bindings).
+
+## File Organization
+
+**CRITICAL: Generate EXACTLY ONE Swift binding file per input file.**
+
+- Each input file (regardless of source language) should map to exactly one Swift output file (`.swift`)
+- Do NOT create separate "Include" files or split functionality across multiple files
+- ALL bindings from a single input file must be placed in a single output file
+- Import statements for Swift standard libraries (Foundation, etc.) are allowed, but do not create custom imports between generated files
+- Name the Swift file after the original input file (e.g., `input.h` → `Input.swift`, `module.zig` → `Module.swift`)
+- Group related types and functions within the appropriate Swift file
+
+## Swift Binding Approaches
+
+Swift offers several approaches for interfacing with C ABI code:
+
+### 1. Direct @_silgen_name Binding (Preferred)
+
+```swift
+// Directly import C function with Swift-compatible signature
+@_silgen_name("c_function_name") 
+public func camelCaseName(param1: ParamType1, param2: ParamType2) -> ReturnType
+
+// INCORRECT - Don't keep snake_case function names
+// @_silgen_name("v3_reflect")
+// public func v3_reflect(v: Vec3, n: Vec3) -> Vec3  // WRONG!
+
+// CORRECT - Convert to camelCase
+@_silgen_name("v3_reflect")
+public func v3Reflect(v: Vec3, n: Vec3) -> Vec3  // RIGHT!
+```
+
+This approach:
+- Directly links the Swift function to the C function via the symbol name
+- Creates a clean Swift API that calls the C implementation
+- Doesn't require module maps or bridging headers
+- Works with Swift Package Manager
+
+### 2. Module Import Approach
+
+```swift
+// Import the C module
+import CModule
+
+// Create Swift wrapper functions
+public func swiftFunction(param: SwiftType) -> SwiftType {
+    return CModule.c_function(cParam)
+}
+```
+
+This requires module map configuration but provides clear API boundaries.
+
+## Type Mappings
+
+| C Type       | Swift Type                        | Notes                             |
+|--------------|-----------------------------------|-----------------------------------|
+| `void`       | `Void`                            |                                   |
+| `bool`       | `Bool`                            |                                   |
+| `char`       | `CChar`                           |                                   |
+| `short`      | `CShort`                          |                                   |
+| `int`        | `CInt` / `Int32`                  |                                   |
+| `long`       | `CLong`                           |                                   |
+| `long long`  | `CLongLong` / `Int64`             |                                   |
+| `float`      | `CFloat` / `Float`                |                                   |
+| `double`     | `CDouble` / `Double`              |                                   |
+| `char*`      | `UnsafePointer<CChar>?`           | For string input                  |
+| `char**`     | `UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?` | For string arrays |
+| `T*`         | `UnsafePointer<T>?`               | For input pointers                |
+| `T*`         | `UnsafeMutablePointer<T>?`        | For output/in-out pointers       |
+| `void*`      | `UnsafeMutableRawPointer?`        | For opaque pointers              |
+| `const void*`| `UnsafeRawPointer?`               | For const opaque pointers        |
+| `T[]`        | `UnsafeBufferPointer<T>`          | For arrays                        |
+| `function*`  | `@convention(c) (Args) -> Return` | For function pointers            |
+
+## Memory Layout
+
+### Struct Definitions
+
+```swift
+// For simple, fixed-layout C structs
+public struct CStruct {
+    public var field1: Int32
+    public var field2: Float
+    
+    public init(field1: Int32, field2: Float) {
+        self.field1 = field1
+        self.field2 = field2
+    }
+}
+
+// For complex structs with ref semantics
+@objc public class ComplexStruct: NSObject {
+    public var field1: Int32
+    public var field2: UnsafeMutablePointer<CChar>?
+    
+    public init(field1: Int32, field2: UnsafeMutablePointer<CChar>?) {
+        self.field1 = field1
+        self.field2 = field2
+    }
+}
+```
+
+### Enum Definitions
+
+```swift
+// C enum with explicit values
+public enum CEnum: Int32 {
+    case value1 = 0
+    case value2 = 1
+    case value3 = 2
+    // Add cases as needed
+}
+```
+
+## Function Binding Examples
+
+### Basic Function
+
+```swift
+// C: void example_function(int a, float b);
+@_silgen_name("example_function")
+public func exampleFunction(a: Int32, b: Float)
+
+// INCORRECT formats to avoid:
+// @_silgen_name("example_function")
+// public func example_function(a: Int32, b: Float)  // WRONG! Must be camelCase
+// @_silgen_name("example_function")
+// public func exampleFunction(a: Int32, b: Float) -\u003e Void  // WRONG! Unicode escape
+// @_silgen_name("example_function")
+// public func exampleFunction(a: Int32, b: Float) >Void  // WRONG! Missing hyphen
+```
+
+### Function with Return Value
+
+```swift
+// C: float calculate(int a, float b);
+@_silgen_name("calculate")
+public func calculate(a: Int32, b: Float) -> Float
+```
+
+### Function with Pointers
+
+```swift
+// C: void process_buffer(void* data, size_t len);
+@_silgen_name("process_buffer")
+public func processBuffer(data: UnsafeMutableRawPointer?, len: Int)
+```
+
+### Function with Struct Parameters
+
+```swift
+// C: void update_point(Point* p, float x, float y);
+@_silgen_name("update_point")
+public func updatePoint(p: UnsafeMutablePointer<Point>?, x: Float, y: Float)
+```
+
+### Function with Callback
+
+```swift
+// Define callback type
+public typealias CallbackType = @convention(c) (Int32, UnsafePointer<CChar>?) -> Int32
+
+// C: int register_callback(void (*callback)(int, const char*));
+@_silgen_name("register_callback")
+public func registerCallback(_ callback: CallbackType?) -> Int32
+```
+
+## Constants and Global Variables
+
+```swift
+// C: #define MAX_SIZE 100
+public let MAX_SIZE: Int32 = 100
+
+// C: extern float global_value;
+@_silgen_name("global_value")
+public var globalValue: Float
+```
+
+## Best Practices
+
+1. **Use Swift naming conventions** - ALWAYS convert snake_case to camelCase
+   - Example: `v4_lerp` → `v4Lerp`, `calculate_distance` → `calculateDistance`
+   - This applies to function names, not the `@_silgen_name` string (which must match the original symbol)
+2. **Use correct return arrow style** - Always use `->` (hyphen then greater than), never `>` or `-\u003e`
+3. **Provide proper nullability** - Use optional types for nullable pointers
+4. **Use Swift-friendly types** where possible (e.g., `String` for APIs)
+5. **Include documentation comments** for all public functions and types
+6. **Handle errors appropriately** - Convert C error codes to Swift errors if needed
+
+## Output Format
+
+For Swift FFI bindings, each output file should follow this format:
+
+```swift
+// /path/to/output/ModuleName.swift
+// Generated binding for ModuleName.[h/zig/rs/...]
+
+import Foundation
+
+// Type definitions (structs, enums)
+// ...
+
+// Constants
+// ...
+
+// Function bindings - ALL bindings for the input file must be in this ONE file
+@_silgen_name("function_name")
+public func functionName(...) -> ReturnType
+
+@_silgen_name("another_function")
+public func anotherFunction(...) -> ReturnType
+```
+
+## Common Errors to Avoid
+
+1. **Multiple Output Files**: Do NOT split a single input file into multiple Swift files (e.g., "IncludeVec.swift", "Math.swift", etc.)
+2. **Function Naming**: Always convert function names from snake_case to camelCase (e.g., `v3_reflect` → `v3Reflect`)
+3. **Return Arrow**: Always use the proper arrow syntax with a hyphen followed by greater-than sign (`->`) for return types
+4. **Keeping Original Case**: Don't preserve the original case of function names in the Swift function declaration
+
+## File Naming Convention
+
+- Use Pascal case for Swift file names (e.g., `CoreGraphics.swift`, not `core_graphics.swift`)
+- Maintain a clear mapping between the input file and the Swift binding file
+- Use the following naming pattern regardless of source language:
+  - Input: `module_name.h` → Output: `ModuleName.swift`
+  - Input: `core/graphics.h` → Output: `CoreGraphics.swift`
+  - Input: `memory.zig` → Output: `Memory.swift`
+  - Input: `rust_utils.rs` → Output: `RustUtils.swift`

@@ -1,0 +1,22 @@
+{
+  "name": "blockglow",
+  "version": "0.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blockglow/blockglow.git"
+  },
+  "author": "Sol Midnight",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/blockglow/blockglow/issues"
+  },
+  "homepage": "https://github.com/blockglow/blockglow#readme",
+  "description": "",
+  "files": [
+    "*.svelte"
+  ]
+}

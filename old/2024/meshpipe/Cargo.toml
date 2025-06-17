@@ -1,0 +1,12 @@
+[package]
+name = "meshpipe"
+version = "1.0.1"
+edition = "2024"
+license-file = "../../LICENSE"
+description = "Next-gen integrated development engine and environment"
+homepage = "https://techkit.dev"
+repository = "https://github.com/blockglow/techkit"
+readme = "../../README.md"
+
+[dependencies]
+ecs = { version = "0.0.0", path = "../ecs" }

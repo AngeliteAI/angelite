@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,300..900;1,300..900&display=swap');
+@import 'tailwindcss';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+@source "./**";
+
+
+@theme {
+    --color-*: initial;
+    --color-primary: #1A2535;       /* A soft, glowing blue for an angelic touch */
+    --color-secondary: #A3BFFA;     /* A muted blue-gray for side elements */
+    --color-accent: #00D4FF;        /* A vibrant cyan for highlights */
+    --color-background: #1d1e20;    /* A dark blue-gray, inspired by Twitter’s dark mode */
+    --color-text: #E6F0FA;          /* A very light blue for readability with an ethereal vibe */
+    --color-hint: #6B7280; /* A lighter blue-gray for less prominent text */
+    --color-success: #34C759;       /* Apple’s green for positive states */
+    --color-error: #FF3B30;         /* Apple’s red for errors */
+}
+
+html {
+    background: var(--color-background);
+    color: var(--color-text);
+}
+
+* {
+    @apply focus:outline-none;
+    font-family: "Rubik";
+}
+
+*::selection {
+  background-color: transparent;
+  /* or your preferred color */
+}

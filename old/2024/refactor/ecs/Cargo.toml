@@ -1,0 +1,16 @@
+[package]
+name = "ecs"
+version = "0.0.0"
+edition = "2024"
+license-file = "./LICENSE"
+readme = "./README.md"
+description = "Next-gen integrated entity component system"
+homepage = "https://techkit.dev"
+repository = "https://github.com/blockglow/blockglow"
+
+[dependencies]
+derive_more = { version = "1.0.0", features = ["deref", "deref_mut"] }
+typeid = "1.0.2"
+ecs-macro = { path = "../ecs-macro"}
+paste = "*"
+flume = "*"

@@ -1,0 +1,2 @@
+#[rt::main]
+fn main() {}

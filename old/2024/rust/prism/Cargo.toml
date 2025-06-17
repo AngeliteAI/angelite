@@ -1,0 +1,7 @@
+[package]
+name = "prism"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rt = { path = "../rt" }
