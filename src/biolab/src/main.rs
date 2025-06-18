@@ -16,6 +16,7 @@ pub fn main() {
 
     // Open the window
     ctx.open();
+    ctx.set_world_viewport_width(10.0);
 
     // Set initial camera position to center of world
     ctx.set_camera_position(0.0, 0.0);
