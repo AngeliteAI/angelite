@@ -7,3 +7,4 @@ edition = "2024"
 
 [dependencies]
 crossterm = "*"
+libc = "0.2"

@@ -1,33 +1,36 @@
 use core::fmt;
 use std::{
-    cell::{Cell, RefCell},
+    cell::{Cell, OnceCell, Ref, RefCell},
     collections::HashMap,
+    hash::Hash,
     io::{Write, stdin, stdout},
+    sync::OnceLock,
     time::Duration,
 };
 
-use crate::tile::{self, Tile, Type};
+use crate::{
+    Axis, Button,
+    controller::{
+        self,
+        macos::{BUTTON_X, Controllers, axis_binding, button_binding},
+    },
+    engine,
+    tile::{self, Tile, Type},
+};
 use crossterm::{
     QueueableCommand,
     cursor::{self, RestorePosition, SavePosition, position},
     event::{self, Event, KeyCode, poll},
-    style::{Color, Stylize},
+    style::{Color, StyledContent, Stylize},
     terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode, size},
 };
 
 use crate::{Binding, Data, Engine};
 
+#[repr(C)]
 pub struct Actor {
     actor: super::Actor,
     pos: Cell<[f32; 2]>,
-}
-
-struct InputState {
-    key_w_pressed: bool,
-    key_a_pressed: bool,
-    key_s_pressed: bool,
-    key_d_pressed: bool,
-    key_esc_pressed: bool,
 }
 
 pub struct Camera {
@@ -48,57 +51,75 @@ impl Chunk {
     }
 }
 
+#[derive(Default)]
+pub struct InputState {
+    buttons: HashMap<Button, bool>,
+    axes: HashMap<Axis, [f32; 2]>,
+}
+
+//TODO this has to be some sort of dictionary somewhere so that it can be changed
+
+pub extern "C" fn button_callback(button: u32, activated: bool) {
+    dbg!("deez");
+    engine().input_binding_activate(button_binding(button), activated);
+}
+
+pub extern "C" fn analog_callback(axis: u32, x: f32, y: f32) {
+    engine().input_binding_move(axis_binding(axis), x, y);
+}
 pub struct Console {
     input_state: RefCell<InputState>,
     camera: RefCell<Camera>,
     chunk: RefCell<HashMap<[i128; 2], Chunk>>,
-    cursor: Cell<[i128; 2]>,
+    cursor: Cell<[f32; 2]>,
     values_this_frame: Cell<usize>,
+    controllers: Controllers,
 }
 
 impl Console {
     pub fn new() -> Self {
         // Enable raw mode for input handling
         enable_raw_mode().expect("Failed to enable raw mode");
+        let controllers = Controllers::new();
+        controllers.set_analog_callback(analog_callback);
+        controllers.set_button_callback(button_callback);
+        controllers.start_discovery();
 
         Console {
+            input_state: RefCell::new(InputState::default()),
             values_this_frame: 0.into(),
-            input_state: RefCell::new(InputState {
-                key_w_pressed: false,
-                key_a_pressed: false,
-                key_s_pressed: false,
-                key_d_pressed: false,
-                key_esc_pressed: false,
-            }),
+
             camera: RefCell::new(Camera {
                 pos: [0., 0.],
                 origin: [0, 0],
             }),
             chunk: RefCell::new(HashMap::new()),
-            cursor: [0, 0].into(),
+            cursor: [0.5, 0.5].into(),
+            controllers,
         }
     }
 
     fn check_input(&self) {
         // Check for key events with a very short timeout to avoid blocking
-        if poll(Duration::from_millis(1)).unwrap_or(false) {
-            if let Ok(Event::Key(key_event)) = event::read() {
-                let mut input = self.input_state.borrow_mut();
-                let cursor = self.cursor.get();
-                match key_event.code {
-                    KeyCode::Char('w') | KeyCode::Char('W') => input.key_w_pressed = true,
-                    KeyCode::Char('a') | KeyCode::Char('A') => input.key_a_pressed = true,
-                    KeyCode::Char('s') | KeyCode::Char('S') => input.key_s_pressed = true,
-                    KeyCode::Char('d') | KeyCode::Char('D') => input.key_d_pressed = true,
-                    KeyCode::Up => self.cursor.set([cursor[0], cursor[1] - 1]),
-                    KeyCode::Down => self.cursor.set([cursor[0], cursor[1] + 1]),
-                    KeyCode::Left => self.cursor.set([cursor[0] - 1, cursor[1]]),
-                    KeyCode::Right => self.cursor.set([cursor[0] + 1, cursor[1]]),
-                    KeyCode::Esc => input.key_esc_pressed = true,
-                    _ => {}
-                }
-            }
-        }
+        // if poll(Duration::from_millis(1)).unwrap_or(false) {
+        //     if let Ok(Event::Key(key_event)) = event::read() {
+        //         let mut input = self.input_state.borrow_mut();
+        //         let cursor = self.cursor.get();
+        //         match key_event.code {
+        //             KeyCode::Char('w') | KeyCode::Char('W') => input.key_w_pressed = true,
+        //             KeyCode::Char('a') | KeyCode::Char('A') => input.key_a_pressed = true,
+        //             KeyCode::Char('s') | KeyCode::Char('S') => input.key_s_pressed = true,
+        //             KeyCode::Char('d') | KeyCode::Char('D') => input.key_d_pressed = true,
+        //             KeyCode::Up => self.cursor.set([cursor[0], cursor[1] - 0.01]),
+        //             KeyCode::Down => self.cursor.set([cursor[0], cursor[1] + 0.01]),
+        //             KeyCode::Left => self.cursor.set([cursor[0] - 0.01, cursor[1]]),
+        //             KeyCode::Right => self.cursor.set([cursor[0] + 0.01, cursor[1]]),
+        //             KeyCode::Esc => input.key_esc_pressed = true,
+        //             KeyCode::Enter => input.key_enter_pressed = true,
+        //             _ => {}
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -119,21 +140,19 @@ impl Engine for Console {
     }
 
     fn frame_end(&self) {
+        self.debug_value(Box::new(format!(
+            "{} deez",
+            self.controllers.get_controller_name(0)
+        )));
         use crossterm::{QueueableCommand, cursor};
         use std::io::{Write, stdout};
-
+        self.values_this_frame.set(0);
         let mut stdout = stdout();
         let term_size = size().unwrap();
         let half_term_size = (term_size.0 / 2, term_size.1 / 2);
         stdout.flush();
 
         // Reset key states after each frame
-        let mut input = self.input_state.borrow_mut();
-        input.key_w_pressed = false;
-        input.key_a_pressed = false;
-        input.key_s_pressed = false;
-        input.key_d_pressed = false;
-        input.key_esc_pressed = false;
     }
 
     fn set_focus_point(&self, x: f32, y: f32) {
@@ -152,6 +171,20 @@ impl Engine for Console {
             + Chunk::SIZE as usize * (y.rem_euclid(Chunk::SIZE as i128) as usize)] =
             Tile { ty: tile };
     }
+    fn cell_frustum(&self) -> crate::Frustum {
+        let term_size = size().unwrap();
+        let half_term_size = (term_size.0 as i128 / 2, term_size.1 as i128 / 2);
+        let camera_pos = self.camera.borrow().pos;
+        let camera_origin = self.camera.borrow().origin;
+
+        crate::Frustum {
+            left: (-half_term_size.0 as i128 + camera_pos[0] as i128 - camera_origin[0] as i128),
+
+            right: (half_term_size.0 as i128 + camera_pos[0] as i128 - camera_origin[0] as i128),
+            top: (half_term_size.1 as i128 + camera_pos[1] as i128 - camera_origin[1] as i128),
+            bottom: (-half_term_size.1 as i128 + camera_pos[1] as i128 - camera_origin[1] as i128),
+        }
+    }
     fn actor_create(&self, ty: super::Actor) -> *mut super::Actor {
         let actor = Box::new(Actor {
             actor: ty,
@@ -160,6 +193,7 @@ impl Engine for Console {
         let ptr = Box::into_raw(actor) as *mut _;
         ptr
     }
+
     fn actor_move(&self, actor: *mut super::Actor, x: f32, y: f32) {
         unsafe {
             (actor as *mut Actor).as_ref().unwrap().pos.set([x, y]);
@@ -180,11 +214,15 @@ impl Engine for Console {
                     - self.camera.borrow().pos[1] as i128
                     - self.camera.borrow().origin[1]) as u16,
             ));
-            let character = match actor.actor {
-                super::Actor::Player => 'P'.with(Color::Green),
-                super::Actor::Zombie => 'Z'.with(Color::Magenta),
-                super::Actor::Turret => 'T'.with(Color::Yellow),
-            };
+            fn actor_draw_character(actor: &super::Actor) -> StyledContent<char> {
+                match actor {
+                    super::Actor::Player => 'P'.with(Color::Green),
+                    super::Actor::Zombie => 'Z'.with(Color::Magenta),
+                    super::Actor::Turret => 'T'.with(Color::Yellow),
+                    super::Actor::Ghost(ghost) => actor_draw_character(&*ghost).with(Color::Grey),
+                }
+            }
+            let character = actor_draw_character(&actor.actor);
             stdout().queue(crossterm::style::PrintStyledContent(character));
             stdout().queue(RestorePosition);
             stdout().flush();
@@ -192,47 +230,21 @@ impl Engine for Console {
     }
 
     fn input_binding_data(&self, bind: Binding) -> crate::Data {
-        let input = self.input_state.borrow();
+        let mut input = self.input_state.borrow_mut();
         match bind {
-            Binding::Cursor => Data {
-                pos: (self.cursor.get()[0] as f32, self.cursor.get()[1] as f32),
-            },
-            Binding::MoveVertical => Data {
-                scalar: if input.key_w_pressed {
-                    1.0
-                } else if input.key_s_pressed {
-                    -1.0
-                } else {
-                    0.0
-                },
-            },
-            Binding::MoveHorizontal => Data {
-                scalar: if input.key_a_pressed {
-                    -1.0
-                } else if input.key_d_pressed {
-                    1.0
-                } else {
-                    0.0
-                },
+            Binding::Select => Data {
+                activate: *input.buttons.entry(Button::ButtonMenu).or_default(),
             },
             Binding::Escape => Data {
-                activate: input.key_esc_pressed,
+                activate: *input.buttons.entry(Button::ButtonMenu).or_default(),
             },
-        }
-    }
-
-    fn cell_frustum(&self) -> crate::Frustum {
-        let term_size = size().unwrap();
-        let half_term_size = (term_size.0 as i128 / 2, term_size.1 as i128 / 2);
-        let camera_pos = self.camera.borrow().pos;
-        let camera_origin = self.camera.borrow().origin;
-
-        crate::Frustum {
-            left: (half_term_size.0 as i128 + camera_pos[0] as i128 - camera_origin[0] as i128),
-
-            right: (half_term_size.0 as i128 + camera_pos[0] as i128 - camera_origin[0] as i128),
-            top: (half_term_size.1 as i128 + camera_pos[1] as i128 - camera_origin[1] as i128),
-            bottom: (half_term_size.1 as i128 + camera_pos[1] as i128 - camera_origin[1] as i128),
+            Binding::MoveHorizontal => Data {
+                scalar: input.axes.entry(Axis::LeftJoystick).or_default()[0],
+            },
+            Binding::MoveVertical => Data {
+                scalar: input.axes.entry(Axis::LeftJoystick).or_default()[1],
+            },
+            Binding::Cursor => Data { activate: false },
         }
     }
 
@@ -246,4 +258,8 @@ impl Engine for Console {
         stdout().queue(RestorePosition);
         stdout().flush();
     }
+
+    fn input_binding_activate(&self, button: Button, activate: bool) {}
+
+    fn input_binding_move(&self, axis: crate::Axis, x: f32, y: f32) {}
 }
