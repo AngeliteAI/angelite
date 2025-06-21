@@ -523,7 +523,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
      let metalView: MTKView
-    
+    let associatedSurface: Surface 
     private let bucketSize: Int = 1024 // Maximum vertices per bucket
     private let maxBuckets: Int = 256  // Maximum number of buckets
 
@@ -568,7 +568,11 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         commandBuffer.commit()
     }
 
-    init(view: MTKView) {
+    init(surface: Surface) {
+        guard let view = surface.contentView as? MTKView else {
+            fatalError("Surface content view is not a valid MTKView")
+        }
+        associatedSurface = surface
         metalView = view
 
         // Set up Metal device
@@ -577,13 +581,13 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         }()
         
         // Configure the view with our device
-        view.device = self.device
-        view.colorPixelFormat = .bgra8Unorm
-        view.framebufferOnly = true
-        view.clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
-        view.depthStencilPixelFormat = .depth32Float
-        view.sampleCount = 1
-        view.preferredFramesPerSecond = 60
+        metalView.device = self.device
+        metalView.colorPixelFormat = .bgra8Unorm
+        metalView.framebufferOnly = true
+        metalView.clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+        metalView.depthStencilPixelFormat = .depth32Float
+        metalView.sampleCount = 1
+        metalView.preferredFramesPerSecond = 60
         
         // Configure drawable size to match view size
         if let window = view.window {
@@ -708,13 +712,8 @@ extension UnsafeMutableRawPointer {
 public func metal_renderer_create(surface_ptr: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
     print("Creating Metal renderer with provided surface \(surface_ptr)")
 
-    let surface = surface_ptr.toObject(as: Surface.self)
-    guard let metalView = surface?.contentView else {
-        print("Failed to get Metal view from surface")
-        return UnsafeMutableRawPointer(bitPattern: 0)!
-    }
-
-    let renderer = MetalRenderer(view: metalView)
+    let surface = surface_ptr.toObject(as: Surface.self)!
+    let renderer = MetalRenderer(surface: surface)
     return UnsafeMutableRawPointer.fromObject(renderer)
 }
 
@@ -840,6 +839,8 @@ public func metal_camera_set_main(renderer_ptr: UnsafeMutableRawPointer, camera_
 
 @_cdecl("metal_frame_begin")
 public func metal_frame_begin(renderer_ptr: UnsafeMutableRawPointer) {
+    guard let renderer = renderer_ptr.toObject(as: MetalRenderer.self) else { return }
+    surface_process_events() 
 }
 
 @_cdecl("metal_frame_commit_draw")

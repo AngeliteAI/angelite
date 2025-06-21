@@ -204,6 +204,7 @@ public func surface_process_events() {
     let event = app.nextEvent(matching: .any, until: distantFuture, inMode: .default, dequeue: true)
     if let event = event {
         app.sendEvent(event)
+    app.updateWindows()
     }
 }
 
