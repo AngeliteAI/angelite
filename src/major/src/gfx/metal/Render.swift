@@ -1,11 +1,17 @@
 import Foundation
 import Metal
+import MetalKit
+import AppKit
 import QuartzCore
 import simd
 
-// MARK: - Data Structures
+// MARK: - Data Structures and Protocols
+struct Uniforms {
+    var projectionMatrix: matrix_float4x4
+    var viewMatrix: matrix_float4x4
+}
 
-func createDefaultShaders() -> String {
+private func createDefaultShaders() -> String {
     return """
     #include <metal_stdlib>
     #include <simd/simd.h>
@@ -405,7 +411,7 @@ class MetalMesh {
     }
 
     // Handle different index types
-    func updateIndices(_ indicesU8: [UInt8]?, _ indicesU16: [UInt16]?, _ indicesU32: [UInt32]?) {
+    func updateIndices(_ indicesU8: [UInt8]? = nil, _ indicesU16: [UInt16]? = nil, _ indicesU32: [UInt32]? = nil) {
         // In this implementation, indices are pre-configured in the vertex pool
         // We only need to adjust the index count
         var indexCount: UInt32 = 0
@@ -512,22 +518,17 @@ class MetalCamera {
 
 // MARK: - Metal Renderer
 
-class MetalRenderer {
+class MetalRenderer: NSObject, MTKViewDelegate {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
-
-    private var metalLayer: CAMetalLayer
-    private var surface: UnsafeMutableRawPointer
-
-    private var currentRenderPassDescriptor: MTLRenderPassDescriptor?
-    private var currentDrawable: CAMetalDrawable?
-    private var commandBuffer: MTLCommandBuffer?
-    private var renderEncoder: MTLRenderCommandEncoder?
+     let metalView: MTKView
+    
+    private let bucketSize: Int = 1024 // Maximum vertices per bucket
+    private let maxBuckets: Int = 256  // Maximum number of buckets
 
     let vertexPool: VertexPool
-
-     var mainCamera: MetalCamera?
+    var mainCamera: MetalCamera?
     private var uniformsBuffer: MTLBuffer
     private var depthStencilState: MTLDepthStencilState?
 
@@ -536,30 +537,58 @@ class MetalRenderer {
         var viewMatrix: matrix_float4x4
     }
 
-    // Bucket settings
-    private let bucketSize = 1024  // Maximum vertices per bucket
-    private let maxBuckets = 2048  // Maximum number of buckets
+    // MTKViewDelegate methods
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // Handle window resize
+    }
+    
+    func draw(in view: MTKView) {
+        guard let renderPassDescriptor = view.currentRenderPassDescriptor,
+              let commandBuffer = commandQueue.makeCommandBuffer(),
+              let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            return
+        }
+        
+        renderEncoder.setRenderPipelineState(pipelineState)
+        if let depthState = depthStencilState {
+            renderEncoder.setDepthStencilState(depthState)
+        }
+        renderEncoder.setVertexBuffer(uniformsBuffer, offset: 0, index: 1)
+        renderEncoder.setFragmentBuffer(uniformsBuffer, offset: 0, index: 0)
+        
+        // Draw using vertex pool
+        vertexPool.draw(commandBuffer: commandBuffer, renderEncoder: renderEncoder)
+        
+        renderEncoder.endEncoding()
+        
+        if let drawable = view.currentDrawable {
+            commandBuffer.present(drawable)
+        }
+        
+        commandBuffer.commit()
+    }
 
-    init(surface: UnsafeMutableRawPointer) {
-        self.surface = surface
+    init(view: MTKView) {
+        metalView = view
 
         // Set up Metal device
-        guard let device = MTLCreateSystemDefaultDevice() else {
+        self.device = MTLCreateSystemDefaultDevice() ?? {
             fatalError("Failed to create Metal device")
-        }
-        self.device = device
-
-        // Set up Metal layer
-        metalLayer = CAMetalLayer()
-        metalLayer.device = device
-        metalLayer.pixelFormat = .bgra8Unorm
-        metalLayer.framebufferOnly = true
-
-        // Try to set up the layer using the provided surface
-        // This could be a CALayer from the application
-        if let layer = Unmanaged<CALayer>.fromOpaque(surface).takeUnretainedValue() as? CALayer {
-            metalLayer.frame = layer.bounds
-            layer.addSublayer(metalLayer)
+        }()
+        
+        // Configure the view with our device
+        view.device = self.device
+        view.colorPixelFormat = .bgra8Unorm
+        view.framebufferOnly = true
+        view.clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+        view.depthStencilPixelFormat = .depth32Float
+        view.sampleCount = 1
+        view.preferredFramesPerSecond = 60
+        
+        // Configure drawable size to match view size
+        if let window = view.window {
+            let scale = window.screen?.backingScaleFactor ?? 1.0
+            
         }
 
         // Create command queue
@@ -643,44 +672,6 @@ class MetalRenderer {
         uniforms.pointee.viewMatrix = camera.transformMatrix
     }
 
-    func beginFrame() {
-        guard let drawable = metalLayer.nextDrawable() else {
-            return
-        }
-
-        currentDrawable = drawable
-
-        let renderPassDescriptor = MTLRenderPassDescriptor()
-        renderPassDescriptor.colorAttachments[0].texture = drawable.texture
-        renderPassDescriptor.colorAttachments[0].loadAction = .clear
-        renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
-        renderPassDescriptor.colorAttachments[0].storeAction = .store
-
-        // Create depth texture
-        let depthTexture = createDepthTexture(width: drawable.texture.width, height: drawable.texture.height)
-        renderPassDescriptor.depthAttachment.texture = depthTexture
-        renderPassDescriptor.depthAttachment.loadAction = .clear
-        renderPassDescriptor.depthAttachment.storeAction = .dontCare
-        renderPassDescriptor.depthAttachment.clearDepth = 1.0
-
-        currentRenderPassDescriptor = renderPassDescriptor
-
-        commandBuffer = commandQueue.makeCommandBuffer()
-
-        guard let renderEncoder = commandBuffer?.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
-            return
-        }
-
-        self.renderEncoder = renderEncoder
-
-        renderEncoder.setRenderPipelineState(pipelineState)
-        if let depthState = depthStencilState {
-            renderEncoder.setDepthStencilState(depthState)
-        }
-        renderEncoder.setVertexBuffer(uniformsBuffer, offset: 0, index: 1)
-        renderEncoder.setFragmentBuffer(uniformsBuffer, offset: 0, index: 0)
-    }
-
     private func createDepthTexture(width: Int, height: Int) -> MTLTexture {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .depth32Float,
@@ -692,27 +683,6 @@ class MetalRenderer {
         descriptor.storageMode = .private
 
         return device.makeTexture(descriptor: descriptor)!
-    }
-
-
-    func commitDraw() {
-        guard let renderEncoder = renderEncoder, let commandBuffer = commandBuffer else { return }
-        vertexPool.draw(commandBuffer: commandBuffer, renderEncoder: renderEncoder)
-    }
-
-    func endFrame() {
-        renderEncoder?.endEncoding()
-
-        if let drawable = currentDrawable {
-            commandBuffer?.present(drawable)
-        }
-
-        commandBuffer?.commit()
-
-        renderEncoder = nil
-        commandBuffer = nil
-        currentDrawable = nil
-        currentRenderPassDescriptor = nil
     }
 }
 
@@ -736,13 +706,22 @@ extension UnsafeMutableRawPointer {
 // FFI functions
 @_cdecl("metal_renderer_create")
 public func metal_renderer_create(surface_ptr: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
-    let renderer = MetalRenderer(surface: surface_ptr)
+    print("Creating Metal renderer with provided surface \(surface_ptr)")
+
+    let surface = surface_ptr.toObject(as: Surface.self)
+    guard let metalView = surface?.contentView else {
+        print("Failed to get Metal view from surface")
+        return UnsafeMutableRawPointer(bitPattern: 0)!
+    }
+
+    let renderer = MetalRenderer(view: metalView)
     return UnsafeMutableRawPointer.fromObject(renderer)
 }
 
 @_cdecl("metal_renderer_destroy")
 public func metal_renderer_destroy(renderer_ptr: UnsafeMutableRawPointer) {
-    renderer_ptr.releaseObject(MetalRenderer.self)
+    let renderer = Unmanaged<MetalRenderer>.fromOpaque(renderer_ptr).takeRetainedValue()
+    renderer.metalView.delegate = nil
 }
 
 @_cdecl("metal_mesh_create")
@@ -773,7 +752,7 @@ public func metal_mesh_update_indices_u8(renderer_ptr: UnsafeMutableRawPointer, 
     guard let mesh = mesh_ptr.toObject(as: MetalMesh.self) else { return }
 
     let indicesArray = Array(UnsafeBufferPointer(start: indices, count: count))
-    mesh.updateIndices(indicesArray, nil as [UInt16]?, nil as [UInt32]?)
+    mesh.updateIndices(indicesArray, nil, nil)
 }
 
 @_cdecl("metal_mesh_update_indices_u16")
@@ -781,7 +760,7 @@ public func metal_mesh_update_indices_u16(renderer_ptr: UnsafeMutableRawPointer,
     guard let mesh = mesh_ptr.toObject(as: MetalMesh.self) else { return }
 
     let indicesArray = Array(UnsafeBufferPointer(start: indices, count: count))
-    mesh.updateIndices(nil as [UInt8]?, indicesArray, nil as [UInt32]?)
+    mesh.updateIndices(nil, indicesArray, nil)
 }
 
 @_cdecl("metal_mesh_update_indices_u32")
@@ -789,7 +768,7 @@ public func metal_mesh_update_indices_u32(renderer_ptr: UnsafeMutableRawPointer,
     guard let mesh = mesh_ptr.toObject(as: MetalMesh.self) else { return }
 
     let indicesArray = Array(UnsafeBufferPointer(start: indices, count: count))
-    mesh.updateIndices(nil as [UInt8]?, nil as [UInt16]?, indicesArray)
+    mesh.updateIndices(nil, nil, indicesArray)
 }
 
 @_cdecl("metal_batch_create")
@@ -861,18 +840,12 @@ public func metal_camera_set_main(renderer_ptr: UnsafeMutableRawPointer, camera_
 
 @_cdecl("metal_frame_begin")
 public func metal_frame_begin(renderer_ptr: UnsafeMutableRawPointer) {
-    guard let renderer = renderer_ptr.toObject(as: MetalRenderer.self) else { return }
-    renderer.beginFrame()
 }
 
 @_cdecl("metal_frame_commit_draw")
 public func metal_frame_commit_draw(renderer_ptr: UnsafeMutableRawPointer) {
-    guard let renderer = renderer_ptr.toObject(as: MetalRenderer.self) else { return }
-    renderer.commitDraw()
 }
 
 @_cdecl("metal_frame_end")
 public func metal_frame_end(renderer_ptr: UnsafeMutableRawPointer) {
-    guard let renderer = renderer_ptr.toObject(as: MetalRenderer.self) else { return }
-    renderer.endFrame()
 }

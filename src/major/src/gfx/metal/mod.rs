@@ -5,7 +5,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 // External function declarations for Swift Metal implementation
-#[link(name = "metal_renderer")]
+#[link(name = "angelite_swift", kind = "dylib")]
 unsafe extern "C" {
     fn metal_renderer_create(surface_ptr: *mut c_void) -> *mut c_void;
     fn metal_renderer_destroy(renderer_ptr: *mut c_void);
@@ -71,7 +71,6 @@ unsafe extern "C" {
 
 pub struct MetalRenderer {
     ptr: NonNull<c_void>,
-    _surface: Arc<dyn Surface>, // Keep surface alive while renderer exists
 }
 
 // Safety implementation
@@ -91,9 +90,9 @@ impl Gfx for MetalRenderer {
     where
         Self: Sized,
     {
-        let surface_arc = Arc::from(surface);
-        let surface_ptr = Arc::as_ptr(&surface_arc) as *mut c_void;
-
+        let surface_ptr = surface.raw();
+        dbg!(surface_ptr);
+        println!("Creating Metal renderer with surface: {:?}", surface_ptr);
         let ptr = unsafe { metal_renderer_create(surface_ptr) };
 
         if ptr.is_null() {
@@ -102,7 +101,6 @@ impl Gfx for MetalRenderer {
 
         Box::new(MetalRenderer {
             ptr: NonNull::new(ptr).unwrap(),
-            _surface: surface_arc,
         })
     }
 

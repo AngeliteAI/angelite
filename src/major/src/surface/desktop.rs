@@ -37,6 +37,10 @@ impl Surface for Desktop {
     fn poll(&self) {
         unsafe { surface_process_events(self.surface) };
     }
+
+    fn raw(&self) -> *mut c_void {
+        return self.surface as *mut c_void;
+    }
 }
 
 impl Desktop {

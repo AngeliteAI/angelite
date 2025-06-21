@@ -28,7 +28,6 @@ unsafe extern "C" {
     fn engine_cell_frustum() -> Frustum;
     fn engine_actor_create(ty: Actor) -> *mut Actor;
     fn engine_actor_move(actor: *mut Actor, x: f32, y: f32);
-    fn engine_actor_draw(actor: *mut Actor);
     fn engine_input_binding_data(bind: u32) -> Data;
     fn engine_input_binding_activate(button: u32, activate: bool);
     fn engine_input_binding_move(axis: u32, x: f32, y: f32);

@@ -1,132 +1,113 @@
 import Foundation
 import AppKit
+import Metal
+import MetalKit
 
-class Surface: NSObject, NSWindowDelegate {
-     var window: NSWindow
-     var contentView: NSView
+// Simple wrapper around NSView to provide a window
+class Surface: NSObject {
+    // The window that contains the view
+    var window: NSWindow
+    var contentView: MTKView
 
-     var resizeCallback: ((UnsafeMutableRawPointer, Int32, Int32) -> Void)?
-     var focusCallback: ((UnsafeMutableRawPointer, Bool) -> Void)?
-     var closeCallback: ((UnsafeMutableRawPointer) -> Bool)?
+    // The content view for rendering
 
-    // Store the raw pointer to self for callbacks
+
+    // Callback storage
+    var resizeCallback: ((UnsafeMutableRawPointer, Int32, Int32) -> Void)?
+    var focusCallback: ((UnsafeMutableRawPointer, Bool) -> Void)?
+    var closeCallback: ((UnsafeMutableRawPointer) -> Bool)?
 
     init(width: Int, height: Int, title: String) {
-        // Ensure the application is initialized
+        // Initialize the NSApplication if needed
         let app = NSApplication.shared
         if !app.isRunning {
             app.setActivationPolicy(.regular)
         }
 
+        // Create the Metal view first
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            fatalError("Metal is not supported on this device")
+        }
+
+        let metalView = MTKView(frame: NSRect(x: 0, y: 0, width: width, height: height), device: device)
+        metalView.clearColor = MTLClearColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+        metalView.colorPixelFormat = .bgra8Unorm
+        metalView.depthStencilPixelFormat = .depth32Float
+        metalView.autoresizingMask = [.width, .height]
+
+        // Create the window
         let contentRect = NSRect(x: 0, y: 0, width: width, height: height)
-        window = NSWindow(contentRect: contentRect, styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(
+            contentRect: contentRect,
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
         window.title = title
         window.isReleasedWhenClosed = false
-        window.center();
+        window.center()
+        window.contentView = metalView
+        contentView = metalView
         window.makeKeyAndOrderFront(nil)
 
-        contentView = NSView(frame: contentRect)
-        super.init();
-
-
+        // Initialize super
+        super.init()
+        
+        // Set up the window delegate
         window.delegate = self
-
-        window.contentView = contentView
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowWillClose(_:)),
-            name: NSWindow.willCloseNotification,
-            object: window
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowDidResize(_:)),
-            name: NSWindow.didResizeNotification,
-            object: window
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowDidBecomeKey(_:)),
-            name: NSWindow.didBecomeKeyNotification,
-            object: window
-        )
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowDidResignKey(_:)),
-            name: NSWindow.didResignKeyNotification,
-            object: window
-        )
+        print("Setup window with Metal view")
     }
+}
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-        Unmanaged.passUnretained(self).release()
-    }
-
-    @objc  func windowWillClose(_ notification: Notification) {
+// MARK: - Window Delegate
+extension Surface: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
         if let callback = closeCallback {
-            let shouldClose = callback(Unmanaged.passUnretained(self).toOpaque())
-            // Note: Cannot prevent closing here in a standard way
+            _ = callback(Unmanaged.passUnretained(self).toOpaque())
         }
     }
 
-    @objc  func windowDidResize(_ notification: Notification) {
+    func windowDidResize(_ notification: Notification) {
         if let callback = resizeCallback {
-            let size = window.contentView?.frame.size ?? .zero
+            let size = contentView.frame.size
             callback(Unmanaged.passUnretained(self).toOpaque(), Int32(size.width), Int32(size.height))
         }
     }
 
-    @objc  func windowDidBecomeKey(_ notification: Notification) {
+    func windowDidBecomeKey(_ notification: Notification) {
         if let callback = focusCallback {
             callback(Unmanaged.passUnretained(self).toOpaque(), true)
         }
     }
 
-    @objc  func windowDidResignKey(_ notification: Notification) {
+    func windowDidResignKey(_ notification: Notification) {
         if let callback = focusCallback {
             callback(Unmanaged.passUnretained(self).toOpaque(), false)
         }
     }
 }
 
-
+// MARK: - C Interface Functions
 @_cdecl("surface_create")
 public func surface_create(width: Int32, height: Int32, title: UnsafePointer<CChar>) -> UnsafeMutableRawPointer {
-    // Initialize the application if needed
-    let app = NSApplication.shared
-    if !app.isRunning {
-        app.setActivationPolicy(.regular)
-        app.finishLaunching()
-        app.activate(ignoringOtherApps: true)
-    }
-
-    let swiftTitle = String(cString: title)
-    let manager = Surface(width: Int(width), height: Int(height), title: swiftTitle)
-    return Unmanaged.passRetained(manager).toOpaque()
+    return Unmanaged.passRetained(Surface(width: Int(width), height: Int(height), title: String(cString: title))).toOpaque()
 }
 
 @_cdecl("surface_destroy")
 public func surface_destroy(surface: UnsafeMutableRawPointer) {
-    Unmanaged<Surface>.fromOpaque(surface).release()
+    // Surface is a singleton, so we don't actually destroy it
 }
 
 @_cdecl("surface_width")
 public func surface_width(surface: UnsafeMutableRawPointer) -> Int32 {
     let manager = Unmanaged<Surface>.fromOpaque(surface).takeUnretainedValue()
-    let size = manager.window.contentView?.frame.size ?? .zero
-    return Int32(size.width)
+    return Int32(manager.contentView.frame.size.width)
 }
 
 @_cdecl("surface_height")
 public func surface_height(surface: UnsafeMutableRawPointer) -> Int32 {
     let manager = Unmanaged<Surface>.fromOpaque(surface).takeUnretainedValue()
-    let size = manager.window.contentView?.frame.size ?? .zero
-    return Int32(size.height)
+    return Int32(manager.contentView.frame.size.height)
 }
 
 @_cdecl("surface_resize")
@@ -195,11 +176,11 @@ public func surface_content_scale(surface: UnsafeMutableRawPointer) -> Float {
     return Float(manager.window.backingScaleFactor)
 }
 
+
 @_cdecl("surface_on_resize")
 public func surface_on_resize(surface: UnsafeMutableRawPointer, callback: @escaping @convention(c) (UnsafeMutableRawPointer, Int32, Int32) -> Void) {
     let manager = Unmanaged<Surface>.fromOpaque(surface).takeUnretainedValue()
-    manager.resizeCallback = callback
-}
+    manager.resizeCallback = callback}
 
 @_cdecl("surface_on_focus")
 public func surface_on_focus(surface: UnsafeMutableRawPointer, callback: @escaping @convention(c) (UnsafeMutableRawPointer, Bool) -> Void) {
@@ -224,7 +205,6 @@ public func surface_process_events() {
     if let event = event {
         app.sendEvent(event)
     }
-
 }
 
 // Run the main event loop (will block until the application quits)

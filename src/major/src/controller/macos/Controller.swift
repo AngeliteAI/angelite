@@ -86,7 +86,7 @@ class Controllers {
 
         controllers.append(controller)
         print("Controller connected: \(controller.vendorName ?? "Unknown")")
-        exit(1)
+        // Controller connected, notify through callback
         // Report controller connection to FFI
         buttonCallback?(Button.buttonHome.rawValue, true)
 
@@ -206,7 +206,7 @@ extension Controllers {
     private func handleButtonChange(button: Button, isPressed: Bool) {
         // Update internal state
         buttonStates[button] = isPressed
-        exit(1);
+        // Button state changed
 
         // Call FFI callback
         buttonCallback?(button.rawValue, isPressed)

@@ -148,12 +148,7 @@ public func engine_create() {
     }
 }
 
-// Process events for the application
-@_cdecl("engine_process_events")
-public func engine_process_events() {
-    // Process any pending events in the main application
-    surface_process_events()
-}
+
 
 
 

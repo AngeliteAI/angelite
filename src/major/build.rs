@@ -6,46 +6,66 @@ use std::process::Command;
 fn main() {
     // Only run Swift compilation on macOS
     if cfg!(target_os = "macos") {
-        compile_metal_renderer();
+        compile_swift_sources();
     }
 }
 
-fn compile_metal_renderer() {
+fn compile_swift_sources() {
     // Get output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let lib_name = "metal_renderer";
+    let lib_name = "angelite_swift";
 
     // Create directory for output if needed
     let lib_dir = out_dir.join("lib");
     fs::create_dir_all(&lib_dir).unwrap();
 
-    // Path to Swift source file
-    let swift_file = "src/gfx/metal/Render.swift";
+    // Define all Swift source files
+    let swift_files = [
+        "src/surface/macos/Surface.swift", // This must be first for dependency reasons
+        "src/gfx/metal/Render.swift",
+        "src/engine/mac/Engine.swift",
+        "src/controller/macos/Controller.swift",
+    ];
 
-    // Only recompile if the source file changes
-    println!("cargo:rerun-if-changed={}", swift_file);
+    // Only recompile if any source file changes
+    for swift_file in &swift_files {
+        println!("cargo:rerun-if-changed={}", swift_file);
+    }
 
     // Output paths
     let dylib_path = lib_dir.join(format!("lib{}.dylib", lib_name));
 
-    // Compile Swift file
-    let status = Command::new("swiftc")
-        .args(&[
-            "-emit-library",
-            swift_file,
-            "-o",
-            dylib_path.to_str().unwrap(),
-            "-module-name",
-            lib_name,
-            "-framework",
-            "Foundation",
-            "-framework",
-            "Metal",
-            "-framework",
-            "QuartzCore",
-        ])
-        .status()
-        .expect("Failed to compile Swift file");
+    // Compile Swift files
+    let mut command = Command::new("swiftc");
+    command.arg("-emit-library");
+    command.arg("-emit-module");
+    command.arg("-module-name");
+    command.arg(lib_name);
+    command.arg("-parse-as-library");
+    command.arg("-v"); // Add verbose flag for better error reporting
+    command.arg("-Xfrontend");
+    command.arg("-debug-time-function-bodies");
+
+    // Add all source files
+    for file in &swift_files {
+        command.arg(file);
+    }
+
+    // Output file
+    command.arg("-o");
+    command.arg(dylib_path.to_str().unwrap());
+
+    // Add frameworks
+    command.arg("-framework").arg("Foundation");
+    command.arg("-framework").arg("Metal");
+    command.arg("-framework").arg("QuartzCore");
+    command.arg("-framework").arg("AppKit");
+    command.arg("-framework").arg("GameController");
+
+    // Execute the compiler
+    println!("Swift compilation command: {:?}", command);
+
+    let status = command.status().expect("Failed to compile Swift files");
 
     if !status.success() {
         panic!("Swift compilation failed");
@@ -61,6 +81,8 @@ fn compile_metal_renderer() {
         "swiftFoundation",
         "swiftMetal",
         "swiftQuartzCore",
+        "swiftAppKit",
+        "swiftDarwin",
     ] {
         println!("cargo:rustc-link-lib=dylib={}", lib);
     }

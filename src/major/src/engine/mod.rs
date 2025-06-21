@@ -1,4 +1,5 @@
 use core::fmt;
+use std::ffi::c_void;
 
 use crate::{gfx::Gfx, tile};
 
@@ -96,6 +97,7 @@ pub enum Actor {
 
 pub trait Surface {
     fn poll(&self);
+    fn raw(&self) -> *mut c_void;
 }
 
 pub trait Engine {
