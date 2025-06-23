@@ -1,6 +1,12 @@
+pub mod color;
+#[cfg(target_os = "macos")]
 pub mod metal;
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub mod vk;
 
-use crate::engine::Surface;
+use crate::{engine::Surface, math};
+
+pub use color::Color;
 
 pub enum Mesh {}
 pub enum Batch {}
@@ -20,7 +26,9 @@ pub trait Gfx {
 
     fn mesh_create(&self) -> *const Mesh;
     fn mesh_destroy(&self, mesh: *const Mesh);
-    fn mesh_update_vertices(&self, mesh: *const Mesh, vertices: &[f32]);
+    fn mesh_update_vertices(&self, mesh: *const Mesh, vertices: &[math::Vector<f32, 3>]);
+    fn mesh_update_normals(&self, mesh: *const Mesh, normals: &[math::Vector<f32, 3>]);
+    fn mesh_update_albedo(&self, mesh: *const Mesh, colors: &[Color]);
     fn mesh_update_indices(&self, mesh: *const Mesh, indices: &[Index]);
 
     fn batch_create(&self) -> *const Batch;

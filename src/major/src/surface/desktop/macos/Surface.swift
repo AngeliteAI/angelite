@@ -52,7 +52,7 @@ class Surface: NSObject {
 
         // Initialize super
         super.init()
-        
+
         // Set up the window delegate
         window.delegate = self
         print("Setup window with Metal view")

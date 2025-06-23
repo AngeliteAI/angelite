@@ -1,17 +1,24 @@
 use core::fmt;
 use std::ffi::c_void;
 
-use crate::{gfx::Gfx, tile};
+use crate::{gfx::Gfx, math, tile};
 
+#[cfg(target_os = "macos")]
 mod mac;
+pub mod windows;
 
 pub enum Type {
+    #[cfg(target_os = "macos")]
     Mac,
+    #[cfg(target_os = "windows")]
+    Windows,
 }
 
 pub const fn default_platform_type() -> Type {
     #[cfg(target_os = "macos")]
-    Type::Mac
+    return Type::Mac;
+    #[cfg(target_os = "windows")]
+    return Type::Windows;
 }
 static mut ENGINE_TYPE: Type = default_platform_type();
 static mut ENGINE: EngineCell = EngineCell::none();
@@ -36,6 +43,12 @@ pub fn mac() -> EngineCell {
         engine: Some(Box::new(mac::Engine::init())),
     }
 }
+#[cfg(target_os = "windows")]
+pub fn windows() -> EngineCell {
+    EngineCell {
+        engine: Some(Box::new(windows::Engine::init())),
+    }
+}
 
 unsafe impl Send for EngineCell {}
 unsafe impl Sync for EngineCell {}
@@ -51,6 +64,8 @@ pub fn engine() -> &'static mut dyn Engine {
             ENGINE = match ENGINE_TYPE {
                 #[cfg(target_os = "macos")]
                 Type::Mac => mac(),
+                #[cfg(target_os = "windows")]
+                Type::Windows => windows(),
             };
         }
 
@@ -105,13 +120,15 @@ pub trait Engine {
 
     fn gfx_create(&self, surface: Box<dyn Surface>) -> Box<dyn Gfx>;
 
-    fn set_focus_point(&self, x: f32, y: f32);
-    fn set_origin(&self, x: i128, y: i128);
-    fn cell_set(&self, x: i128, y: i128, tile: tile::Type);
+    fn set_origin(&self, origin: math::Vector<i64, 3>);
+    fn cell_set(&self, position: math::Vector<i64, 3>, tile: tile::Type);
     fn cell_frustum(&self) -> Frustum;
 
     fn actor_create(&self, ty: Actor) -> *mut Actor;
-    fn actor_move(&self, actor: *mut Actor, x: f32, y: f32);
+    fn actor_move(&self, actor: *mut Actor, position: math::Vector<f32, 3>);
+    fn actor_rotate(&self, actor: *mut Actor, rotation: math::Quaternion<f32>);
+    fn actor_position(&self, actor: *mut Actor) -> math::Vector<f32, 3>;
+    fn actor_rotation(&self, actor: *mut Actor) -> math::Quaternion<f32>;
 
     fn input_binding_data(&self, bind: Binding) -> Data;
     fn input_binding_activate(&self, button: Button, activate: bool);
