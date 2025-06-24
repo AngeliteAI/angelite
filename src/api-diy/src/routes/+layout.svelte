@@ -1,371 +1,295 @@
-<script lang="ts">
-    import "../app.css";
-
-    import { onMount } from "svelte";
-    import Document from "$lib/components/Document.svelte";
-    import { cubicOut, quartOut } from "svelte/easing";
-    import { tweened } from "svelte/motion";
-    import { fade, fly } from "svelte/transition";
-    import Viewport from "$lib/components/Viewport.svelte";
-    import Tailwind from "$lib/Tailwind.svelte";
-    import { virtualScale, activeDocuments, selectedNodeId } from "$lib/store";
-    import VDom from "$lib/VDom.svelte";
-    import Sidebar from "$lib/components/Sidebar.svelte";
-    import Inspector from "$lib/components/inspector/Inspector.svelte";
-
-    // Camera and viewport state
-    let vdomInstance = $state(null);
-    let activeVDom = $derived($activeDocuments[0]?.activeVDom);
-    let localVirtualScale = $state(0.2);
-    let offsetX = 0; // Content panning X relative to container
-    let offsetY = 0; // Content panning Y relative to container
-    let mouseX = 0; // Raw mouse X in viewport
-    let mouseY = 0; // Raw mouse Y in viewport
-    let cameraX = 0; // Camera translation X
-    let cameraY = 0; // Camera translation Y
-
-    // UI state
-    let showRightSidebar = true;
-    let activeSidebarTab = "styles"; // "styles", "properties", "events"
-    let showBlueprintMode = false;
-    let showInspector = true;
-
-    // Device settings
-    const tweenedWidth = tweened(1179, { duration: 300, easing: quartOut });
-    const tweenedHeight = tweened(2556, { duration: 300, easing: quartOut });
-
-    onMount(() => {
-        if (activeDocuments.length > 0 && activeDocuments[0].activeVDom) {
-            populate(activeDocuments[0].activeVDom);
-        }
-    });
-
+<script>
+	import '../app.css';
+    var virtualScale = $state(0.5);
+    var offsetX = $state(0);
+    var offsetY = $state(0);
+	let { children } = $props();
+    let currentVirtualDeviceIndex = $state(0);
+    let currentVirtualDevice = $derived(virtualDevices[currentVirtualDeviceIndex]);
     let virtualDevices = [
         {
-            name: "iPhone 16",
+            name: 'iPhone 16',
             width: 1179,
             height: 2556,
+            scale: 0.5,
+            offsetX: 0,
+            offsetY: 0
         },
         {
-            name: "Desktop",
+            name: 'Desktop',
             width: 1920,
             height: 1080,
-        },
-    ];
-    let currentVirtualDeviceIndex = $state(0);
-    let currentVirtualDevice = $derived(
-        virtualDevices[currentVirtualDeviceIndex],
-    );
+            scale: 0.5,
+            offsetX: 0,
+            offsetY: 0
+        }
+    ]
+    
 
-    $effect(() => {
-        $activeDocuments[0].width = currentVirtualDevice.width;
-        $activeDocuments[0].height = currentVirtualDevice.height;
-    });
-
-    // Sidebar state
-    const sidebarWidth = tweened(showRightSidebar ? 300 : 36, {
-        duration: 400,
-        easing: quartOut,
-    });
-
-    const sidebarContentOpacity = tweened(showRightSidebar ? 1 : 0, {
-        duration: 300,
-        easing: cubicOut,
-    });
-
-    function toggleSidebar() {
-        showRightSidebar = !showRightSidebar;
-        sidebarWidth.set(showRightSidebar ? 300 : 36);
-        sidebarContentOpacity.set(showRightSidebar ? 1 : 0);
-    }
-
-    function setActiveTab(tab) {
-        activeSidebarTab = tab;
-    }
-
-    // Drag state
     let isDragging = false;
-    let dragType = "none"; // "camera", "content", "element"
-    let dragStartX = 0;
-    let dragStartY = 0;
-    let initialCameraX = 0;
-    let initialCameraY = 0;
-    let initialContentOffsetX = 0;
-    let initialContentOffsetY = 0;
+    let startX = 0;
+    let startY = 0;
+    let startOffsetX = 0;
+    let startOffsetY = 0;
 
-    // Element drag state
-    let currentDragX = 0;
-    let currentDragY = 0;
-    let velocityX = 0;
-    let velocityY = 0;
-    let isSnapping = false;
-    let snapTargetId = null;
-    let snapPosition = null;
-    let snapIndicatorPosition = null;
-
-    // Handle blueprint mode toggle
-    function toggleBlueprintMode() {
-        showBlueprintMode = !showBlueprintMode;
+    function handleStart(e) {
+        e.preventDefault();
+        isDragging = true;
+        const point = e.touches ? e.touches[0] : e;
+        startX = point.clientX;
+        startY = point.clientY;
+        startOffsetX = offsetX;
+        startOffsetY = offsetY;
     }
 
-    function populate(activeVDom) {
-        if (!activeVDom) {
-            console.error("Cannot populate: activeVDom is null");
-            return;
+    function handleMove(e) {
+        if (!isDragging) return;
+        e.preventDefault();
+        const point = e.touches ? e.touches[0] : e;
+        const deltaX = (point.clientX - startX) / virtualScale;
+        const deltaY = (point.clientY - startY) / virtualScale;
+        offsetX = startOffsetX + deltaX;
+        offsetY = startOffsetY + deltaY;
+    }
+
+    function handleEnd(e) {
+        e.preventDefault();
+        isDragging = false;
+    }
+
+    function getDraggingStyles(): string {
+        // CRITICAL CHECK: Only apply styles if we are actively dragging an element
+        if (!isDragging || dragType !== 'element' || !draggedElementRef || !elementId) {
+            return ''; 
         }
 
-        if (
-            typeof activeVDom.rootNodeId === "undefined" ||
-            !activeVDom.addNode ||
-            !activeVDom.getNode
-        ) {
-            console.error(
-                "Cannot populate: activeVDom is missing required methods or properties",
-            );
-            return;
+        // Calculate translation relative to the element's original position
+        const translateX = currentDragX - initialElementX;
+        const translateY = currentDragY - initialElementY;
+
+        return `transform: translate(${translateX.toFixed(2)}px, ${translateY.toFixed(2)}px) rotate(${currentRotation.toFixed(2)}deg); transition: none;`;
+    }
+
+    const snapZonePadding = 40; // Pixels of padding around snap target to keep it sticky
+
+    function isMouseInSnapZone(rect: DOMRect): boolean {
+        if (!rect) return false;
+        return (
+            mouseX >= rect.left - snapZonePadding &&
+            mouseX <= rect.right + snapZonePadding &&
+            mouseY >= rect.top - snapZonePadding &&
+            mouseY <= rect.bottom + snapZonePadding
+        );
+    }
+
+    // Fix type for findSnapTarget
+    type SnapTarget = { 
+        element: HTMLElement; 
+        id: string; 
+        rect: DOMRect; 
+        position: 'before' | 'after' | 'inside'; 
+    };
+
+    function findSnapTarget() {
+        // Basic validation
+        if (!draggedElementRef) {
+            return null;
         }
 
-        let rootId = activeVDom.rootNodeId;
-        console.log("Root node for population:", rootId);
-
-        // Add h1 heading
-        const h1Id = activeVDom.addNode("h1", rootId);
-        console.log("Created h1 with id:", h1Id);
-        const h1Node = activeVDom.getNode(h1Id);
-        if (h1Node) {
-            console.log("Setting h1 properties");
-            h1Node.setProperty(
-                "textContent",
-                "Virtual DOM Test from +page.svelte",
-            );
-            h1Node.setStyle("color", "blue");
-            h1Node.setStyle("textAlign", "center");
-            h1Node.setStyle("marginTop", "20px");
-        } else {
-            console.error("Failed to get h1Node");
-        }
-
-        // Add paragraph
-        const pId = activeVDom.addNode("p", rootId);
-        console.log("Created p with id:", pId);
-        const pNode = activeVDom.getNode(pId);
-        if (pNode) {
-            console.log("Setting p properties");
-            pNode.setProperty(
-                "textContent",
-                "Hello, Youtube! This is draggable content.",
-            );
-            pNode.setStyle("margin", "20px");
-            pNode.setStyle("fontFamily", "Arial, sans-serif");
-        } else {
-            console.error("Failed to get pNode");
-        }
-
-        // Add button
-        const btnId = activeVDom.addNode("button", rootId);
-        console.log("Created button with id:", btnId);
-        const btnNode = activeVDom.getNode(btnId);
-        if (btnNode) {
-            console.log("Setting button properties");
-            btnNode.setProperty("textContent", "Click Me");
-            btnNode.setStyle("padding", "10px 20px");
-            btnNode.setStyle("backgroundColor", "#4CAF50");
-            btnNode.setStyle("color", "white");
-            btnNode.setStyle("border", "none");
-            btnNode.setStyle("borderRadius", "4px");
-            btnNode.setStyle("cursor", "pointer");
-            btnNode.setStyle("margin", "20px");
-            btnNode.setProperty("onClick", () => alert("Button clicked!"));
-        } else {
-            console.error("Failed to get btnNode");
-        }
-
-        // Add list
-        const ulId = activeVDom.addNode("ul", rootId);
-        console.log("Created ul with id:", ulId);
-        const ulNode = activeVDom.getNode(ulId);
-        if (ulNode) {
-            console.log("Setting ul properties");
-            ulNode.setStyle("listStyleType", "disc");
-            ulNode.setStyle("margin", "20px");
-            ulNode.setStyle("backgroundColor", "#ffaaaa");
-            ulNode.setStyle("padding", "15px");
-            ulNode.setStyle("borderRadius", "8px");
-            ulNode.setStyle("borderLeft", "5px solid #ff5555");
-
-            // Add list items
-            for (let i = 1; i <= 3; i++) {
-                const liId = activeVDom.addNode("li", ulId);
-                console.log(`Created li ${i} with id:`, liId);
-                const liNode = activeVDom.getNode(liId);
-                if (liNode) {
-                    console.log(`Setting li ${i} properties`);
-                    liNode.setProperty("textContent", `List item ${i}`);
-                    liNode.setStyle("padding", "5px");
-                    liNode.setStyle("margin", "8px 0");
-                    liNode.setStyle("color", "#aa0000");
-                    liNode.setStyle("fontWeight", "bold");
-                } else {
-                    console.error(`Failed to get liNode ${i}`);
-                }
+        // Use actual mouse position for target detection instead of element center
+        const dragCenterX = mouseX;
+        const dragCenterY = mouseY;
+        
+        // Find the element directly under the mouse cursor with a data-node-id
+        const element = document.elementFromPoint(dragCenterX, dragCenterY);
+        if (!element) return null;
+        
+        // Find the closest parent with data-node-id
+        let target = element.closest('[data-node-id]') as HTMLElement;
+        if (!target || target === draggedElementRef) return null;
+        
+        // Get the target information
+        const targetId = target.getAttribute('data-node-id');
+        const draggedId = draggedElementRef.getAttribute('data-node-id');
+        if (!targetId || targetId === draggedId) return null;
+        
+        const targetRect = target.getBoundingClientRect();
+        
+        // Check if this is a container
+        const isContainer = (
+            target.classList.contains('drop-zone') || 
+            target.classList.contains('nested-container') ||
+            target.tagName === 'DIV' ||
+            target.tagName === 'UL' || 
+            target.tagName === 'OL'
+        );
+        
+        // Determine position based on the cursor location
+        // Default to 'inside' for containers 
+        let position: 'before' | 'after' | 'inside';
+        
+        // For containers, use vertical position to determine position
+        if (isContainer) {
+            const upperThird = targetRect.top + (targetRect.height * 0.33);
+            const lowerThird = targetRect.top + (targetRect.height * 0.66);
+            
+            if (dragCenterY < upperThird) {
+                position = 'before';
+            } else if (dragCenterY > lowerThird) {
+                position = 'after';
+            } else {
+                position = 'inside';
             }
         } else {
-            console.error("Failed to get ulNode");
+            // For non-containers, just use middle point
+            position = dragCenterY < targetRect.top + (targetRect.height / 2) ? 'before' : 'after';
         }
-
-        // Helper to convert VNode and its children to the PageContentNode structure
+        
+        console.log(`Target: ${targetId} (${target.tagName}) for position ${position}`);
+        
+        return {
+            element: target,
+            id: targetId,
+            rect: targetRect,
+            position: position
+        };
+    }
+    
+    // Helper function to check if an element is visible
+    function isElementVisible(element: HTMLElement): boolean {
+        const style = window.getComputedStyle(element);
+        return style.display !== 'none' && 
+               style.visibility !== 'hidden' &&
+               style.opacity !== '0';
     }
 
-    let isInitialized = $state(false);
+    function handleGlobalMouseDown(event: MouseEvent | TouchEvent) {
+        if (isDragging) return; // Don't start a new drag if one exists
+        console.log(`handleGlobalMouseDown fired. Type: ${event.type}`);
 
-    // Debug selected node changes
+        const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX;
+        const clientY = 'touches' in event ? event.touches[0].clientY : event.clientY;
+
+        dragStartX = clientX;
+        dragStartY = clientY;
+
+        const target = event.target as HTMLElement;
+        const isElement = target.closest('.reorderable');
+        const isContent = target.closest('.virtual-content');
+
+        console.log(` Mousedown target analysis: isElement=${!!isElement}, isContent=${!!isContent}`);
+
+        // Note: Element dragging is now handled by the Node.svelte component and custom events
+        if (isElement) {
+            // The element itself will call updateDraggedElement via the custom event
+            console.log(" Element dragging is handled by custom events");
+        } else if (isContent) {
+            console.log(` Mousedown on content detected, starting content drag.`);
+            isDragging = true;
+            dragType = 'content';
+            initialContentOffsetX = offsetX;
+            initialContentOffsetY = offsetY;
+        } else { // Assume camera drag if not element or content
+            console.log(` Mousedown on background detected, starting camera drag.`);
+            isDragging = true;
+            dragType = 'camera';
+            initialCameraX = cameraX;
+            initialCameraY = cameraY;
+        }
+        
+        console.log(` Global drag started. Type: ${dragType}, isDragging: ${isDragging}`);
+         // Prevent default for camera/content drag to avoid text selection
+         if (dragType === 'camera' || dragType === 'content') {
+             // Check if event is cancelable before calling preventDefault
+             if (event.cancelable) {
+                 console.log(` Calling preventDefault for ${dragType} drag.`);
+                 event.preventDefault();
+             }
+         }
+    }
+
+    function handleGlobalMouseMove(event: MouseEvent | TouchEvent) {
+        // Get precise coordinates
+        const clientX = 'touches' in event ? event.touches[0].clientX : event.clientX;
+        const clientY = 'touches' in event ? event.touches[0].clientY : event.clientY;
+
+        // Update global mouse state immediately
+        mouseX = clientX;
+        mouseY = clientY;
+
+        if (!isDragging) return;
+
+        const deltaX = clientX - dragStartX;
+        const deltaY = clientY - dragStartY;
+
+        if (dragType === 'camera') {
+            cameraX = initialCameraX + deltaX;
+            cameraY = initialCameraY + deltaY;
+            // Update CSS variables directly for better performance
+            document.documentElement.style.setProperty('--camera-x', `${cameraX}px`);
+            document.documentElement.style.setProperty('--camera-y', `${cameraY}px`);
+        } else if (dragType === 'content') {
+            offsetX = initialContentOffsetX + deltaX / virtualScale;
+            offsetY = initialContentOffsetY + deltaY / virtualScale;
+            // Update CSS variables directly for better performance  
+            document.documentElement.style.setProperty('--offset-x', `${offsetX}px`);
+            document.documentElement.style.setProperty('--offset-y', `${offsetY}px`);
+        }
+        // Element movement is handled by the animation loop
+        
+        // Prevent default for camera/content drag to avoid text selection
+        if ((dragType === 'camera' || dragType === 'content') && event.cancelable) {
+            event.preventDefault();
+        }
+    }
 </script>
 
-<div class="bg-black h-screen">
-    <!-- Header (top bar) -->
-    <header
-        class="absolute top-0 left-0 w-full h-[50px] flex justify-center items-center p-2"
+<div class="grid h-screen w-full grid-cols-[2rem_1fr_16rem] grid-rows-[2rem_1fr] bg-black">
+    <header class="col-span-30"></header>
+    <nav class="">
+
+    <button on:click={() => virtualScale *= 2} class="bg-white">+</button>
+    <button on:click={() => virtualScale /= 2} class="bg-white">-</button>
+    </nav>
+    <div class="bg-gray-500 overflow-hidden"
+            on:touchstart={handleStart}
+            on:touchmove={handleMove}
+            on:touchend={handleEnd}
+            on:mousedown={handleStart}
+            on:mousemove={handleMove}
+            on:mouseup={handleEnd}
+            on:mouseleave={handleEnd}
     >
-        <span class="z-1000 relative h-full shadow-xl flex justify-center">
-            <div class="w-[20vw] rounded-l-md bg-white">
-                <div
-                    class="w-full h-full rounded-l-md border-[1px]
-                border-[#E7E7E7] border-r-[0] flex justify-around p-1"
-                >
-                    quick settings
-                </div>
-            </div>
-            <div class="z-1000 w-[50vw] bg-white">
-                <div
-                    class="w-full h-full border-[1px] border-[#E7E7E7] border-l-[0] border-r-[0] flex justify-around p-1"
-                >
-                    <img src="hand.svg" alt="Pencil Icon" class="w-6 h-6" />
-                    <img src="cursor.svg" alt="Pencil Icon" class="w-6 h-6" />
-                    <img src="pencil.svg" alt="Pencil Icon" class="w-6 h-6" />
-                    <img src="shapes.svg" alt="Pencil Icon" class="w-6 h-6" />
-                    <img src="text.svg" alt="Pencil Icon" class="w-6 h-6" />
-                    <img src="document.svg" alt="Pencil Icon" class="w-6 h-6" />
-                    <img src="code.svg" alt="Screen Icon" class="w-6 h-6" />
-                    <img src="servers.svg" alt="Screen Icon" class="w-6 h-6" />
-                    <img src="database.svg" alt="Screen Icon" class="w-6 h-6" />
-                    <img src="network.svg" alt="Screen Icon" class="w-6 h-6" />
-                </div>
-            </div>
-            <div class="z-1000 w-[20vw] rounded-r-md bg-white">
-                <div
-                    class="w-full h-full rounded-r-md border-[1px]
-                border-[#E7E7E7] border-l-[0] flex justify-around p-1"
-                >
-                    Profile
-                </div>
-            </div></span
+        <span 
+            class="origin-top-left inline-block" 
+            style="--virtual-width: 1920px; --virtual-height: 1080px;--virtual-scale: {virtualScale};--offset-x: {offsetX}px;--offset-y: {offsetY}px"
+            
         >
-    </header>
-
-    <aside
-        class="absolute top-0 left-0 w-[320px] h-full flex justify-center items-center"
-    >
-        <div class="z-1000 h-[80vh] w-[300px] shadow-xl rounded-md bg-white">
-            <div
-                class="w-full h-full rounded-md border-[1px] border-[#E7E7E7]"
-            ></div>
-        </div>
-    </aside>
-
-    <!-- Main content area with viewport -->
-    <div class="absolute top-0 left-0 w-full h-full overflow-hidden">
-        <Viewport>
-            <slot />
-        </Viewport>
+            <main class="bg-white origin-center" style="--virtual-width: {currentVirtualDevice.width}px; --virtual-height: {currentVirtualDevice.height}px;">
+                {@render children()}
+            </main>
+        </span>
     </div>
+    <aside class="0"></aside>
 </div>
 
 <style>
-    /* Custom scrollbar styling */
-    :global(.scrollbar-none::-webkit-scrollbar) {
-        display: none;
+    span {
+        position: relative;
+        display: block;
+        width: calc(var(--virtual-width));
+        height: calc(var(--virtual-height));
+        transform: scale(var(--virtual-scale)) translate(var(--offset-x), var(--offset-y));
+        touch-action: none; /* Prevents default touch behaviors */
+        user-select: none;
+        -webkit-user-select: none;
     }
-
-    :global(.scrollbar-none) {
-        scrollbar-width: none;
-    }
-
-    /* Blueprint mode styling */
-    :global(.blueprint-mode) {
-        border: 1px dashed #3b82f6 !important;
-        background-color: rgba(59, 130, 246, 0.05) !important;
-        color: #3b82f6 !important;
-    }
-
-    :global(.blueprint-mode *) {
-        border-color: rgba(59, 130, 246, 0.3) !important;
-        color: #3b82f6 !important;
-    }
-
-    :global(.dragging) {
-        outline: 1px dashed #3b82f6;
-        background-color: rgba(59, 130, 246, 0.1);
-    }
-
-    /* Selected node styling handled by Selectable component */
-
-    :global(.node-moved) {
-        animation: highlight-node 0.5s ease-out;
-    }
-
-    @keyframes highlight-node {
-        0% {
-            background-color: rgba(59, 130, 246, 0.2);
-        }
-        100% {
-            background-color: transparent;
-        }
-    }
-
-    :global(.drop-indicator) {
-        position: fixed;
-        pointer-events: none;
-        z-index: 9999;
-        background-color: rgba(59, 130, 246, 0.2);
-        border: 2px dashed rgba(59, 130, 246, 0.5);
-        border-radius: 3px;
-        transition: all 0.1s ease-out;
-    }
-
-    :global(.node.snapped) {
-        outline: 2px solid #3b82f6 !important;
-        box-shadow: 0 0 8px rgba(59, 130, 246, 0.5) !important;
-        transition:
-            transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1),
-            box-shadow 0.2s ease-out,
-            outline 0.2s ease-out !important;
-    }
-
-    :global(.node-moved) {
-        animation: highlight-node 0.5s ease-out;
-    }
-
-    @keyframes highlight-node {
-        0% {
-            background-color: rgba(59, 130, 246, 0.2);
-        }
-        100% {
-            background-color: transparent;
-        }
-    }
-
-    :global(.drag-placeholder) {
-        border: 2px dashed #4299e1;
-        background-color: rgba(66, 153, 225, 0.1);
-        border-radius: 4px;
-        margin: 2px 0;
-        min-height: 20px;
-    }
-
-    :global(.drop-indicator) {
-        position: fixed;
-        z-index: 9999;
-        background-color: #4299e1;
-        pointer-events: none;
+    main {
+        position: relative;
+        top: 0;
+        right: 0;
+        min-width: var(--virtual-width);
+        min-height: var(--virtual-height);
+        margin: 0 auto;
     }
 </style>

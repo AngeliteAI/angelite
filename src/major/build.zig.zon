@@ -1,0 +1,21 @@
+.{
+    .name = .angelite,
+    .version = "0.1.0",
+    .fingerprint = 0xa6b41e1a359a783c,
+    .paths = .{
+        "src/",
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "README.md",
+    },
+    .dependencies = .{
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.268.tar.gz",
+            .hash = "1220e2f936ee8524d8a921df021661d73f338d9c8f1f11769e1e42fdfbc9887b0dab",
+        },
+        .vulkan_zig = .{
+            .path = "vendor/vulkan-zig",
+        },
+    },
+}

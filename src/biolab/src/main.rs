@@ -1,160 +1,91 @@
-#![feature(random)]
-use std::{alloc::alloc, collections::HashMap, random::random, time::Duration};
+#![feature(random, let_chains)]
+use std::{
+    alloc::alloc,
+    collections::HashMap,
+    ops::Mul,
+    ptr,
+    random::random,
+    thread,
+    time::{Duration, Instant},
+};
 
-use major::{create_rect, draw::Rect};
+use glam::Vec2;
+use major::{
+    engine::{Actor, Binding},
+    gfx::Index,
+    math,
+};
+use quadtree::{
+    P2, Point, QuadTree,
+    shapes::{self, Circle},
+};
 
-pub struct Tile {
-    ty: Type,
+#[derive(Debug, Clone)]
+pub struct Action {
+    pub ty: Type,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum Type {
-    Grass,
-    Dirt,
-    Stone,
+#[derive(Clone, Debug)]
+pub struct EntityAccel {
+    pub index: usize,
+    pub pos: Vec2,
 }
 
-pub struct Chunk {
-    tiles: [Tile; 64],
-}
-
-pub trait Drawer {
-    fn draw(self) -> Batch;
-}
-
-impl Drawer for Chunk {
-    fn draw(self) -> Batch {
-        let mut x = 0;
-        let mut y = 0;
-        let mut u = 0;
-        let mut v = 0;
-        let mut rects = vec![];
-
-        let mut mask = [false; 64];
-
-        fn all_drawn(mask: &[bool]) -> bool {
-            mask.iter().all(|&b| b)
-        }
-
-        fn get_tile(chunk: &Chunk, u: usize, v: usize) -> &Tile {
-            &chunk.tiles[u + v * 8]
-        }
-
-        fn rand() -> f32 {
-            random::<u64>() as f32 / u64::MAX as f32
-        }
-
-        while !all_drawn(&mask) {
-            let starter = get_tile(&self, x, y).ty;
-
-            while u < 8 && get_tile(&self, x + u, y).ty == starter {
-                mask[(x + u) + y * 8] = true;
-                u += 1;
-            }
-
-            while v < 8 && (x..x + u).all(|i| get_tile(&self, i, y + v).ty == starter) {
-                for i in x..x + u {
-                    mask[(x + i) + (y + v) * 8] = true;
-                }
-                v += 1;
-            }
-
-            let mut rect = create_rect();
-            rect.x(x as f32);
-            rect.y(y as f32);
-            rect.width(u as f32);
-            rect.height(v as f32);
-            rect.albedo([rand(), rand(), rand()]);
-            rects.push(Box::new(rect) as Box<dyn Rect>);
-
-            x += u;
-            y += v;
-        }
-
-        return Batch { rects };
+impl Point for EntityAccel {
+    fn point(&self) -> quadtree::P2 {
+        quadtree::P2::new(self.pos.x as f64, self.pos.y as f64)
     }
 }
-
-pub struct Batch {
-    pub rects: Vec<Box<dyn Rect>>,
+#[derive(Debug, Clone)]
+pub enum Type {
+    Place(Box<Entity>),
+    Set(major::tile::Type),
 }
 
-pub struct World {
-    chunks: HashMap<[i128; 2], Chunk>,
+impl Default for Entity {
+    fn default() -> Self {
+        Entity {
+            actor: ptr::null_mut(),
+            action: None,
+            action_cooldown: Duration::from_secs(0),
+            action_last: Instant::now(),
+            position: Vec2::new(0.0, 0.0),
+        }
+    }
+}
+#[derive(Debug, Clone)]
+pub struct Entity {
+    actor: *mut major::engine::Actor,
+    action: Option<Action>,
+    action_cooldown: Duration,
+    action_last: Instant,
+    position: glam::Vec2,
 }
 
 pub fn main() {
-    // Import the necessary modules
-    use major::{
-        Key, create_colored_rect, create_input, create_rect, create_surface,
-        graphics::RenderContext,
-    };
-    use std::{thread, time::Duration, time::Instant};
+    let engine = major::current_engine();
+    let surface = engine.surface_create();
+    let gfx = engine.gfx_create(surface);
 
-    println!("Starting Angelite example with camera controls");
+    let mut mesh = gfx.mesh_create();
+    //triangle vertices
+    gfx.mesh_update_vertices(
+        mesh,
+        &[
+            math::Vector([0.0, 0.0, 0.0]),
+            math::Vector([0.0, 1.0, 0.0]),
+            math::Vector([1.0, 0.0, 0.0]),
+        ],
+    );
+    gfx.mesh_update_indices(mesh, &[Index::U32(0), Index::U32(1), Index::U32(2)]);
 
-    // Create a surface
-    let surface = create_surface();
+    let mut batch = gfx.batch_create();
+    gfx.batch_add_mesh(batch, mesh);
 
-    // Create a rendering context
-    let mut ctx = RenderContext::new(surface);
-
-    // Create an input handler for keyboard input
-    let input = create_input();
-
-    // Open the window
-    ctx.open();
-
-    // Set initial camera position to center of world
-    ctx.set_camera_position(0.0, 0.0);
-    ctx.set_camera_zoom(0.001); // Start zoomed out to see more of the grid
-
-    println!("Camera controls:");
-    println!("  WASD or arrow keys - Move camera");
-    println!("  Q/E - Zoom out/in");
-    println!("Enter main loop - close window to exit");
-
-    // Variables for camera movement
-    let camera_speed = 10.0; // base pixels per frame
-    let zoom_speed = 1.05; // 5% zoom change per keypress
-    let frame_duration = Duration::from_millis(16); // ~60 FPS
-
-    // Main loop - runs until window is closed
-    while ctx.is_open() {
-        // Clear previous rectangles
-        ctx.clear();
-
-        // Handle input for camera movement
-        let horizontal = input.get_horizontal_movement();
-        let vertical = input.get_vertical_movement();
-
-        // Get current zoom to adjust movement speed
-        let zoom = ctx.camera_zoom();
-        // Scale camera speed inversely with zoom level to keep perceived movement consistent
-        let adjusted_speed = camera_speed / zoom;
-        // Update camera position based on input
-        ctx.move_camera(horizontal * adjusted_speed, vertical * adjusted_speed);
-
-        ctx.add_rect(rect);
-        // Draw the frame
-        ctx.draw_frame();
-
-        // Display camera info
-        let cam_x = ctx.camera_x();
-        let cam_y = ctx.camera_y();
-        let zoom = ctx.camera_zoom();
-        // Only print occasionally to avoid console spam
-        if std::time::Instant::now().elapsed().as_millis() % 1000 < 16 {
-            println!("Camera: x={:.1}, y={:.1}, zoom={:.2}", cam_x, cam_y, zoom);
-        }
-
-        // Sleep to maintain frame rate
-        thread::sleep(frame_duration);
+    loop {
+        gfx.frame_begin();
+        gfx.batch_queue_draw(batch);
+        gfx.frame_commit_draw();
+        gfx.frame_end();
     }
-
-    // Window was closed, clean up
-    println!("Window closed, exiting");
-    ctx.close();
-
-    println!("Example completed");
 }

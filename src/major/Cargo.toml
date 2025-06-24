@@ -1,0 +1,11 @@
+
+
+[package]
+name = "major"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossterm = "*"
+libc = "0.2"
+num-traits = "*"

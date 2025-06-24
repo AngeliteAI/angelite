@@ -6,3 +6,6 @@ edition = "2024"
 
 [dependencies]
 major = { path = "../major" }
+noise = "*"
+glam = "*"
+quadtree = "0.3.5"
