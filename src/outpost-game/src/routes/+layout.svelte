@@ -30,7 +30,7 @@
             content:
                 "# Outpost Discovery\n\nLorem ipsum dolor sit amet, **consectetur adipiscing elit**. Nullam in dui mauris. Vivamus hendrerit arcu sed erat molestie vehicula.\n\n* First discovery point\n* Second discovery point\n* Third discovery point\n\nSed auctor neque eu tellus rhoncus ut eleifend nibh porttitor.",
             image: "https://picsum.photos/id/1/600/400",
-            size: { cols: 3, rows: 3 },
+            size: { cols: 4, rows: 3 },
             priority: 1, // Hero article
         },
         {

@@ -13,7 +13,7 @@
      * - title: Title to display in the header
      * - articles: Array of article objects
      */
-    let { articles = [], heroSize = { cols: 3, rows: 3 } } = $props();
+    let { articles = [], heroSize = { cols: 4, rows: 3 } } = $props();
 
     // Generate dynamically positioned articles
     let generatedArticles = [];
@@ -108,7 +108,7 @@
 
                 // Force hero to be 3x3 in size (or smaller if screen is too small)
                 const heroSize = {
-                    cols: Math.min(3, gridWidth),
+                    cols: Math.min(4, gridWidth),
                     rows: 3,
                 };
 
@@ -449,12 +449,14 @@
             class="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/20 to-transparent z-0 animate-pulse"
             style="animation-duration: 3s;"
         ></div>
-        <p class="text-sm font-medium tracking-wider z-10 relative text-center">
+        <p
+            class="text-sm font-medium tracking-wider z-10 relative text-center h-full flex items-center"
+        >
             <span class="text-indigo-300">SURVIVE</span>
             <span class="mx-2 opacity-60">•</span>
             <span class="text-purple-300">AUTOMATE</span>
             <span class="mx-2 opacity-60">•</span>
-            <span class="text-indigo-300">THRIVE</span>
+            <span class="text-indigo-300">EXPAND</span>
         </p>
     </GlassPanel>
 
