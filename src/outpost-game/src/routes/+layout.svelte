@@ -23,8 +23,8 @@
     // For micro-interactions
     let mounted = false;
 
-    // The single array of articles we'll use
-    const articles = [
+    // The single array of items (articles and tweets) we'll use
+    const items = [
         {
             title: "Outpost Discovery",
             content:
@@ -32,6 +32,7 @@
             image: "https://picsum.photos/id/1/600/400",
             size: { cols: 3, rows: 3 },
             priority: 1, // Hero article
+            type: "article",
         },
         {
             title: "Space Exploration",
@@ -40,6 +41,24 @@
             image: "https://picsum.photos/id/2/600/400",
             size: { cols: 1, rows: 1 },
             priority: 3,
+            type: "article",
+        },
+        {
+            content: "🚀 Just deployed the new **resource management system**! Colony efficiency up 47% 📈\n\nThe automation is working better than expected. #OutpostZero #GameDev",
+            author: {
+                name: "Outpost Team",
+                handle: "@outpostgame",
+                avatar: "https://picsum.photos/id/10/40/40"
+            },
+            metrics: {
+                likes: 234,
+                retweets: 67,
+                replies: 12
+            },
+            timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
+            size: { cols: 1, rows: 1 },
+            priority: 3,
+            type: "tweet",
         },
         {
             title: "New Alien Species",
@@ -48,6 +67,7 @@
             image: "https://picsum.photos/id/3/600/400",
             size: { cols: 3, rows: 1 },
             priority: 2,
+            type: "article",
         },
         {
             title: "Technology Advances",
@@ -56,6 +76,25 @@
             image: "https://picsum.photos/id/4/600/400",
             size: { cols: 1, rows: 2 },
             priority: 2,
+            type: "article",
+        },
+        {
+            content: "Working late on the **atmospheric processor** 🌙 \n\nThe oxygen levels are finally stabilizing. Tomorrow we test the new filtration system! 🔬",
+            image: "https://picsum.photos/id/20/600/300",
+            author: {
+                name: "Sarah Chen",
+                handle: "@sarahc_dev",
+                avatar: "https://picsum.photos/id/15/40/40"
+            },
+            metrics: {
+                likes: 89,
+                retweets: 23,
+                replies: 7
+            },
+            timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(), // 5 hours ago
+            size: { cols: 2, rows: 1 },
+            priority: 2,
+            type: "tweet",
         },
         {
             title: "Colony Updates",
@@ -64,6 +103,7 @@
             image: "https://picsum.photos/id/5/600/400",
             size: { cols: 2, rows: 1 },
             priority: 2,
+            type: "article",
         },
         {
             title: "Resource Management",
@@ -72,6 +112,24 @@
             image: "https://picsum.photos/id/6/600/400",
             size: { cols: 1, rows: 1 },
             priority: 3,
+            type: "article",
+        },
+        {
+            content: "❄️ **Cryogenic storage** systems are online! \n\nWe can now preserve biological samples for extended research periods. The future of xenobiology looks bright! ✨ #Science",
+            author: {
+                name: "Dr. Marcus Webb",
+                handle: "@dr_webb",
+                avatar: "https://picsum.photos/id/25/40/40"
+            },
+            metrics: {
+                likes: 156,
+                retweets: 34,
+                replies: 9
+            },
+            timestamp: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(), // 8 hours ago
+            size: { cols: 1, rows: 1 },
+            priority: 3,
+            type: "tweet",
         },
         {
             title: "Mission Briefing",
@@ -80,6 +138,7 @@
             image: "https://picsum.photos/id/7/600/400",
             size: { cols: 2, rows: 2 },
             priority: 2,
+            type: "article",
         },
         {
             title: "Weather Anomalies",
@@ -88,6 +147,7 @@
             image: "https://picsum.photos/id/8/600/400",
             size: { cols: 1, rows: 1 },
             priority: 3,
+            type: "article",
         },
     ];
     let { children } = $props();
@@ -145,7 +205,7 @@
     {/if}
 
     <div in:fade={{ duration: 800, delay: 400 }}>
-        <NewspaperGrid {articles}>
+        <NewspaperGrid {items}>
             {@render children()}
         </NewspaperGrid>
     </div>

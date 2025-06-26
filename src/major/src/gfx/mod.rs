@@ -20,14 +20,16 @@ pub enum Index {
 
 //IMPLEMENT BASED ON THIS CLAUDE
 pub trait Gfx {
-    fn new(surface: Box<dyn Surface>) -> Box<dyn Gfx>
+    fn new(surface: &dyn Surface) -> Box<dyn Gfx>
     where
         Self: Sized;
+    
+    fn as_any(&self) -> &dyn std::any::Any;
 
     fn mesh_create(&self) -> *const Mesh;
     fn mesh_destroy(&self, mesh: *const Mesh);
-    fn mesh_update_vertices(&self, mesh: *const Mesh, vertices: &[math::Vector<f32, 3>]);
-    fn mesh_update_normals(&self, mesh: *const Mesh, normals: &[math::Vector<f32, 3>]);
+    fn mesh_update_vertices(&self, mesh: *const Mesh, vertices: &[math::Vec3f]);
+    fn mesh_update_normal_dirs(&self, mesh: *const Mesh, normal_dirs: &[u32]);
     fn mesh_update_albedo(&self, mesh: *const Mesh, colors: &[Color]);
     fn mesh_update_indices(&self, mesh: *const Mesh, indices: &[Index]);
 

@@ -38,24 +38,24 @@ pub const DrawCommand = struct {
     }
 };
 
-/// Vertex definition with position, normal, and color
+/// Vertex definition for voxel faces - each vertex represents one voxel face
 pub const Vertex = struct {
-    position: [3]f32,
-    normal: [3]f32,
-    color: [4]f32,
+    position: [3]f32, // Voxel center position
+    normal_dir: u32, // Face direction: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
+    color: [4]f32, // Face color
 
-    pub fn init(pos: [3]f32, norm: [3]f32, col: [4]f32) Vertex {
+    pub fn init(pos: [3]f32, normal_direction: u32, col: [4]f32) Vertex {
         return .{
             .position = pos,
-            .normal = norm,
+            .normal_dir = normal_direction,
             .color = col,
         };
     }
 
-    pub fn initWithRgb(pos: [3]f32, norm: [3]f32, col: [3]f32) Vertex {
+    pub fn initWithRgb(pos: [3]f32, normal_direction: u32, col: [3]f32) Vertex {
         return .{
             .position = pos,
-            .normal = norm,
+            .normal_dir = normal_direction,
             .color = .{ col[0], col[1], col[2], 1.0 },
         };
     }
@@ -72,19 +72,19 @@ pub const Vertex = struct {
     /// Create the vertex attribute descriptions
     pub fn getAttributeDescriptions() [3]vk.VertexInputAttributeDescription {
         return .{
-            // Position
+            // Position (voxel center)
             .{
                 .binding = 0,
                 .location = 0,
                 .format = .r32g32b32_sfloat,
                 .offset = @offsetOf(Vertex, "position"),
             },
-            // Normal
+            // Normal direction (integer)
             .{
                 .binding = 0,
                 .location = 1,
-                .format = .r32g32b32_sfloat,
-                .offset = @offsetOf(Vertex, "normal"),
+                .format = .r32_uint,
+                .offset = @offsetOf(Vertex, "normal_dir"),
             },
             // Color
             .{
@@ -115,6 +115,8 @@ pub const VertexPool = struct {
     physical_device: vk.PhysicalDevice,
     dispatch: vk.DeviceDispatch,
     instance: vk.InstanceDispatch,
+    command_pool: vk.CommandPool, // Owned by Renderer, don't destroy
+    queue: vk.Queue, // Graphics queue for operations
 
     // Vertex pool state
     stage_buffers: std.ArrayList(StageBuffer),
@@ -145,16 +147,27 @@ pub const VertexPool = struct {
         physical_device: vk.PhysicalDevice,
         dispatch: vk.DeviceDispatch,
         instance: vk.InstanceDispatch,
+        command_pool: vk.CommandPool,
+        queue: vk.Queue,
         buffer_count: u32,
         vertex_per_buffer: u32,
         max_draw_commands: u32,
     ) !VertexPool {
+        // Store the renderer's command pool for later use
+        std.debug.print("VertexPool initializing with command pool: {any}\n", .{command_pool});
+
+        if (command_pool == .null_handle) {
+            return error.InvalidCommandPool;
+        }
+
         var pool = VertexPool{
             .allocator = allocator,
             .device = device,
             .physical_device = physical_device,
             .dispatch = dispatch,
             .instance = instance,
+            .command_pool = command_pool, // Using the renderer's command pool
+            .queue = queue,
             .stage_buffers = std.ArrayList(StageBuffer).init(allocator),
             .free_buffers = std.ArrayList(u32).init(allocator),
             .draw_commands = std.ArrayList(DrawCommand).init(allocator),
@@ -252,7 +265,7 @@ pub const VertexPool = struct {
         const index_buffer_size = @sizeOf(u32) * total_indices;
         try self.createBuffer(
             index_buffer_size,
-            .{ .index_buffer_bit = true },
+            .{ .index_buffer_bit = true, .transfer_dst_bit = true },
             .{ .device_local_bit = true },
             &self.index_buffer,
             &self.index_memory,
@@ -314,9 +327,9 @@ pub const VertexPool = struct {
         index_ptr.* = @intCast(self.draw_commands.items.len);
 
         // Calculate parameters for draw command
-        const quads = vertex_count / 4;
-        const index_count = quads * 6;
-        const first_index = 0; // Index buffer is pre-filled for all quads
+        // Each vertex represents one voxel face, geometry shader generates quads
+        const index_count = vertex_count; // Direct vertex count for point rendering
+        const first_index = 0;
         const vertex_offset = @as(i32, @intCast(buffer_idx * self.vertex_per_buffer));
 
         var cmd = DrawCommand.init(index_count, first_index, vertex_offset, index_ptr);
@@ -489,28 +502,51 @@ pub const VertexPool = struct {
     pub fn render(
         self: *VertexPool,
         command_buffer: vk.CommandBuffer,
-        _: vk.PipelineLayout,
+        _: vk.PipelineLayout, // Unused parameter but kept for API compatibility
         pipeline: vk.Pipeline,
     ) !void {
+        if (command_buffer == .null_handle) {
+            return error.InvalidCommandBuffer;
+        }
+
+        std.debug.print("VertexPool render: {} effective draws, {} total commands\n", .{ self.effective_draws, self.draw_commands.items.len });
+
         // Bind the pipeline
         _ = self.dispatch.vkCmdBindPipeline.?(command_buffer, .graphics, pipeline);
 
-        // Bind vertex and index buffers
-        const vertex_buffers = [_]vk.Buffer{self.stage_buffers.items[0].buffer};
-        const offsets = [1]vk.DeviceSize{0};
-
-        _ = self.dispatch.vkCmdBindVertexBuffers.?(command_buffer, 0, 1, &vertex_buffers, &offsets);
-        _ = self.dispatch.vkCmdBindIndexBuffer.?(command_buffer, self.index_buffer, 0, .uint32);
-
-        // Issue the multi-draw indirect command
+        // Issue non-indexed draw commands for each draw command
         if (self.effective_draws > 0) {
-            _ = self.dispatch.vkCmdDrawIndexedIndirect.?(
-                command_buffer,
-                self.indirect_buffer,
-                0,
-                @intCast(self.effective_draws),
-                @sizeOf(vk.DrawIndexedIndirectCommand),
-            );
+            std.debug.print("Issuing draw command with {} draws\n", .{self.effective_draws});
+
+            // For each draw command, bind the appropriate buffer and draw
+            for (self.draw_commands.items[0..self.effective_draws]) |cmd| {
+                // Calculate which buffer this vertex_offset refers to
+                const buffer_idx = @divFloor(@as(u32, @intCast(cmd.vertex_offset)), self.vertex_per_buffer);
+                const vertex_offset_in_buffer = @mod(@as(u32, @intCast(cmd.vertex_offset)), self.vertex_per_buffer);
+
+                if (buffer_idx >= self.stage_buffers.items.len) {
+                    std.debug.print("Warning: Invalid buffer index {} for draw command\n", .{buffer_idx});
+                    continue;
+                }
+
+                const stage = &self.stage_buffers.items[buffer_idx];
+                const vertex_buffers = [_]vk.Buffer{stage.buffer};
+                const offsets = [_]vk.DeviceSize{0};
+
+                _ = self.dispatch.vkCmdBindVertexBuffers.?(command_buffer, 0, 1, &vertex_buffers, &offsets);
+
+                std.debug.print("Drawing {} vertices from buffer {} at offset {}\n", 
+                    .{ cmd.index_count, buffer_idx, vertex_offset_in_buffer });
+
+                _ = self.dispatch.vkCmdDraw.?(command_buffer, 
+                    cmd.index_count,         // vertex count (points)
+                    1,                      // instance count
+                    vertex_offset_in_buffer, // first vertex
+                    0                       // first instance
+                );
+            }
+        } else {
+            std.debug.print("No effective draws to render\n", .{});
         }
     }
 
@@ -571,7 +607,7 @@ pub const VertexPool = struct {
     ) !void {
         // Create a temporary command buffer for the transfer
         const alloc_info = vk.CommandBufferAllocateInfo{
-            .command_pool = undefined, // You need to provide a command pool
+            .command_pool = self.command_pool,
             .level = .primary,
             .command_buffer_count = 1,
         };
@@ -610,13 +646,12 @@ pub const VertexPool = struct {
             .p_signal_semaphores = undefined,
         };
 
-        // TODO: You need to provide a queue and possibly a fence
-        const queue = undefined;
-        _ = self.dispatch.vkQueueSubmit.?(queue, 1, @as([*]vk.SubmitInfo, @ptrCast(@constCast(&submit_info))), .null_handle);
-        _ = self.dispatch.vkQueueWaitIdle.?(queue);
+        // Use the graphics queue for transfer operations
+        _ = self.dispatch.vkQueueSubmit.?(self.queue, 1, @as([*]vk.SubmitInfo, @ptrCast(@constCast(&submit_info))), .null_handle);
+        _ = self.dispatch.vkQueueWaitIdle.?(self.queue);
 
-        // Free command buffer
-        _ = self.dispatch.vkFreeCommandBuffers.?(self.device, undefined, 1, @as([*]vk.CommandBuffer, @ptrCast(@constCast(&command_buffer))));
+        // Free command buffer - use the same pool it was allocated from
+        self.dispatch.vkFreeCommandBuffers.?(self.device, self.command_pool, 1, @as([*]vk.CommandBuffer, @ptrCast(@constCast(&command_buffer))));
     }
 
     /// Helper function to find memory type

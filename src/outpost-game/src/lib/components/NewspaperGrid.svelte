@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { browser } from "$app/environment";
     import ArticleCard from "./ArticleCard.svelte";
+    import TweetCard from "./TweetCard.svelte";
     import GlassPanel from "./GlassPanel.svelte";
     import NewsletterCTA from "./NewsletterCTA.svelte";
 
@@ -13,23 +14,23 @@
      * - title: Title to display in the header
      * - articles: Array of article objects
      */
-    let { articles = [], heroSize = { cols: 3, rows: 3 } } = $props();
+    let { items = [], heroSize = { cols: 3, rows: 3 } } = $props();
 
-    // Generate dynamically positioned articles
-    let generatedArticles = [];
+    // Generate dynamically positioned items
+    let generatedItems = [];
     let screenSize = { cols: 6, rows: 6 }; // Default grid size
 
     // Function to determine actual size based on screen size and article preferred size
-    function calculateActualSize(article, availableSpace) {
+    function calculateActualSize(item, availableSpace) {
         // Start with preferred size
-        const preferred = article.size;
+        const preferred = item.size;
 
         // For smaller screens, we may need to reduce sizes
         let actualCols = Math.min(preferred.cols, availableSpace.cols);
         let actualRows = preferred.rows;
 
-        // High priority articles should maintain their size when possible
-        if (article.priority > 2 && availableSpace.cols < 4) {
+        // High priority items should maintain their size when possible
+        if (item.priority > 2 && availableSpace.cols < 4) {
             actualCols = Math.min(actualCols, 1);
         }
 
@@ -55,12 +56,12 @@
             screenSize = { cols: 6, rows: 6 }; // Large desktops: 6 columns
         }
 
-        generateArticles();
+        generateItems();
     }
 
-    // Function to generate articles with appropriate sizes
-    function generateArticles() {
-        console.log("Generating articles with:", articles.length, "items");
+    // Function to generate items with appropriate sizes
+    function generateItems() {
+        console.log("Generating items with:", items.length, "items");
 
         // Create a virtual grid to track filled cells
         const gridWidth = screenSize.cols || 6; // Default to 6 if not set
@@ -69,42 +70,42 @@
             .fill()
             .map(() => Array(gridWidth).fill(false));
 
-        // Position articles in the grid
-        const positionedArticles = [];
+        // Position items in the grid
+        const positionedItems = [];
 
-        // Clone and sort articles by priority (most important first)
-        const sortedArticles = [...articles]
+        // Clone and sort items by priority (most important first)
+        const sortedItems = [...items]
             .sort((a, b) => a.priority - b.priority)
-            .map((article, index) => ({
-                ...article,
+            .map((item, index) => ({
+                ...item,
                 id: index + 1,
-                actualSize: calculateActualSize(article, screenSize),
-                originalSize: { ...article.size }, // Keep original size for reference
+                actualSize: calculateActualSize(item, screenSize),
+                originalSize: { ...item.size }, // Keep original size for reference
             }));
 
-        // Skip if no articles
-        if (sortedArticles.length === 0) {
-            generatedArticles = [];
+        // Skip if no items
+        if (sortedItems.length === 0) {
+            generatedItems = [];
             return;
         }
 
-        // Find the hero article (highest priority)
-        const heroArticle = sortedArticles.find(
-            (article) => article.priority === 1,
+        // Find the hero item (highest priority)
+        const heroItem = sortedItems.find(
+            (item) => item.priority === 1,
         );
 
-        // Create a working copy of the articles, removing the hero
-        let workingArticles = [...sortedArticles];
+        // Create a working copy of the items, removing the hero
+        let workingItems = [...sortedItems];
 
-        // First place the hero article (highest priority) in top left at 3x3
-        if (heroArticle) {
-            const heroIndex = workingArticles.findIndex(
-                (a) => a.id === heroArticle.id,
+        // First place the hero item (highest priority) in top left at 3x3
+        if (heroItem) {
+            const heroIndex = workingItems.findIndex(
+                (a) => a.id === heroItem.id,
             );
 
             if (heroIndex >= 0) {
-                // Remove hero from working articles
-                workingArticles.splice(heroIndex, 1);
+                // Remove hero from working items
+                workingItems.splice(heroIndex, 1);
 
                 // Force hero to be 3x3 in size (or smaller if screen is too small)
                 const heroSize = {
@@ -124,22 +125,22 @@
                     heroSize.rows,
                 );
 
-                // Add positioned hero article
-                positionedArticles.push({
-                    ...heroArticle,
+                // Add positioned hero item
+                positionedItems.push({
+                    ...heroItem,
                     actualSize: heroSize,
                     position: heroPosition,
                 });
             }
         }
 
-        // Place medium priority articles (priority 2)
-        for (const article of workingArticles.filter((a) => a.priority === 2)) {
+        // Place medium priority items (priority 2)
+        for (const item of workingItems.filter((a) => a.priority === 2)) {
             // Try with original size first
             let position = findPosition(
                 grid,
-                article.actualSize.cols,
-                article.actualSize.rows,
+                item.actualSize.cols,
+                item.actualSize.rows,
             );
 
             if (position) {
@@ -148,20 +149,20 @@
                     grid,
                     position.row,
                     position.col,
-                    article.actualSize.cols,
-                    article.actualSize.rows,
+                    item.actualSize.cols,
+                    item.actualSize.rows,
                 );
 
-                // Add positioned article
-                positionedArticles.push({
-                    ...article,
+                // Add positioned item
+                positionedItems.push({
+                    ...item,
                     position,
                 });
             }
         }
 
-        // Place low priority articles (priority 3+), trying different sizes to fit
-        for (const article of workingArticles.filter((a) => a.priority > 2)) {
+        // Place low priority items (priority 3+), trying different sizes to fit
+        for (const item of workingItems.filter((a) => a.priority > 2)) {
             let placed = false;
 
             // First try expanding to fill gaps
@@ -170,14 +171,14 @@
             for (const gap of gapPositions) {
                 if (placed) break;
 
-                // If the gap is larger than the article's minimum size, use it
+                // If the gap is larger than the item's minimum size, use it
                 if (gap.width > 1 || gap.height > 1) {
                     // Mark grid cells as filled
                     fillGrid(grid, gap.row, gap.col, gap.width, gap.height);
 
-                    // Add positioned article with expanded size to fill gap
-                    positionedArticles.push({
-                        ...article,
+                    // Add positioned item with expanded size to fill gap
+                    positionedItems.push({
+                        ...item,
                         actualSize: { cols: gap.width, rows: gap.height },
                         position: { row: gap.row, col: gap.col },
                     });
@@ -190,14 +191,14 @@
             // Try different sizes to fit empty spaces
             if (!placed) {
                 for (
-                    let cols = Math.min(article.actualSize.cols, 2);
+                    let cols = Math.min(item.actualSize.cols, 2);
                     cols >= 1;
                     cols--
                 ) {
                     if (placed) break;
 
                     for (
-                        let rows = Math.min(article.actualSize.rows, 2);
+                        let rows = Math.min(item.actualSize.rows, 2);
                         rows >= 1;
                         rows--
                     ) {
@@ -213,9 +214,9 @@
                                 rows,
                             );
 
-                            // Add positioned article with adjusted size
-                            positionedArticles.push({
-                                ...article,
+                            // Add positioned item with adjusted size
+                            positionedItems.push({
+                                ...item,
                                 actualSize: { cols, rows },
                                 position,
                             });
@@ -235,9 +236,9 @@
                     // Mark grid cells as filled
                     fillGrid(grid, position.row, position.col, 1, 1);
 
-                    // Add positioned article with minimal size
-                    positionedArticles.push({
-                        ...article,
+                    // Add positioned item with minimal size
+                    positionedItems.push({
+                        ...item,
                         actualSize: { cols: 1, rows: 1 },
                         position,
                     });
@@ -246,14 +247,14 @@
         }
 
         // Sort by position for proper rendering
-        positionedArticles.sort((a, b) => {
+        positionedItems.sort((a, b) => {
             if (a.position.row === b.position.row) {
                 return a.position.col - b.position.col;
             }
             return a.position.row - b.position.row;
         });
 
-        generatedArticles = positionedArticles;
+        generatedItems = positionedItems;
     }
 
     // Helper function to find next available position in the grid
@@ -402,12 +403,12 @@
         }
     }
 
-    // Generate articles immediately on component creation
-    generateArticles();
+    // Generate items immediately on component creation
+    generateItems();
 
     onMount(() => {
-        // Force immediate article generation on mount
-        generateArticles();
+        // Force immediate item generation on mount
+        generateItems();
         adjustToScreenSize();
 
         // Add resize listener to adjust layout when screen size changes
@@ -429,14 +430,20 @@
     <!-- Three column top row -->
     <GlassPanel
         as="header"
-        class="col-span-1 sm:col-span-2 h-16 flex justify-center items-center font-medium text-xl uppercase relative overflow-hidden transform hover:scale-[1.02] transition-transform"
+        class="col-span-1 sm:col-span-2 h-16 flex justify-center p-1 font-medium text-xl uppercase relative overflow-hidden transform hover:scale-[1.02] transition-transform"
         interactive={true}
     >
         <div
-            class="z-10 relative bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent font-bold tracking-wider"
+            class="z-10 relative text-center font-bold tracking-wider text-base"
         >
             OUTPOST: ZERO
-        </div>
+        </div> <p class="text-sm font-medium tracking-wider z-10 relative text-center text-xs flex justify-around items-center">
+                   <span class="text-indigo-300 pl-4">SURVIVE</span>
+                   <span class="mx-2 opacity-60">•</span>
+                   <span class="text-purple-300">AUTOMATE</span>
+                   <span class="mx-2 opacity-60">•</span>
+                   <span class="text-indigo-300 pr-4">THRIVE</span>
+               </p>
     </GlassPanel>
 
     <!-- Game slogan with premium effect -->
@@ -449,13 +456,7 @@
             class="absolute inset-0 bg-gradient-to-r from-transparent via-purple-500/20 to-transparent z-0 animate-pulse"
             style="animation-duration: 3s;"
         ></div>
-        <p class="text-sm font-medium tracking-wider z-10 relative text-center">
-            <span class="text-indigo-300">SURVIVE</span>
-            <span class="mx-2 opacity-60">•</span>
-            <span class="text-purple-300">AUTOMATE</span>
-            <span class="mx-2 opacity-60">•</span>
-            <span class="text-indigo-300">THRIVE</span>
-        </p>
+
     </GlassPanel>
 
     <!-- Newsletter CTA -->
@@ -479,12 +480,20 @@
         ></div>
     </div>
 
-    {#each generatedArticles as article}
-        <ArticleCard
-            {article}
-            size={article.actualSize}
-            position={article.position}
-        />
+    {#each generatedItems as item}
+        {#if item.type === 'tweet'}
+            <TweetCard
+                tweet={item}
+                size={item.actualSize}
+                position={item.position}
+            />
+        {:else}
+            <ArticleCard
+                article={item}
+                size={item.actualSize}
+                position={item.position}
+            />
+        {/if}
     {/each}
 
     <slot />

@@ -13,8 +13,8 @@ pub struct Mesh {
     position: [f32; 3],
     group: u32,
     // Store vertex data for incremental updates
-    vertices: Option<Vec<crate::math::Vector<f32, 3>>>,
-    normals: Option<Vec<crate::math::Vector<f32, 3>>>,
+    vertices: Option<Vec<crate::math::Vec3f>>,
+    normal_dirs: Option<Vec<u32>>,
     colors: Option<Vec<crate::gfx::Color>>,
 }
 
@@ -23,18 +23,13 @@ pub struct Batch {
 }
 
 pub struct Camera {
-    position: [f32; 3],
-    projection: [f32; 16],
-    transform: [f32; 16],
-    is_main: bool,
+    zig_camera: *mut c_void,
 }
 
 pub struct Vulkan {
     renderer: Arc<Mutex<*mut zig::Renderer>>,
     meshes: Vec<Mesh>,
     batches: Vec<Batch>,
-    cameras: Vec<Camera>,
-    main_camera: Option<usize>,
 }
 
 // Module for Zig interop
@@ -50,7 +45,7 @@ mod zig {
 
     unsafe extern "C" {
         // Renderer functions
-        pub fn renderer_init() -> *mut Renderer;
+        pub fn renderer_init(surface_raw: *mut c_void) -> *mut Renderer;
         pub fn renderer_deinit(renderer: *mut Renderer);
         pub fn renderer_init_vertex_pool(
             renderer: *mut Renderer,
@@ -106,16 +101,40 @@ mod zig {
         pub fn renderer_begin_frame(renderer: *mut Renderer) -> bool;
         pub fn renderer_render(renderer: *mut Renderer) -> bool;
         pub fn renderer_end_frame(renderer: *mut Renderer) -> bool;
+
+        // Camera functions
+        pub fn renderer_camera_create(renderer: *mut Renderer) -> *mut c_void;
+        pub fn renderer_camera_destroy(renderer: *mut Renderer, camera: *mut c_void);
+        pub fn renderer_camera_set_projection(
+            renderer: *mut Renderer,
+            camera: *mut c_void,
+            projection: *const f32,
+        );
+        pub fn renderer_camera_set_transform(
+            renderer: *mut Renderer,
+            camera: *mut c_void,
+            transform: *const f32,
+        );
+        pub fn renderer_camera_set_main(renderer: *mut Renderer, camera: *mut c_void);
+        
+        // Physics integration
+        pub fn renderer_get_device_info(
+            renderer: *mut Renderer,
+            out_device: *mut c_void,
+            out_queue: *mut c_void,
+            out_command_pool: *mut c_void,
+        ) -> bool;
     }
 }
 
 impl super::Gfx for Vulkan {
-    fn new(surface: Box<dyn crate::engine::Surface>) -> Box<dyn super::Gfx>
+    fn new(surface: &dyn crate::engine::Surface) -> Box<dyn super::Gfx>
     where
         Self: Sized,
     {
+
         // Initialize Vulkan renderer
-        let renderer_ptr = unsafe { zig::renderer_init() };
+        let renderer_ptr = unsafe { zig::renderer_init(surface.raw()) };
 
         // Create Arc<Mutex<*mut zig::Renderer>> to store the pointer
         let renderer = Arc::new(Mutex::new(renderer_ptr));
@@ -129,14 +148,17 @@ impl super::Gfx for Vulkan {
             renderer: renderer,
             meshes: Vec::new(),
             batches: Vec::new(),
-            cameras: Vec::new(),
-            main_camera: None,
         })
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn mesh_create(&self) -> *const super::Mesh {
         let renderer_guard = self.renderer.lock().unwrap();
         let renderer_ptr = *renderer_guard;
+        
 
         // Request a buffer from the vertex pool
         let buffer_index = unsafe { zig::renderer_request_buffer(renderer_ptr) };
@@ -148,7 +170,7 @@ impl super::Gfx for Vulkan {
             position: [0.0, 0.0, 0.0],
             group: 0,
             vertices: None,
-            normals: None,
+            normal_dirs: None,
             colors: None,
         };
 
@@ -175,12 +197,13 @@ impl super::Gfx for Vulkan {
         }
     }
 
-    fn mesh_update_vertices(&self, mesh: *const super::Mesh, vertices: &[math::Vector<f32, 3>]) {
+    fn mesh_update_vertices(&self, mesh: *const super::Mesh, vertices: &[math::Vec3f]) {
         let mesh_ptr = mesh as *mut Mesh;
         let mesh = unsafe { &mut *mesh_ptr };
 
         let renderer_guard = self.renderer.lock().unwrap();
         let renderer_ptr = *renderer_guard;
+        
 
         // Store vertices for later use with other attributes
         mesh.vertices = Some(vertices.to_vec());
@@ -190,11 +213,11 @@ impl super::Gfx for Vulkan {
             // First time - need to create the mesh
             let mut cmd_index_ptr: *mut u32 = ptr::null_mut();
 
-            // Initialize with default normals and colors if not provided yet
-            let default_normals = if mesh.normals.is_none() {
-                vec![math::Vector::<f32, 3>::default(); vertices.len()]
+            // Initialize with default normal directions and colors if not provided yet
+            let default_normal_dirs = if mesh.normal_dirs.is_none() {
+                vec![4u32; vertices.len()]  // Default to +Z direction
             } else {
-                mesh.normals.clone().unwrap()
+                mesh.normal_dirs.clone().unwrap()
             };
 
             let default_colors = if mesh.colors.is_none() {
@@ -203,11 +226,12 @@ impl super::Gfx for Vulkan {
                 mesh.colors.clone().unwrap()
             };
 
-            // Combine vertices, normals, and colors into an interleaved format
-            let vertex_data = Self::create_vertex_data(vertices, &default_normals, &default_colors);
+            // Combine vertices, normal directions, and colors into an interleaved format
+            let vertex_data = Self::create_vertex_data(vertices, &default_normal_dirs, &default_colors);
+
 
             unsafe {
-                zig::renderer_add_mesh(
+                let success = zig::renderer_add_mesh(
                     renderer_ptr,
                     mesh.buffer_index,
                     vertex_data.as_ptr() as *const c_void,
@@ -221,14 +245,14 @@ impl super::Gfx for Vulkan {
             mesh.command_index_ptr = cmd_index_ptr;
         } else {
             // Update existing mesh vertices
-            // Need to combine with existing normals and colors
-            let normal_vec = vec![math::Vector::<f32, 3>::default(); vertices.len()];
-            let normals = mesh.normals.as_ref().unwrap_or(&normal_vec);
+            // Need to combine with existing normal directions and colors
+            let normal_dir_vec = vec![4u32; vertices.len()];
+            let normal_dirs = mesh.normal_dirs.as_ref().unwrap_or(&normal_dir_vec);
             let color_vec = vec![crate::gfx::Color::white(); vertices.len()];
             let colors = mesh.colors.as_ref().unwrap_or(&color_vec);
 
-            // Combine vertices, normals, and colors into an interleaved format
-            let vertex_data = Self::create_vertex_data(vertices, normals, colors);
+            // Combine vertices, normal directions, and colors into an interleaved format
+            let vertex_data = Self::create_vertex_data(vertices, normal_dirs, colors);
 
             unsafe {
                 zig::renderer_update_vertices(
@@ -241,35 +265,35 @@ impl super::Gfx for Vulkan {
         }
     }
 
-    fn mesh_update_normals(&self, mesh: *const super::Mesh, normals: &[math::Vector<f32, 3>]) {
+    fn mesh_update_normal_dirs(&self, mesh: *const super::Mesh, normal_dirs: &[u32]) {
         let mesh_ptr = mesh as *mut Mesh;
         let mesh = unsafe { &mut *mesh_ptr };
 
         let renderer_guard = self.renderer.lock().unwrap();
         let renderer_ptr = *renderer_guard;
 
-        // Store normals for later use
-        mesh.normals = Some(normals.to_vec());
+        // Store normal directions for later use
+        mesh.normal_dirs = Some(normal_dirs.to_vec());
 
         if mesh.command_index_ptr.is_null() || mesh.vertices.is_none() {
-            // Can't update normals without vertices
+            // Can't update normal directions without vertices
             return;
         }
 
-        // Update the normals in the renderer
+        // Update the normal directions in the renderer
         let vertices = mesh.vertices.as_ref().unwrap();
         let color_vec = vec![crate::gfx::Color::white(); vertices.len()];
         let colors = mesh.colors.as_ref().unwrap_or(&color_vec);
 
-        // Create interleaved normal data
-        let normal_data = Self::create_vertex_data(vertices, normals, colors);
+        // Create interleaved normal direction data
+        let normal_data = Self::create_vertex_data(vertices, normal_dirs, colors);
 
         unsafe {
             zig::renderer_update_normals(
                 renderer_ptr,
                 mesh.buffer_index,
                 normal_data.as_ptr() as *const c_void,
-                normals.len() as u32,
+                normal_dirs.len() as u32,
             );
         }
     }
@@ -291,11 +315,11 @@ impl super::Gfx for Vulkan {
 
         // Update the colors in the renderer
         let vertices = mesh.vertices.as_ref().unwrap();
-        let normal_vec = vec![math::Vector::<f32, 3>::default(); vertices.len()];
-        let normals = mesh.normals.as_ref().unwrap_or(&normal_vec);
+        let normal_dir_vec = vec![4u32; vertices.len()];
+        let normal_dirs = mesh.normal_dirs.as_ref().unwrap_or(&normal_dir_vec);
 
         // Create interleaved color data
-        let color_data = Self::create_vertex_data(vertices, normals, colors);
+        let color_data = Self::create_vertex_data(vertices, normal_dirs, colors);
 
         unsafe {
             zig::renderer_update_colors(
@@ -345,63 +369,69 @@ impl super::Gfx for Vulkan {
     }
 
     fn camera_create(&self) -> *const super::Camera {
-        let camera = Camera {
-            position: [0.0, 0.0, 0.0],
-            projection: [
-                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            ],
-            transform: [
-                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            ],
-            is_main: false,
-        };
+        let renderer_guard = self.renderer.lock().unwrap();
+        let renderer_ptr = *renderer_guard;
+
+        // Create camera using Zig renderer
+        let zig_camera = unsafe { zig::renderer_camera_create(renderer_ptr) };
+
+        let camera = Camera { zig_camera };
 
         Box::into_raw(Box::new(camera)) as *const super::Camera
     }
 
     fn camera_set_projection(&self, camera: *const super::Camera, projection: &[f32; 16]) {
-        let camera_ptr = camera as *mut Camera;
-        let camera = unsafe { &mut *camera_ptr };
+        let renderer_guard = self.renderer.lock().unwrap();
+        let renderer_ptr = *renderer_guard;
+        
+        let camera_ptr = camera as *const Camera;
+        let camera = unsafe { &*camera_ptr };
 
-        camera.projection.copy_from_slice(projection);
+        unsafe {
+            zig::renderer_camera_set_projection(
+                renderer_ptr,
+                camera.zig_camera,
+                projection.as_ptr(),
+            );
+        }
     }
 
     fn camera_set_transform(&self, camera: *const super::Camera, transform: &[f32; 16]) {
-        let camera_ptr = camera as *mut Camera;
-        let camera = unsafe { &mut *camera_ptr };
+        let renderer_guard = self.renderer.lock().unwrap();
+        let renderer_ptr = *renderer_guard;
+        
+        let camera_ptr = camera as *const Camera;
+        let camera = unsafe { &*camera_ptr };
 
-        camera.transform.copy_from_slice(transform);
-
-        // Extract position from the transform matrix (translation component)
-        camera.position[0] = transform[12];
-        camera.position[1] = transform[13];
-        camera.position[2] = transform[14];
+        unsafe {
+            zig::renderer_camera_set_transform(
+                renderer_ptr,
+                camera.zig_camera,
+                transform.as_ptr(),
+            );
+        }
     }
 
     fn camera_set_main(&self, camera: *const super::Camera) {
-        // Find this camera in our list or add it
+        let renderer_guard = self.renderer.lock().unwrap();
+        let renderer_ptr = *renderer_guard;
+        
         let camera_ptr = camera as *const Camera;
+        let camera = unsafe { &*camera_ptr };
 
-        // Mark as main camera
-        let camera = unsafe { &mut *(camera_ptr as *mut Camera) };
-        camera.is_main = true;
+        unsafe {
+            zig::renderer_camera_set_main(renderer_ptr, camera.zig_camera);
+        }
     }
 
     fn frame_begin(&self) {
         let renderer_guard = self.renderer.lock().unwrap();
         let renderer_ptr = *renderer_guard;
 
-        // Apply view frustum culling and ordering based on the main camera
-        if let Some(camera) = self.cameras.iter().find(|c| c.is_main) {
-            unsafe {
-                // Apply true back-face culling
-                zig::renderer_mask_by_facing(renderer_ptr, camera.position.as_ptr());
-
-                // Apply front-to-back ordering for better rendering
-                zig::renderer_order_front_to_back(renderer_ptr, camera.position.as_ptr());
-
-                // Begin the frame
-                zig::renderer_begin_frame(renderer_ptr);
+        // Begin the frame - camera matrices are handled by the Zig layer
+        unsafe {
+            if !zig::renderer_begin_frame(renderer_ptr) {
+                panic!("Whoopsie daisy!");
             }
         }
     }
@@ -428,44 +458,46 @@ impl super::Gfx for Vulkan {
 }
 
 impl Vulkan {
+    /// Get the renderer pointer for physics integration
+    pub fn get_renderer_ptr(&self) -> *mut zig::Renderer {
+        let renderer_guard = self.renderer.lock().unwrap();
+        *renderer_guard
+    }
+    
     // Helper function to create interleaved vertex data from separate attributes
     fn create_vertex_data(
-        vertices: &[math::Vector<f32, 3>],
-        normals: &[math::Vector<f32, 3>],
+        vertices: &[math::Vec3f],
+        normal_dirs: &[u32],
         colors: &[crate::gfx::Color],
-    ) -> Vec<f32> {
-        let mut vertex_data = Vec::with_capacity(vertices.len() * 10); // 3 position + 3 normal + 4 color
+    ) -> Vec<u8> {
+        let mut vertex_data = Vec::with_capacity(vertices.len() * (3 * 4 + 4 + 4 * 4)); // 3 f32 position + 1 u32 normal_dir + 4 f32 color
 
         for i in 0..vertices.len() {
-            // Add position (3 floats)
-            vertex_data.push(vertices[i].0[0]);
-            vertex_data.push(vertices[i].0[1]);
-            vertex_data.push(vertices[i].0[2]);
+            // Add position (3 f32s)
+            vertex_data.extend_from_slice(&vertices[i][0].to_ne_bytes());
+            vertex_data.extend_from_slice(&vertices[i][1].to_ne_bytes());
+            vertex_data.extend_from_slice(&vertices[i][2].to_ne_bytes());
 
-            // Add normal (3 floats)
-            if i < normals.len() {
-                vertex_data.push(normals[i].0[0]);
-                vertex_data.push(normals[i].0[1]);
-                vertex_data.push(normals[i].0[2]);
+            // Add normal direction (1 u32)
+            let normal_dir = if i < normal_dirs.len() {
+                normal_dirs[i]
             } else {
-                // Default normal if not enough provided
-                vertex_data.push(0.0);
-                vertex_data.push(1.0);
-                vertex_data.push(0.0);
-            }
+                4u32  // Default to +Z direction
+            };
+            vertex_data.extend_from_slice(&normal_dir.to_ne_bytes());
 
-            // Add color (4 floats)
+            // Add color (4 f32s)
             if i < colors.len() {
-                vertex_data.push(colors[i].r);
-                vertex_data.push(colors[i].g);
-                vertex_data.push(colors[i].b);
-                vertex_data.push(colors[i].a);
+                vertex_data.extend_from_slice(&colors[i].r.to_ne_bytes());
+                vertex_data.extend_from_slice(&colors[i].g.to_ne_bytes());
+                vertex_data.extend_from_slice(&colors[i].b.to_ne_bytes());
+                vertex_data.extend_from_slice(&colors[i].a.to_ne_bytes());
             } else {
                 // Default color if not enough provided
-                vertex_data.push(1.0);
-                vertex_data.push(1.0);
-                vertex_data.push(1.0);
-                vertex_data.push(1.0);
+                vertex_data.extend_from_slice(&1.0f32.to_ne_bytes());
+                vertex_data.extend_from_slice(&1.0f32.to_ne_bytes());
+                vertex_data.extend_from_slice(&1.0f32.to_ne_bytes());
+                vertex_data.extend_from_slice(&1.0f32.to_ne_bytes());
             }
         }
 

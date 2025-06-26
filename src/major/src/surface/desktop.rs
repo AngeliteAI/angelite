@@ -1,4 +1,5 @@
 use std::ffi::{c_char, c_float, c_int, c_void};
+use std::sync::{Arc, Mutex};
 
 use crate::engine::Surface;
 
@@ -26,11 +27,19 @@ unsafe extern "C" {
     fn surface_on_resize(surface: *mut c_void, callback: extern "C" fn(*mut c_void, c_int, c_int));
     fn surface_on_focus(surface: *mut c_void, callback: extern "C" fn(*mut c_void, bool));
     fn surface_on_close(surface: *mut c_void, callback: extern "C" fn(*mut c_void) -> bool);
+    fn surface_on_key(surface: *mut c_void, callback: extern "C" fn(*mut c_void, u32, bool));
+    fn surface_on_mouse_move(surface: *mut c_void, callback: extern "C" fn(*mut c_void, c_int, c_int));
+    fn surface_on_mouse_button(surface: *mut c_void, callback: extern "C" fn(*mut c_void, u32, bool));
+    fn surface_on_mouse_wheel(surface: *mut c_void, callback: extern "C" fn(*mut c_void, c_float, c_float));
+    
+    fn surface_set_input_user_data(surface: *mut c_void, user_data: *mut c_void);
 
+    fn surface_raw(surface: *mut c_void) -> *mut c_void;
 }
 
 pub struct Desktop {
     surface: *mut c_void,
+    input_system: Option<*mut c_void>,
 }
 
 impl Surface for Desktop {
@@ -39,14 +48,42 @@ impl Surface for Desktop {
     }
 
     fn raw(&self) -> *mut c_void {
-        return self.surface as *mut c_void;
+        unsafe { surface_raw(self.surface) as *mut c_void }
     }
 }
 
 impl Desktop {
     pub fn open() -> Self {
         let surface = unsafe { surface_create(800, 600, b"Major\0".as_ptr() as *const _) };
-        Desktop { surface }
+        Desktop { 
+            surface,
+            input_system: None,
+        }
+    }
+    
+    pub fn setup_input_callbacks(
+        &mut self,
+        input_system: *mut c_void,
+        key_cb: extern "C" fn(*mut c_void, u32, bool),
+        mouse_move_cb: extern "C" fn(*mut c_void, c_int, c_int),
+        mouse_button_cb: extern "C" fn(*mut c_void, u32, bool),
+        mouse_wheel_cb: extern "C" fn(*mut c_void, c_float, c_float),
+    ) {
+        println!("[DEBUG] Desktop::setup_input_callbacks called");
+        println!("[DEBUG]   input_system: {:?}", input_system);
+        println!("[DEBUG]   key_cb: {:?}", key_cb as *const ());
+        println!("[DEBUG]   self.surface: {:?}", self.surface);
+        
+        self.input_system = Some(input_system);
+        unsafe {
+            surface_set_input_user_data(self.surface, input_system);
+            surface_on_key(self.surface, key_cb);
+            surface_on_mouse_move(self.surface, mouse_move_cb);
+            surface_on_mouse_button(self.surface, mouse_button_cb);
+            surface_on_mouse_wheel(self.surface, mouse_wheel_cb);
+        }
+        
+        println!("[DEBUG] Desktop::setup_input_callbacks completed");
     }
 
     pub fn close(&self) {

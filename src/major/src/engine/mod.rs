@@ -1,7 +1,7 @@
 use core::fmt;
 use std::ffi::c_void;
 
-use crate::{gfx::Gfx, math, tile};
+use crate::{gfx::Gfx, math, tile, physx::Physx};
 
 #[cfg(target_os = "macos")]
 mod mac;
@@ -17,7 +17,7 @@ pub enum Type {
 pub const fn default_platform_type() -> Type {
     #[cfg(target_os = "macos")]
     return Type::Mac;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     return Type::Windows;
 }
 static mut ENGINE_TYPE: Type = default_platform_type();
@@ -81,16 +81,33 @@ pub enum Button {
     ButtonY,
     ButtonLTrigger,
     ButtonRTrigger,
+    ButtonLShoulder,  // Left bumper
+    ButtonRShoulder,  // Right bumper
     ButtonLJoystick,
     ButtonRJoystick,
     ButtonMenu,
+    DPadUp,
+    DPadDown,
+    DPadLeft,
+    DPadRight,
     KeyW,
     KeyA,
     KeyS,
     KeyD,
+    KeyQ,
+    KeyE,
     KeySpace,
     KeyEnter,
     KeyEscape,
+    KeyShift,
+    KeyControl,
+    KeyTab,
+    KeyI,
+    KeyF,
+    KeyG,
+    MouseLeft,
+    MouseRight,
+    MouseMiddle,
 }
 
 #[derive(Hash, Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +115,7 @@ pub enum Axis {
     Mouse,
     LeftJoystick,
     RightJoystick,
+    MouseWheel,
 }
 
 #[repr(u32)]
@@ -118,18 +136,22 @@ pub trait Surface {
 pub trait Engine {
     fn surface_create(&self) -> Box<dyn Surface>;
 
-    fn gfx_create(&self, surface: Box<dyn Surface>) -> Box<dyn Gfx>;
+    fn gfx_create(&self, surface: &dyn Surface) -> Box<dyn Gfx>;
+    
+    fn physx(&self) -> Option<&dyn Physx>;
+    fn physx_mut(&mut self) -> Option<&mut (dyn Physx + '_)>;
 
-    fn set_origin(&self, origin: math::Vector<i64, 3>);
-    fn cell_set(&self, position: math::Vector<i64, 3>, tile: tile::Type);
+    fn set_origin(&self, origin: math::Vec3<i64>);
+    fn cell_set(&self, position: math::Vec3<i64>, tile: tile::Type);
     fn cell_frustum(&self) -> Frustum;
 
     fn actor_create(&self, ty: Actor) -> *mut Actor;
-    fn actor_move(&self, actor: *mut Actor, position: math::Vector<f32, 3>);
-    fn actor_rotate(&self, actor: *mut Actor, rotation: math::Quaternion<f32>);
-    fn actor_position(&self, actor: *mut Actor) -> math::Vector<f32, 3>;
-    fn actor_rotation(&self, actor: *mut Actor) -> math::Quaternion<f32>;
+    fn actor_move(&self, actor: *mut Actor, position: math::Vec3f);
+    fn actor_rotate(&self, actor: *mut Actor, rotation: math::Quat);
+    fn actor_position(&self, actor: *mut Actor) -> math::Vec3f;
+    fn actor_rotation(&self, actor: *mut Actor) -> math::Quat;
 
+    fn input_update(&self);
     fn input_binding_data(&self, bind: Binding) -> Data;
     fn input_binding_activate(&self, button: Button, activate: bool);
     fn input_binding_move(&self, axis: Axis, x: f32, y: f32);
@@ -146,14 +168,25 @@ pub struct Frustum {
     pub bottom: i128,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 #[repr(C)]
 pub enum Binding {
     MoveHorizontal,
     MoveVertical,
+    MoveUpDown,  // For jetpack/vertical movement
     Cursor,
     Select,
     Escape,
+    LookHorizontal,
+    LookVertical,
+    Jump,        // Space for jump/jetpack
+    Sprint,      // Left trigger for sprint
+    Use,         // X button for use/interact
+    Build,       // B button for build mode
+    Crouch,      // Right stick click for crouch
+    Inventory,   // Y button for inventory
+    Roll,        // For ship rolling
+    Zoom,        // Mouse wheel zoom
 }
 
 #[repr(C)]

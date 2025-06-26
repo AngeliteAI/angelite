@@ -35,7 +35,7 @@
 
 <GlassPanel
     as="aside"
-    class="newsletter-cta h-16 flex items-center p-0 overflow-hidden border-l-2 border-l-indigo-400 w-full relative"
+    class="newsletter-cta h-16 flex items-center p-0 overflow-hidden border-l-2 border-l-indigo-400 w-full "
 >
     {#if !submitted}
         <form

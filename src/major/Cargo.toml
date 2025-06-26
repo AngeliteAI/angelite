@@ -9,3 +9,6 @@ edition = "2024"
 crossterm = "*"
 libc = "0.2"
 num-traits = "*"
+
+[build-dependencies]
+which = "4.4"

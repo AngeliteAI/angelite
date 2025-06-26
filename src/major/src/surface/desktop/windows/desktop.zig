@@ -11,6 +11,8 @@ const WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFR
 const WS_VISIBLE = 0x10000000;
 
 const CS_OWNDC = 0x0020;
+const CS_HREDRAW = 0x0002;
+const CS_VREDRAW = 0x0001;
 
 const CW_USEDEFAULT = -2147483648; // 0x80000000 in signed form
 
@@ -24,13 +26,47 @@ const GWLP_USERDATA = -21;
 
 const PM_REMOVE = 0x0001;
 
+// WM_ACTIVATE constants
+const WA_INACTIVE = 0;
+const WA_ACTIVE = 1;
+const WA_CLICKACTIVE = 2;
+
 // Window messages
 const WM_CREATE = 0x0001;
 const WM_DESTROY = 0x0002;
 const WM_SIZE = 0x0005;
+const WM_ACTIVATE = 0x0006;
 const WM_SETFOCUS = 0x0007;
 const WM_KILLFOCUS = 0x0008;
 const WM_CLOSE = 0x0010;
+
+// Input messages
+const WM_KEYDOWN = 0x0100;
+const WM_KEYUP = 0x0101;
+const WM_SYSKEYDOWN = 0x0104;
+const WM_SYSKEYUP = 0x0105;
+const WM_MOUSEMOVE = 0x0200;
+const WM_LBUTTONDOWN = 0x0201;
+const WM_LBUTTONUP = 0x0202;
+const WM_RBUTTONDOWN = 0x0204;
+const WM_RBUTTONUP = 0x0205;
+const WM_MBUTTONDOWN = 0x0207;
+const WM_MBUTTONUP = 0x0208;
+const WM_MOUSEWHEEL = 0x020A;
+const WM_MOUSEHWHEEL = 0x020E;
+
+// Virtual key codes
+const VK_ESCAPE = 0x1B;
+const VK_SPACE = 0x20;
+const VK_RETURN = 0x0D;
+const VK_LEFT = 0x25;
+const VK_UP = 0x26;
+const VK_RIGHT = 0x27;
+const VK_DOWN = 0x28;
+const VK_W = 0x57;
+const VK_A = 0x41;
+const VK_S = 0x53;
+const VK_D = 0x44;
 
 // DPI awareness context
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: ?*anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -4))));
@@ -112,6 +148,9 @@ extern "user32" fn RegisterClassExA(*const WNDCLASSEXA) ATOM;
 extern "user32" fn CreateWindowExA(DWORD, [*:0]const u8, [*:0]const u8, DWORD, i32, i32, i32, i32, HWND, HMENU, HINSTANCE, ?*anyopaque) HWND;
 extern "user32" fn DestroyWindow(HWND) BOOL;
 extern "user32" fn ShowWindow(HWND, i32) BOOL;
+extern "user32" fn UpdateWindow(HWND) BOOL;
+extern "user32" fn SetForegroundWindow(HWND) BOOL;
+extern "user32" fn SetFocus(HWND) HWND;
 extern "user32" fn PeekMessageA(*MSG, HWND, UINT, UINT, UINT) BOOL;
 extern "user32" fn TranslateMessage(*const MSG) BOOL;
 extern "user32" fn DispatchMessageA(*const MSG) LRESULT;
@@ -129,11 +168,18 @@ extern "user32" fn IsWindowVisible(HWND) BOOL;
 extern "user32" fn IsIconic(HWND) BOOL;
 extern "user32" fn GetDpiForWindow(HWND) UINT;
 extern "user32" fn SetProcessDpiAwarenessContext(?*anyopaque) BOOL;
+extern "user32" fn SetCapture(HWND) HWND;
+extern "user32" fn ReleaseCapture() BOOL;
+extern "user32" fn GetCapture() HWND;
 
 // Callback function types
 pub const ResizeCallbackFn = *const fn (*anyopaque, i32, i32) callconv(.C) void;
 pub const FocusCallbackFn = *const fn (*anyopaque, bool) callconv(.C) void;
 pub const CloseCallbackFn = *const fn (*anyopaque) callconv(.C) bool;
+pub const KeyCallbackFn = *const fn (*anyopaque, u32, bool) callconv(.C) void;
+pub const MouseMoveCallbackFn = *const fn (*anyopaque, i32, i32) callconv(.C) void;
+pub const MouseButtonCallbackFn = *const fn (*anyopaque, u32, bool) callconv(.C) void;
+pub const MouseWheelCallbackFn = *const fn (*anyopaque, f32, f32) callconv(.C) void;
 
 // WindowData structure to store window state
 const WindowData = struct {
@@ -147,9 +193,14 @@ const WindowData = struct {
     focused: bool,
     minimized: bool,
     user_data: ?*anyopaque,
+    input_user_data: ?*anyopaque,  // Separate user data for input callbacks
     resize_callback: ?ResizeCallbackFn,
     focus_callback: ?FocusCallbackFn,
     close_callback: ?CloseCallbackFn,
+    key_callback: ?KeyCallbackFn,
+    mouse_move_callback: ?MouseMoveCallbackFn,
+    mouse_button_callback: ?MouseButtonCallbackFn,
+    mouse_wheel_callback: ?MouseWheelCallbackFn,
 };
 
 // Global state
@@ -184,7 +235,27 @@ fn windowProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.C
             }
             return 0;
         },
+        WM_ACTIVATE => {
+            const low_word = @as(u16, @truncate(wparam & 0xFFFF));
+            const is_active = (low_word == WA_ACTIVE or low_word == WA_CLICKACTIVE);
+            
+            std.debug.print("[WINDOW] WM_ACTIVATE: is_active={}\n", .{is_active});
+            
+            if (window_data_ptr) |_| {
+                if (is_active) {
+                    // Capture mouse when window becomes active
+                    _ = SetCapture(hwnd);
+                    std.debug.print("[WINDOW] SetCapture called\n", .{});
+                } else {
+                    // Release mouse capture when window becomes inactive
+                    _ = ReleaseCapture();
+                    std.debug.print("[WINDOW] ReleaseCapture called\n", .{});
+                }
+            }
+            return 0;
+        },
         WM_SETFOCUS => {
+            std.debug.print("[WINDOW] Got focus\n", .{});
             if (window_data_ptr) |data| {
                 data.focused = true;
 
@@ -221,6 +292,109 @@ fn windowProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.C
         WM_DESTROY => {
             return 0;
         },
+        WM_KEYDOWN, WM_SYSKEYDOWN => {
+            std.debug.print("[WINDOW] Key pressed: vk={}\n", .{wparam});
+            if (window_data_ptr) |data| {
+                if (data.key_callback) |callback| {
+                    const vk = @as(u32, @intCast(wparam));
+                    callback(data.input_user_data.?, vk, true);
+                }
+            }
+            return 0;
+        },
+        WM_KEYUP, WM_SYSKEYUP => {
+            if (window_data_ptr) |data| {
+                if (data.key_callback) |callback| {
+                    const vk = @as(u32, @intCast(wparam));
+                    callback(data.input_user_data.?, vk, false);
+                }
+            }
+            return 0;
+        },
+        WM_MOUSEMOVE => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_move_callback) |callback| {
+                    const x = @as(i32, @intCast(lparam & 0xFFFF));
+                    const y = @as(i32, @intCast((lparam >> 16) & 0xFFFF));
+                    callback(data.input_user_data.?, x, y);
+                }
+            }
+            return 0;
+        },
+        WM_LBUTTONDOWN => {
+            // Ensure we have mouse capture when button is pressed
+            if (GetCapture() != hwnd) {
+                _ = SetCapture(hwnd);
+                std.debug.print("[WINDOW] SetCapture called on LBUTTONDOWN\n", .{});
+            }
+            
+            if (window_data_ptr) |data| {
+                if (data.mouse_button_callback) |callback| {
+                    callback(data.input_user_data.?, 0, true); // 0 = left button
+                }
+            }
+            return 0;
+        },
+        WM_LBUTTONUP => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_button_callback) |callback| {
+                    callback(data.input_user_data.?, 0, false); // 0 = left button
+                }
+            }
+            return 0;
+        },
+        WM_RBUTTONDOWN => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_button_callback) |callback| {
+                    callback(data.input_user_data.?, 1, true); // 1 = right button
+                }
+            }
+            return 0;
+        },
+        WM_RBUTTONUP => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_button_callback) |callback| {
+                    callback(data.input_user_data.?, 1, false); // 1 = right button
+                }
+            }
+            return 0;
+        },
+        WM_MBUTTONDOWN => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_button_callback) |callback| {
+                    callback(data.input_user_data.?, 2, true); // 2 = middle button
+                }
+            }
+            return 0;
+        },
+        WM_MBUTTONUP => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_button_callback) |callback| {
+                    callback(data.input_user_data.?, 2, false); // 2 = middle button
+                }
+            }
+            return 0;
+        },
+        WM_MOUSEWHEEL => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_wheel_callback) |callback| {
+                    const wheel_delta = @as(i16, @truncate(@as(i32, @intCast(wparam >> 16))));
+                    const delta = @as(f32, @floatFromInt(wheel_delta)) / 120.0;
+                    callback(data.input_user_data.?, 0.0, delta);
+                }
+            }
+            return 0;
+        },
+        WM_MOUSEHWHEEL => {
+            if (window_data_ptr) |data| {
+                if (data.mouse_wheel_callback) |callback| {
+                    const wheel_delta = @as(i16, @truncate(@as(i32, @intCast(wparam >> 16))));
+                    const delta = @as(f32, @floatFromInt(wheel_delta)) / 120.0;
+                    callback(data.input_user_data.?, delta, 0.0);
+                }
+            }
+            return 0;
+        },
         else => {
             return DefWindowProcA(hwnd, msg, wparam, lparam);
         },
@@ -250,7 +424,7 @@ fn ensureWindowClassRegistered() bool {
     // Define the window class
     const wc = WNDCLASSEXA{
         .cbSize = @sizeOf(WNDCLASSEXA),
-        .style = CS_OWNDC,
+        .style = CS_OWNDC | CS_HREDRAW | CS_VREDRAW,
         .lpfnWndProc = &windowProc,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
@@ -296,9 +470,14 @@ export fn surface_create(width: i32, height: i32, title: [*:0]const u8) callconv
         .focused = false,
         .minimized = false,
         .user_data = null,
+        .input_user_data = null,
         .resize_callback = null,
         .focus_callback = null,
         .close_callback = null,
+        .key_callback = null,
+        .mouse_move_callback = null,
+        .mouse_button_callback = null,
+        .mouse_wheel_callback = null,
     };
 
     // Create the window
@@ -353,8 +532,23 @@ export fn surface_create(width: i32, height: i32, title: [*:0]const u8) callconv
 
     // Show the window
     _ = ShowWindow(hwnd, SW_SHOW);
+    _ = UpdateWindow(hwnd);
+    _ = SetForegroundWindow(hwnd);
+    _ = SetFocus(hwnd);
+    
+    // Capture mouse input for the window
+    _ = SetCapture(hwnd);
+    std.debug.print("[WINDOW] Initial SetCapture called in surface_create\n", .{});
 
     return window_data;
+}
+
+export fn surface_raw(surface: ?*anyopaque) ?*anyopaque {
+    if (surface) |ptr| {
+        const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
+        return window_data.hwnd;
+    }
+    return null;
 }
 
 export fn surface_destroy(surface: ?*anyopaque) callconv(.C) void {
@@ -559,5 +753,48 @@ export fn surface_on_close(surface: ?*anyopaque, callback: CloseCallbackFn) call
         const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
         window_data.close_callback = callback;
         window_data.user_data = surface;
+    }
+}
+
+export fn surface_on_key(surface: ?*anyopaque, callback: KeyCallbackFn) callconv(.C) void {
+    std.debug.print("[DEBUG] surface_on_key called with surface: {?}, callback: {?}\n", .{surface, callback});
+    if (surface) |ptr| {
+        const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
+        window_data.key_callback = callback;
+        std.debug.print("[DEBUG] Set key_callback to {?} on WindowData at {?}\n", .{callback, ptr});
+    } else {
+        std.debug.print("[DEBUG] surface_on_key: surface is null!\n", .{});
+    }
+}
+
+export fn surface_on_mouse_move(surface: ?*anyopaque, callback: MouseMoveCallbackFn) callconv(.C) void {
+    if (surface) |ptr| {
+        const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
+        window_data.mouse_move_callback = callback;
+    }
+}
+
+export fn surface_on_mouse_button(surface: ?*anyopaque, callback: MouseButtonCallbackFn) callconv(.C) void {
+    if (surface) |ptr| {
+        const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
+        window_data.mouse_button_callback = callback;
+    }
+}
+
+export fn surface_on_mouse_wheel(surface: ?*anyopaque, callback: MouseWheelCallbackFn) callconv(.C) void {
+    if (surface) |ptr| {
+        const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
+        window_data.mouse_wheel_callback = callback;
+    }
+}
+
+export fn surface_set_input_user_data(surface: ?*anyopaque, user_data: ?*anyopaque) callconv(.C) void {
+    std.debug.print("[DEBUG] surface_set_input_user_data called with surface: {?}, user_data: {?}\n", .{surface, user_data});
+    if (surface) |ptr| {
+        const window_data = @as(*WindowData, @ptrCast(@alignCast(ptr)));
+        window_data.input_user_data = user_data;
+        std.debug.print("[DEBUG] Set input_user_data to {?} on WindowData at {?}\n", .{user_data, ptr});
+    } else {
+        std.debug.print("[DEBUG] surface_set_input_user_data: surface is null!\n", .{});
     }
 }

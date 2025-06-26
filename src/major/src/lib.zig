@@ -17,6 +17,14 @@ pub const gfx = struct {
     pub usingnamespace vulkan;
 };
 
+// Physics functionality - GPU-accelerated physics
+pub const physx = struct {
+    pub const vk = @import("physx/vk/physx.zig");
+    
+    // Export the physics engine functions directly
+    pub usingnamespace vk;
+};
+
 // Input functionality
 
 // Engine functionality
@@ -31,6 +39,7 @@ comptime {
     // Windows components
     _ = @import("surface/desktop/windows/desktop.zig");
     _ = @import("gfx/vk/render.zig");
+    _ = @import("physx/vk/physx.zig");
 
     // Import this file to generate initialization code
     _ = @This();
@@ -52,4 +61,5 @@ test "angelite windows component tests" {
     // Run tests for all modules
     _ = @import("surface/desktop/windows/desktop.zig");
     _ = @import("gfx/vk/render.zig");
+    _ = @import("physx/vk/physx.zig");
 }

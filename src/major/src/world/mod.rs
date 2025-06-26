@@ -30,7 +30,7 @@ pub struct Entity {
 
 #[derive(Default)]
 pub struct World {
-    origin: crate::math::Vector<i64, 3>,
+    origin: crate::math::Vec3<i64>,
     entities: HashMap<EntityId, Entity>,
     cameras: Vec<(ObserverId, EntityId)>,
 }
