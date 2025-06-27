@@ -32,13 +32,30 @@ mkdir -p ${APP_DIR}
 # Copy application files
 echo -e "${YELLOW}Copying application files...${NC}"
 cp -r ${CURRENT_DIR}/* ${APP_DIR}/
-chown -R www-data:www-data ${APP_DIR}
+# Set appropriate ownership based on distribution
+if [ -f /etc/fedora-release ]; then
+    # Fedora uses apache user
+    chown -R apache:apache ${APP_DIR}
+elif [ -f /etc/debian_version ]; then
+    # Debian/Ubuntu uses www-data
+    chown -R www-data:www-data ${APP_DIR}
+fi
 
 # Install Node.js if not present
 if ! command -v node &> /dev/null; then
     echo -e "${YELLOW}Installing Node.js...${NC}"
-    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
-    apt-get install -y nodejs
+    # Detect distribution
+    if [ -f /etc/fedora-release ]; then
+        # Fedora
+        dnf install -y nodejs npm
+    elif [ -f /etc/debian_version ]; then
+        # Debian/Ubuntu
+        curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+        apt-get install -y nodejs
+    else
+        echo -e "${RED}Unsupported distribution. Please install Node.js manually.${NC}"
+        exit 1
+    fi
 fi
 
 # Copy service file
