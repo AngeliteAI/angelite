@@ -1,0 +1,32 @@
+[Unit]
+Description=Synthesis Lander Web Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/synthesis-lander
+ExecStartPre=/usr/bin/npm install --production
+ExecStartPre=/usr/bin/npm run build
+ExecStart=/usr/bin/node /opt/synthesis-lander/build
+Restart=on-failure
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=synthesis-lander
+Environment=NODE_ENV=production
+Environment=PORT=80
+Environment=HOST=0.0.0.0
+
+# Security
+NoNewPrivileges=true
+# Allow binding to port 80
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/synthesis-lander
+
+[Install]
+WantedBy=multi-user.target
