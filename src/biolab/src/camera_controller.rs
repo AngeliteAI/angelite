@@ -74,7 +74,7 @@ impl<T: PIDVec> PIDController<T> {
             kd,
             integral: T::zero(),
             last_error: T::zero(),
-            max_integral_magnitude: 1.0,
+            max_integral_magnitude: 5.0,  // Increased for better steady-state response
         }
     }
     
@@ -191,16 +191,17 @@ impl CameraController {
             target_angular_velocity: Vec3f::ZERO,
             
             // PID controllers tuned for space suit behavior
-            // P-only control for stability
-            linear_pid: PIDController::new(1.0, 0.0, 0.0),
-            angular_pid: PIDController::new(5.0, 0.0, 0.0),  // Higher gain for responsive rotation
+            // Linear: Much higher P gain for responsive feel, small I for drift compensation, negative D for damping
+            linear_pid: PIDController::new(8.0, 0.05, -0.3),
+            // Angular: Very high P gain for snappy rotation, negative D for smooth stops
+            angular_pid: PIDController::new(50.0, 0.1, -1.5),
             
             // Space Engineers-like settings
-            move_acceleration: 100.0,  // m/s²
-            max_speed: 100.0,         // m/s
+            move_acceleration: 50.0,   // m/s² - reduced for smoother acceleration
+            max_speed: 10.0,          // m/s - much more reasonable max speed
             boost_multiplier: 3.0,
             precision_multiplier: 0.25,
-            rotate_speed: 2.0,        // rad/s
+            rotate_speed: 2.0,        // rad/s - reasonable rotation speed
             
             // Physics damping (higher = more drag)
             linear_damping: 10.0,
@@ -227,9 +228,9 @@ impl CameraController {
             physx.rigidbody_friction(body, 0.5);
             physx.rigidbody_restitution(body, 0.1);
             physx.rigidbody_linear_damping(body, 0.98);
-            physx.rigidbody_angular_damping(body, 0.5);  // Reduce angular damping significantly
+            physx.rigidbody_angular_damping(body, 0.9);  // Higher angular damping to prevent spinning
             physx.rigidbody_set_half_extents(body, Vec3f::xyz(0.25, 0.25, 0.5)); // Small capsule-like shape
-            physx.rigidbody_angular_moment(body, Vec3f::xyz(0.1, 0.1, 0.1)); // Lower moment of inertia for easier rotation
+            physx.rigidbody_angular_moment(body, Vec3f::xyz(0.5, 0.5, 0.5)); // Moderate moment of inertia
             physx.rigidbody_center_of_mass(body, Vec3f::ZERO); // Center of mass at body origin
             
             // Set initial position and orientation
@@ -341,8 +342,13 @@ impl CameraController {
                      self.target_velocity[0], self.target_velocity[1], self.target_velocity[2], self.target_velocity.length());
         }
         
-        // Camera rotation - Calculate desired angular velocity in LOCAL space
-        let mut desired_angular_velocity_local = Vec3f::ZERO;
+        // Camera rotation - Calculate desired angular velocity in WORLD space
+        let mut desired_angular_velocity = Vec3f::ZERO;
+        
+        // Get camera's local axes in world space
+        let camera_right = self.rotation * Vec3f::X;   // X axis (right)
+        let camera_forward = self.rotation * Vec3f::Y; // Y axis (forward)
+        let camera_up = self.rotation * Vec3f::Z;      // Z axis (up)
         
         // Mouse look
         if let Some(last_pos) = self.last_mouse_pos {
@@ -353,11 +359,11 @@ impl CameraController {
             if delta_x.abs() > 0.1 || delta_y.abs() > 0.1 {
                 println!("Ignoring large mouse delta: ({:.3}, {:.3})", delta_x, delta_y);
             } else if delta_x.abs() > 0.0001 || delta_y.abs() > 0.0001 {
-                // Yaw (around local Z axis)
-                desired_angular_velocity_local[2] = -delta_x * self.mouse_sensitivity;
+                // Yaw (around camera's local up axis)
+                desired_angular_velocity += camera_up * (-delta_x * self.mouse_sensitivity);
                 
-                // Pitch (around local X axis)
-                desired_angular_velocity_local[0] = -delta_y * self.mouse_sensitivity;
+                // Pitch (around camera's local right axis)
+                desired_angular_velocity += camera_right * (-delta_y * self.mouse_sensitivity);
             }
         }
         self.last_mouse_pos = Some(cursor_pos);
@@ -375,30 +381,29 @@ impl CameraController {
         let look_v = self.apply_deadzone(raw_look_v);
         
         if look_h.abs() > 0.001 || look_v.abs() > 0.001 {
-            // Yaw (around local Z axis)
-            desired_angular_velocity_local[2] = look_h * self.rotate_speed;
+            // Yaw (around camera's local up axis) - negate for correct direction
+            desired_angular_velocity += camera_up * (-look_h * self.rotate_speed);
             
-            // Pitch (around local X axis)
-            desired_angular_velocity_local[0] = look_v * self.rotate_speed;
+            // Pitch (around camera's local right axis) - negate for correct direction
+            desired_angular_velocity += camera_right * (-look_v * self.rotate_speed);
             
-            println!("Right stick after deadzone: h={:.3}, v={:.3}, angular_vel_local: [{:.3}, {:.3}, {:.3}]", 
-                     look_h, look_v, desired_angular_velocity_local[0], desired_angular_velocity_local[1], desired_angular_velocity_local[2]);
+            println!("Right stick after deadzone: h={:.3}, v={:.3}", look_h, look_v);
+            println!("  Camera axes - Right: [{:.2}, {:.2}, {:.2}] Up: [{:.2}, {:.2}, {:.2}]",
+                     camera_right[0], camera_right[1], camera_right[2],
+                     camera_up[0], camera_up[1], camera_up[2]);
         }
         
         // Roll control (Q/E keys - using cursor pos for now as a hack)
         // TODO: Map to proper Q/E keys when available
         if cursor_pos.0 < -0.8 {
-            // Roll left
-            desired_angular_velocity_local[1] -= self.rotate_speed * 0.5; // Roll around Y (forward) axis
+            // Roll left (around camera's forward axis)
+            desired_angular_velocity += camera_forward * (-self.rotate_speed * 0.5);
         } else if cursor_pos.0 > 0.8 {
-            // Roll right  
-            desired_angular_velocity_local[1] += self.rotate_speed * 0.5;
+            // Roll right (around camera's forward axis)
+            desired_angular_velocity += camera_forward * (self.rotate_speed * 0.5);
         }
         
-        // Convert local angular velocity to world space
-        let desired_angular_velocity = self.rotation * desired_angular_velocity_local;
-        
-        // Update target angular velocity
+        // Update target angular velocity (already in world space)
         self.target_angular_velocity = desired_angular_velocity;
         
         // Apply physics-based control through PID
@@ -407,8 +412,9 @@ impl CameraController {
         if let Some(physx) = engine.physx() {
             if let Some(body) = self.physics_body {
                 // Get current velocities from physics for PID feedback
-                let current_velocity = physx.rigidbody_get_linear_velocity(body);
-                let current_angular_velocity = physx.rigidbody_get_angular_velocity(body);
+                // IMPORTANT: Physics returns position/orientation differences, we need to divide by dt
+                let current_velocity = physx.rigidbody_get_linear_velocity(body) / delta_time;
+                let current_angular_velocity = physx.rigidbody_get_angular_velocity(body) / delta_time;
                 
                 // Update our cached velocities
                 self.velocity = current_velocity;
@@ -432,6 +438,17 @@ impl CameraController {
                     println!("  Angular vel: current=[{:.3}, {:.3}, {:.3}] target=[{:.3}, {:.3}, {:.3}]",
                              current_angular_velocity[0], current_angular_velocity[1], current_angular_velocity[2],
                              self.target_angular_velocity[0], self.target_angular_velocity[1], self.target_angular_velocity[2]);
+                    
+                    // Log which axis we're rotating around
+                    if self.target_angular_velocity[2].abs() > 0.01 {
+                        println!("  Yawing around Z axis (world up)");
+                    }
+                    if self.target_angular_velocity[0].abs() > 0.01 {
+                        println!("  Pitching around X axis");
+                    }
+                    if self.target_angular_velocity[1].abs() > 0.01 {
+                        println!("  Rolling around Y axis");
+                    }
                 }
                 
                 // Apply forces and torques through physics
@@ -446,12 +463,37 @@ impl CameraController {
                 physx.step(delta_time);
                 
                 // Read back state from physics
+                let position_before_physics = self.position;
                 self.position = physx.rigidbody_get_position(body);
                 self.rotation = physx.rigidbody_get_orientation(body);
                 
-                // Update velocities from physics
-                self.velocity = physx.rigidbody_get_linear_velocity(body);
-                self.angular_velocity = physx.rigidbody_get_angular_velocity(body);
+                // Check if position changed during rotation
+                if self.target_angular_velocity.length() > 0.01 && self.target_velocity.length() < 0.01 {
+                    let position_drift = (self.position - position_before_physics).length();
+                    if position_drift > 0.001 {
+                        println!("WARNING: Camera position drifted during pure rotation!");
+                        println!("  Pre-step pos: [{:.3}, {:.3}, {:.3}]", position_before_physics[0], position_before_physics[1], position_before_physics[2]);
+                        println!("  Post-step pos: [{:.3}, {:.3}, {:.3}]", self.position[0], self.position[1], self.position[2]);
+                        println!("  Drift: {:.3} units", position_drift);
+                        
+                        // Check if we're orbiting around origin
+                        let pre_angle = position_before_physics[1].atan2(position_before_physics[0]);
+                        let post_angle = self.position[1].atan2(self.position[0]);
+                        let angle_diff = (post_angle - pre_angle).to_degrees();
+                        if angle_diff.abs() > 0.1 {
+                            println!("  ORBITING: Angle around Z axis changed by {:.2}°", angle_diff);
+                        }
+                        
+                        // WORKAROUND: Correct the position drift
+                        self.position = position_before_physics;
+                        physx.rigidbody_reposition(body, self.position);
+                        println!("  Corrected position back to: [{:.3}, {:.3}, {:.3}]", self.position[0], self.position[1], self.position[2]);
+                    }
+                }
+                
+                // Update velocities from physics (divide by dt as per physics engine API)
+                self.velocity = physx.rigidbody_get_linear_velocity(body) / delta_time;
+                self.angular_velocity = physx.rigidbody_get_angular_velocity(body) / delta_time;
                 
                 // Log collisions
                 let expected_position = old_position + self.target_velocity * delta_time;
@@ -520,24 +562,50 @@ impl CameraController {
     }
     
     pub fn get_view_matrix(&self) -> [f32; 16] {
-        // Our coordinate system:
-        // - X+ is East (right)
-        // - Y+ is North (forward)
-        // - Z+ is Up
+        // Build view matrix manually to ensure correct order
+        // View matrix transforms from world space to camera space
         
-        // Standard view matrix expects camera to look down -Z
-        // But our camera's Y axis is forward, so we need to rotate -90° around X
-        // to align Y forward with -Z view direction
+        // Get camera basis vectors in world space
+        let right = self.rotation * Vec3f::X;      // Camera X axis
+        let forward = self.rotation * Vec3f::Y;    // Camera Y axis (forward)
+        let up = self.rotation * Vec3f::Z;         // Camera Z axis (up)
         
-        // Create view matrix by inverting the camera transform
-        let mat = Mat4f::from_rotation_translation(self.rotation, self.position).inverse();
+        // Standard graphics convention: camera looks down -Z in view space
+        // Our camera looks along +Y, so we need to remap:
+        // Camera Y (forward) -> View -Z
+        // Camera X (right) -> View X
+        // Camera Z (up) -> View Y
         
-        // Apply -90 degree rotation around X to convert from Y-forward to Z-forward view space
-        let pitch_neg90_quat = Quat::from_rotation_x(-std::f32::consts::PI / 2.0);
-        let pitch_neg90_mat = Mat4f::from_quat(pitch_neg90_quat);
-        let final_mat = pitch_neg90_mat * mat;
+        // Build rotation part of view matrix (transpose of camera orientation)
+        let mut view = Mat4f::identity();
         
-        final_mat.to_cols_array()
+        // First row: maps world to camera's right (X)
+        view[(0, 0)] = right[0];
+        view[(0, 1)] = right[1];
+        view[(0, 2)] = right[2];
+        
+        // Second row: maps world to camera's up (Z -> view Y)
+        view[(1, 0)] = up[0];
+        view[(1, 1)] = up[1];
+        view[(1, 2)] = up[2];
+        
+        // Third row: maps world to -forward (Y -> view -Z)
+        view[(2, 0)] = -forward[0];
+        view[(2, 1)] = -forward[1];
+        view[(2, 2)] = -forward[2];
+        
+        // Translation part: -R^T * position
+        let trans = Vec3f::xyz(
+            -right.dot(self.position),
+            -up.dot(self.position),
+            forward.dot(self.position)  // Positive because we negated forward above
+        );
+        
+        view[(0, 3)] = trans[0];
+        view[(1, 3)] = trans[1];
+        view[(2, 3)] = trans[2];
+        
+        view.to_cols_array()
     }
     
     pub fn get_position(&self) -> Vec3f {

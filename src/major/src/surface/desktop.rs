@@ -54,7 +54,7 @@ impl Surface for Desktop {
 
 impl Desktop {
     pub fn open() -> Self {
-        let surface = unsafe { surface_create(800, 600, b"Major\0".as_ptr() as *const _) };
+        let surface = unsafe { surface_create(800, 600, b"Synthesis\0".as_ptr() as *const _) };
         Desktop { 
             surface,
             input_system: None,

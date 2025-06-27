@@ -133,7 +133,7 @@ pub fn main() {
     gfx.camera_set_transform(camera, &camera_controller.get_view_matrix());
     gfx.camera_set_main(camera);
     
-    let cube_body = if has_physics {
+    let _cube_body = if has_physics {
         let physx = engine.physx().unwrap();
         let body = physx.rigidbody_create();
         if !body.is_null() {
