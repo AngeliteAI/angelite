@@ -5,9 +5,10 @@ layout(points) in;
 layout(triangle_strip, max_vertices = 4) out;
 
 // Inputs from vertex shader
-layout(location = 0) in vec3 voxelCenter[];
-layout(location = 1) in uint faceDir[];
-layout(location = 2) in vec4 voxelColor[];
+layout(location = 0) in vec3 facePosition[];   // Bottom-left corner of face
+layout(location = 1) in vec2 faceSize[];       // Width and height of face
+layout(location = 2) in uint faceDir[];        // Face direction
+layout(location = 3) in vec4 faceColor[];      // Face color
 
 // Outputs to fragment shader
 layout(location = 0) out vec3 fragPosition;
@@ -21,16 +22,15 @@ layout(push_constant) uniform PushConstants {
 } pushConstants;
 
 void main() {
-    vec3 center = voxelCenter[0];
+    vec3 basePos = facePosition[0];
+    vec2 size = faceSize[0];
     uint dir = faceDir[0];
-    vec4 color = voxelColor[0];
+    vec4 color = faceColor[0];
     
     // Define face normals and tangent vectors
     vec3 normal;
     vec3 right;
     vec3 up;
-    
-    float voxelSize = 0.5; // Half-size of voxel
     
     // Calculate face normal and tangent vectors based on direction
     if (dir == 0u) {        // +X face
@@ -59,15 +59,12 @@ void main() {
         up = vec3(0.0, 1.0, 0.0);
     }
     
-    // Calculate the face center (offset from voxel center by normal * voxelSize)
-    vec3 faceCenter = center + normal * voxelSize;
-    
-    // Generate 4 vertices for the quad (triangle strip order)
+    // Generate 4 vertices for the quad based on face size
     vec3 positions[4];
-    positions[0] = faceCenter - right * voxelSize - up * voxelSize; // Bottom-left
-    positions[1] = faceCenter + right * voxelSize - up * voxelSize; // Bottom-right
-    positions[2] = faceCenter - right * voxelSize + up * voxelSize; // Top-left
-    positions[3] = faceCenter + right * voxelSize + up * voxelSize; // Top-right
+    positions[0] = basePos;                                          // Bottom-left
+    positions[1] = basePos + right * size.x;                        // Bottom-right  
+    positions[2] = basePos + up * size.y;                           // Top-left
+    positions[3] = basePos + right * size.x + up * size.y;          // Top-right
     
     // Emit vertices in triangle strip order
     for (int i = 0; i < 4; i++) {

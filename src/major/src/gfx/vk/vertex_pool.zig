@@ -38,23 +38,28 @@ pub const DrawCommand = struct {
     }
 };
 
-/// Vertex definition for voxel faces - each vertex represents one voxel face
-pub const Vertex = struct {
-    position: [3]f32, // Voxel center position
-    normal_dir: u32, // Face direction: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z
-    color: [4]f32, // Face color
+/// Vertex definition for greedy meshed voxel faces
+/// Must match the Rust VoxelVertex struct exactly
+pub const Vertex = extern struct {
+    position: [3]f32,     // Bottom-left corner of face - 12 bytes
+    size: [2]f32,         // Width and height of face (in voxels) - 8 bytes
+    normal_dir: u32,      // Face direction: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z - 4 bytes
+    color: [4]f32,        // Face color - 16 bytes
+    // Total: 40 bytes
 
-    pub fn init(pos: [3]f32, normal_direction: u32, col: [4]f32) Vertex {
+    pub fn init(pos: [3]f32, face_size: [2]f32, normal_direction: u32, col: [4]f32) Vertex {
         return .{
             .position = pos,
+            .size = face_size,
             .normal_dir = normal_direction,
             .color = col,
         };
     }
 
-    pub fn initWithRgb(pos: [3]f32, normal_direction: u32, col: [3]f32) Vertex {
+    pub fn initWithRgb(pos: [3]f32, face_size: [2]f32, normal_direction: u32, col: [3]f32) Vertex {
         return .{
             .position = pos,
+            .size = face_size,
             .normal_dir = normal_direction,
             .color = .{ col[0], col[1], col[2], 1.0 },
         };
@@ -70,26 +75,42 @@ pub const Vertex = struct {
     }
 
     /// Create the vertex attribute descriptions
-    pub fn getAttributeDescriptions() [3]vk.VertexInputAttributeDescription {
+    pub fn getAttributeDescriptions() [4]vk.VertexInputAttributeDescription {
+        // Debug: Print actual offsets
+        std.debug.print("Vertex layout offsets: position={}, size={}, normal_dir={}, color={}, total_size={}\n", .{
+            @offsetOf(Vertex, "position"),
+            @offsetOf(Vertex, "size"),
+            @offsetOf(Vertex, "normal_dir"),
+            @offsetOf(Vertex, "color"),
+            @sizeOf(Vertex),
+        });
+        
         return .{
-            // Position (voxel center)
+            // Position (bottom-left corner of face) - offset 0
             .{
                 .binding = 0,
                 .location = 0,
                 .format = .r32g32b32_sfloat,
                 .offset = @offsetOf(Vertex, "position"),
             },
-            // Normal direction (integer)
+            // Size (width and height) - offset 12
             .{
                 .binding = 0,
                 .location = 1,
-                .format = .r32_uint,
-                .offset = @offsetOf(Vertex, "normal_dir"),
+                .format = .r32g32_sfloat,
+                .offset = @offsetOf(Vertex, "size"),
             },
-            // Color
+            // Normal direction (integer) - offset 20
             .{
                 .binding = 0,
                 .location = 2,
+                .format = .r32_uint,
+                .offset = @offsetOf(Vertex, "normal_dir"),
+            },
+            // Color - offset 24
+            .{
+                .binding = 0,
+                .location = 3,
                 .format = .r32g32b32a32_sfloat,
                 .offset = @offsetOf(Vertex, "color"),
             },
@@ -319,7 +340,11 @@ pub const VertexPool = struct {
         position: [3]f32,
         group: u32,
     ) !*u32 {
+        std.debug.print("addDrawCommand: buffer_idx={}, vertex_count={}, position=[{:.2},{:.2},{:.2}], group={}\n", 
+            .{buffer_idx, vertex_count, position[0], position[1], position[2], group});
+        
         if (self.draw_commands.items.len >= self.max_draw_commands) {
+            std.debug.print("ERROR: Too many draw commands ({} >= {})\n", .{self.draw_commands.items.len, self.max_draw_commands});
             return error.TooManyDrawCommands;
         }
 
@@ -338,10 +363,28 @@ pub const VertexPool = struct {
 
         try self.draw_commands.append(cmd);
         self.effective_draws = self.draw_commands.items.len;
+        
+        std.debug.print("addDrawCommand SUCCESS: created command index {}, effective_draws now = {}\n", 
+            .{index_ptr.*, self.effective_draws});
 
         return index_ptr;
     }
 
+    /// Update the vertex count for an existing draw command
+    pub fn updateDrawCommandVertexCount(self: *VertexPool, command_index_ptr: *u32, new_vertex_count: u32) void {
+        const command_idx = command_index_ptr.*;
+        
+        std.debug.print("Updating draw command {} vertex count to {}\n", .{command_idx, new_vertex_count});
+        
+        if (command_idx < self.draw_commands.items.len) {
+            std.debug.print("Old vertex count: {}\n", .{self.draw_commands.items[command_idx].index_count});
+            self.draw_commands.items[command_idx].index_count = new_vertex_count;
+            std.debug.print("New vertex count: {}\n", .{self.draw_commands.items[command_idx].index_count});
+        } else {
+            std.debug.print("ERROR: Command index {} out of bounds (max: {})\n", .{command_idx, self.draw_commands.items.len});
+        }
+    }
+    
     /// Release a buffer and its draw command
     pub fn releaseBuffer(self: *VertexPool, buffer_idx: u32, command_index_ptr: *u32) !void {
         const command_idx = command_index_ptr.*;
@@ -386,6 +429,14 @@ pub const VertexPool = struct {
         const data_size = @sizeOf(Vertex) * vertices.len;
         @memcpy(@as([*]u8, @ptrCast(@alignCast(stage.mapped_memory.?)))[0..data_size], std.mem.sliceAsBytes(vertices));
         stage.used = @intCast(vertices.len);
+        
+        // Flush the memory to ensure GPU sees the updates
+        const flush_range = vk.MappedMemoryRange{
+            .memory = stage.memory,
+            .offset = 0,
+            .size = vk.WHOLE_SIZE,
+        };
+        _ = self.dispatch.vkFlushMappedMemoryRanges.?(self.device, 1, &[_]vk.MappedMemoryRange{flush_range});
     }
 
     /// Update only position data for a specific buffer
@@ -411,25 +462,25 @@ pub const VertexPool = struct {
         }
     }
 
-    /// Update only normal data for a specific buffer
-    pub fn updateNormalData(self: *VertexPool, buffer_idx: u32, normals: []const [3]f32) !void {
+    /// Update only normal direction data for a specific buffer
+    pub fn updateNormalDirData(self: *VertexPool, buffer_idx: u32, normal_dirs: []const u32) !void {
         if (buffer_idx >= self.stage_buffers.items.len) {
             return error.InvalidBufferIndex;
         }
 
         const stage = &self.stage_buffers.items[buffer_idx];
 
-        if (normals.len > stage.used) {
+        if (normal_dirs.len > stage.used) {
             return error.TooManyVertices;
         }
 
         // Get existing vertices
         const dest_vertices = @as([*]Vertex, @ptrCast(stage.mapped_memory.?))[0..stage.used];
 
-        // Update only normal data
-        for (normals, 0..) |norm, i| {
+        // Update only normal direction data
+        for (normal_dirs, 0..) |dir, i| {
             if (i < dest_vertices.len) {
-                dest_vertices[i].normal = norm;
+                dest_vertices[i].normal_dir = dir;
             }
         }
     }
@@ -510,6 +561,11 @@ pub const VertexPool = struct {
         }
 
         std.debug.print("VertexPool render: {} effective draws, {} total commands\n", .{ self.effective_draws, self.draw_commands.items.len });
+        
+        // Debug: Print all draw commands
+        for (self.draw_commands.items, 0..) |cmd, i| {
+            std.debug.print("  Draw command {}: vertex_count={}, vertex_offset={}\n", .{i, cmd.index_count, cmd.vertex_offset});
+        }
 
         // Bind the pipeline
         _ = self.dispatch.vkCmdBindPipeline.?(command_buffer, .graphics, pipeline);

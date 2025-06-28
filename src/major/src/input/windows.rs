@@ -177,7 +177,7 @@ impl InputState {
         
         // Space Engineers-style bindings
         bindings.insert(Binding::Select, vec![Button::ButtonA, Button::KeyEnter]);
-        bindings.insert(Binding::Escape, vec![Button::ButtonB, Button::KeyEscape]);
+        bindings.insert(Binding::Escape, vec![Button::ButtonMenu, Button::ButtonB, Button::KeyEscape]);
         bindings.insert(Binding::Jump, vec![Button::ButtonA, Button::KeySpace]);  // A button or Space for jump/jetpack
         bindings.insert(Binding::Sprint, vec![Button::ButtonLTrigger, Button::KeyShift]);  // Left trigger or Shift for sprint
         bindings.insert(Binding::Use, vec![Button::ButtonX, Button::KeyF, Button::MouseLeft]);  // X button, F or left click for use/interact
@@ -431,14 +431,26 @@ impl InputState {
     
     fn update_gamepad_button(&mut self, gamepad: &XInputGamepad, mask: u16, button: Button) {
         let pressed = (gamepad.buttons & mask) != 0;
-        let last_pressed = if let Some(last_gamepad) = &self.last_gamepad_state {
-            (last_gamepad.buttons & mask) != 0
-        } else {
-            false
-        };
         
-        if pressed != last_pressed {
-            self.set_button_state(button, pressed);
+        if pressed {
+            // If button is pressed, set appropriate state
+            match self.buttons.get(&button) {
+                None | Some(ButtonState::Released) => {
+                    self.set_button_state(button, true);
+                }
+                Some(ButtonState::Pressed) => {
+                    // Transition from Pressed to Held
+                    self.buttons.insert(button, ButtonState::Held);
+                }
+                Some(ButtonState::Held) => {
+                    // Keep as Held
+                }
+            }
+        } else {
+            // Button not pressed, set to Released
+            if self.buttons.get(&button) != Some(&ButtonState::Released) {
+                self.set_button_state(button, false);
+            }
         }
     }
     
@@ -488,18 +500,32 @@ impl InputState {
                     // Handle special cases for vertical movement and roll
                     match binding {
                         Binding::MoveUpDown => {
-                            // Right trigger for up, left trigger for down (Space Engineers jetpack)
-                            let up = if self.is_button_held(Button::ButtonRTrigger) { 1.0 } else { 0.0 };
-                            let down = if self.is_button_held(Button::ButtonLTrigger) { -1.0 } else { 0.0 };
-                            Data { scalar: up + down }
+                            // Right bumper + left stick Y for vertical movement
+                            if self.is_button_held(Button::ButtonRShoulder) {
+                                if let Some(left_stick) = self.axes.get(&Axis::LeftJoystick) {
+                                    // Use left stick Y axis for up/down when right bumper is held
+                                    Data { scalar: -left_stick.y }  // Negate because stick up is negative
+                                } else {
+                                    Data { scalar: 0.0 }
+                                }
+                            } else {
+                                Data { scalar: 0.0 }
+                            }
                         }
                         Binding::Roll => {
-                            // Q/E for roll or bumpers
-                            let left = if self.is_button_held(Button::KeyQ) || 
-                                         self.is_button_held(Button::ButtonLShoulder) { -1.0 } else { 0.0 };
-                            let right = if self.is_button_held(Button::KeyE) || 
-                                          self.is_button_held(Button::ButtonRShoulder) { 1.0 } else { 0.0 };
-                            Data { scalar: left + right }
+                            // Use right stick X-axis for roll only when left bumper is held
+                            if self.is_button_held(Button::ButtonLShoulder) {
+                                if let Some(right_stick) = self.axes.get(&Axis::RightJoystick) {
+                                    Data { scalar: right_stick.x }
+                                } else {
+                                    Data { scalar: 0.0 }
+                                }
+                            } else {
+                                // Q/E for keyboard roll
+                                let left = if self.is_button_held(Button::KeyQ) { -1.0 } else { 0.0 };
+                                let right = if self.is_button_held(Button::KeyE) { 1.0 } else { 0.0 };
+                                Data { scalar: left + right }
+                            }
                         }
                         Binding::Cursor => Data { pos: (0.0, 0.0) },
                         _ => Data { scalar: 0.0 },

@@ -136,7 +136,8 @@ pub export fn renderer_update_normals(
     vertex_count: u32,
 ) bool {
     if (renderer) |r| {
-        // Convert raw normals pointer to slice of Vertex (contains position, normal, color)
+        // The input is actually full vertex data, not just normals
+        // Convert raw pointer to slice of Vertex structs
         const vertices_bytes = @as([*]const u8, @ptrCast(normals_ptr))[0 .. vertex_count * @sizeOf(vertex_pool.Vertex)];
         const vertices = std.mem.bytesAsSlice(vertex_pool.Vertex, vertices_bytes);
 
@@ -159,6 +160,22 @@ pub export fn renderer_update_normals(
     return false;
 }
 
+pub export fn renderer_update_draw_command_vertex_count(
+    renderer: ?*Renderer,
+    command_index_ptr: ?*u32,
+    vertex_count: u32,
+) bool {
+    if (renderer) |r| {
+        if (command_index_ptr) |ptr| {
+            if (r.vertex_pool) |*pool| {
+                pool.updateDrawCommandVertexCount(ptr, vertex_count);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 pub export fn renderer_update_colors(
     renderer: ?*Renderer,
     buffer_idx: u32,
@@ -166,7 +183,8 @@ pub export fn renderer_update_colors(
     vertex_count: u32,
 ) bool {
     if (renderer) |r| {
-        // Convert raw colors pointer to slice of Vertex (contains position, normal, color)
+        // The input is actually full vertex data, not just colors
+        // Convert raw pointer to slice of Vertex structs
         const vertices_bytes = @as([*]const u8, @ptrCast(colors_ptr))[0 .. vertex_count * @sizeOf(vertex_pool.Vertex)];
         const vertices = std.mem.bytesAsSlice(vertex_pool.Vertex, vertices_bytes);
 
@@ -1210,26 +1228,33 @@ pub const Renderer = struct {
             .input_rate = .vertex,
         };
 
-        // Position attribute
+        // Vertex attributes must match shader expectations
         const vertex_input_attribute_descriptions = [_]vk.VertexInputAttributeDescription{
-            // Position
+            // Position (bottom-left corner of face)
             .{
                 .binding = 0,
                 .location = 0,
                 .format = .r32g32b32_sfloat,
                 .offset = @offsetOf(vertex_pool.Vertex, "position"),
             },
-            // Normal direction
+            // Size (width and height of face)
             .{
                 .binding = 0,
                 .location = 1,
+                .format = .r32g32_sfloat,
+                .offset = @offsetOf(vertex_pool.Vertex, "size"),
+            },
+            // Normal direction
+            .{
+                .binding = 0,
+                .location = 2,
                 .format = .r32_uint,
                 .offset = @offsetOf(vertex_pool.Vertex, "normal_dir"),
             },
             // Color
             .{
                 .binding = 0,
-                .location = 2,
+                .location = 3,
                 .format = .r32g32b32a32_sfloat,
                 .offset = @offsetOf(vertex_pool.Vertex, "color"),
             },

@@ -25,9 +25,10 @@ fn compile_shaders() {
     // Define shader directories
     let gfx_shader_dir = manifest_dir.join("src/gfx/vk");
     let physx_shader_dir = manifest_dir.join("src/physx/vk");
+    let worldgen_shader_dir = manifest_dir.join("src/universe/worldgen/vk");
     
     // Tell Cargo to rerun if any .glsl file changes
-    for shader_dir in &[gfx_shader_dir, physx_shader_dir] {
+    for shader_dir in &[gfx_shader_dir, physx_shader_dir, worldgen_shader_dir] {
         if shader_dir.exists() {
             for entry in fs::read_dir(shader_dir).unwrap() {
                 if let Ok(entry) = entry {
@@ -104,6 +105,7 @@ fn compile_shaders() {
     let shader_dirs = vec![
         manifest_dir.join("src/gfx/vk"),
         manifest_dir.join("src/physx/vk"),
+        manifest_dir.join("src/universe/worldgen/vk"),
     ];
     let output_shader_dir = out_dir.join("shaders");
     fs::create_dir_all(&output_shader_dir).unwrap();
@@ -159,6 +161,7 @@ fn compile_shaders() {
                 let compile_status = Command::new(&glslc_path)
                     .args(&[
                         &format!("-fshader-stage={}", stage),
+                        "--target-spv=spv1.3",
                         "-o", output_path.to_str().unwrap(),
                         shader_path.to_str().unwrap(),
                     ])

@@ -32,6 +32,7 @@ pub trait Gfx {
     fn mesh_update_normal_dirs(&self, mesh: *const Mesh, normal_dirs: &[u32]);
     fn mesh_update_albedo(&self, mesh: *const Mesh, colors: &[Color]);
     fn mesh_update_indices(&self, mesh: *const Mesh, indices: &[Index]);
+    fn mesh_update_face_sizes(&self, mesh: *const Mesh, sizes: &[[f32; 2]]);
 
     fn batch_create(&self) -> *const Batch;
     fn batch_destroy(&self, batch: *const Batch);

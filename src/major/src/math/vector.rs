@@ -225,6 +225,76 @@ impl<const N: usize> Vector<f32, N> {
     pub fn lerp(self, other: Self, t: f32) -> Self {
         self * (1.0 - t) + other * t
     }
+    
+    /// Absolute value of each component
+    #[inline]
+    pub fn abs(self) -> Self {
+        let mut result = self;
+        for i in 0..N {
+            result.0[i] = self.0[i].abs();
+        }
+        result
+    }
+    
+    /// Component-wise maximum
+    #[inline]
+    pub fn max(self, other: Self) -> Self {
+        let mut result = self;
+        for i in 0..N {
+            result.0[i] = self.0[i].max(other.0[i]);
+        }
+        result
+    }
+    
+    /// Component-wise minimum
+    #[inline]
+    pub fn min(self, other: Self) -> Self {
+        let mut result = self;
+        for i in 0..N {
+            result.0[i] = self.0[i].min(other.0[i]);
+        }
+        result
+    }
+    
+    /// Round each component
+    #[inline]
+    pub fn round(self) -> Self {
+        let mut result = self;
+        for i in 0..N {
+            result.0[i] = self.0[i].round();
+        }
+        result
+    }
+    
+    /// Floor each component
+    #[inline]
+    pub fn floor(self) -> Self {
+        let mut result = self;
+        for i in 0..N {
+            result.0[i] = self.0[i].floor();
+        }
+        result
+    }
+    
+    /// Get the minimum element
+    #[inline]
+    pub fn min_element(self) -> f32 {
+        let mut min = self.0[0];
+        for i in 1..N {
+            min = min.min(self.0[i]);
+        }
+        min
+    }
+    
+    /// Get the maximum element
+    #[inline]
+    pub fn max_element(self) -> f32 {
+        let mut max = self.0[0];
+        for i in 1..N {
+            max = max.max(self.0[i]);
+        }
+        max
+    }
 }
 
 // Cross product for 3D vectors
@@ -239,6 +309,24 @@ where
             self.0[2] * rhs.0[0] - self.0[0] * rhs.0[2],
             self.0[0] * rhs.0[1] - self.0[1] * rhs.0[0],
         ])
+    }
+}
+
+// Convenience accessors for Vec3
+impl<T: Copy> Vec3<T> {
+    #[inline]
+    pub fn x(&self) -> T {
+        self.0[0]
+    }
+    
+    #[inline]
+    pub fn y(&self) -> T {
+        self.0[1]
+    }
+    
+    #[inline]
+    pub fn z(&self) -> T {
+        self.0[2]
     }
 }
 

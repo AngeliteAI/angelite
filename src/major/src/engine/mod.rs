@@ -10,14 +10,16 @@ pub mod windows;
 pub enum Type {
     #[cfg(target_os = "macos")]
     Mac,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     Windows,
 }
 
 pub const fn default_platform_type() -> Type {
     #[cfg(target_os = "macos")]
     return Type::Mac;
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    return Type::Windows;
+    #[cfg(target_os = "linux")]
     return Type::Windows;
 }
 static mut ENGINE_TYPE: Type = default_platform_type();
@@ -43,7 +45,7 @@ pub fn mac() -> EngineCell {
         engine: Some(Box::new(mac::Engine::init())),
     }
 }
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub fn windows() -> EngineCell {
     EngineCell {
         engine: Some(Box::new(windows::Engine::init())),
@@ -64,7 +66,7 @@ pub fn engine() -> &'static mut dyn Engine {
             ENGINE = match ENGINE_TYPE {
                 #[cfg(target_os = "macos")]
                 Type::Mac => mac(),
-                #[cfg(target_os = "windows")]
+                #[cfg(any(target_os = "windows", target_os = "linux"))]
                 Type::Windows => windows(),
             };
         }

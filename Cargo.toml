@@ -1,5 +1,5 @@
 [workspace]
-members = [ "src/biolab", "src/backend", "src/span"]
+members = [ "src/synthesis", "src/backend", "src/span"]
 
 [profile.release]
 panic = 'abort'

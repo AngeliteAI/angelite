@@ -7,6 +7,7 @@ use crate::{
     physx::{Physx, vk::VulkanAccel},
 };
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use crate::input::windows::{InputSystem, key_callback, mouse_move_callback, mouse_button_callback, mouse_wheel_callback};
 
 pub struct Engine {

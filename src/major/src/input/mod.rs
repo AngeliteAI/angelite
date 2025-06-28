@@ -6,7 +6,7 @@ pub mod controller {
 }
 
 // Platform-specific input modules
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub mod windows;
 
 #[cfg(target_os = "macos")]
@@ -60,7 +60,7 @@ pub trait InputHandler {
 }
 
 // Re-export platform-specific implementations
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 pub use windows::{InputSystem, InputState};
 
 #[cfg(target_os = "macos")]

@@ -39,6 +39,7 @@ const WM_ACTIVATE = 0x0006;
 const WM_SETFOCUS = 0x0007;
 const WM_KILLFOCUS = 0x0008;
 const WM_CLOSE = 0x0010;
+const WM_SYSCOMMAND = 0x0112;
 
 // Input messages
 const WM_KEYDOWN = 0x0100;
@@ -144,6 +145,7 @@ const CREATESTRUCTA = extern struct {
 
 // Win32 API function declarations
 extern "user32" fn GetModuleHandleA(?[*:0]const u8) HINSTANCE;
+extern "user32" fn LoadCursorA(hInstance: HINSTANCE, lpCursorName: ?*const anyopaque) HCURSOR;
 extern "user32" fn RegisterClassExA(*const WNDCLASSEXA) ATOM;
 extern "user32" fn CreateWindowExA(DWORD, [*:0]const u8, [*:0]const u8, DWORD, i32, i32, i32, i32, HWND, HMENU, HINSTANCE, ?*anyopaque) HWND;
 extern "user32" fn DestroyWindow(HWND) BOOL;
@@ -241,15 +243,10 @@ fn windowProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.C
             
             std.debug.print("[WINDOW] WM_ACTIVATE: is_active={}\n", .{is_active});
             
-            if (window_data_ptr) |_| {
-                if (is_active) {
-                    // Capture mouse when window becomes active
-                    _ = SetCapture(hwnd);
-                    std.debug.print("[WINDOW] SetCapture called\n", .{});
-                } else {
-                    // Release mouse capture when window becomes inactive
-                    _ = ReleaseCapture();
-                    std.debug.print("[WINDOW] ReleaseCapture called\n", .{});
+            if (window_data_ptr) |data| {
+                data.focused = is_active;
+                if (data.focus_callback) |callback| {
+                    callback(data.user_data.?, is_active);
                 }
             }
             return 0;
@@ -322,12 +319,6 @@ fn windowProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.C
             return 0;
         },
         WM_LBUTTONDOWN => {
-            // Ensure we have mouse capture when button is pressed
-            if (GetCapture() != hwnd) {
-                _ = SetCapture(hwnd);
-                std.debug.print("[WINDOW] SetCapture called on LBUTTONDOWN\n", .{});
-            }
-            
             if (window_data_ptr) |data| {
                 if (data.mouse_button_callback) |callback| {
                     callback(data.input_user_data.?, 0, true); // 0 = left button
@@ -395,6 +386,10 @@ fn windowProc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) callconv(.C
             }
             return 0;
         },
+        WM_SYSCOMMAND => {
+            // Let Windows handle all system commands (minimize, maximize, restore, etc.)
+            return DefWindowProcA(hwnd, msg, wparam, lparam);
+        },
         else => {
             return DefWindowProcA(hwnd, msg, wparam, lparam);
         },
@@ -430,7 +425,7 @@ fn ensureWindowClassRegistered() bool {
         .cbWndExtra = 0,
         .hInstance = module_instance,
         .hIcon = null,
-        .hCursor = null,
+        .hCursor = LoadCursorA(null, @ptrFromInt(32512)),  // IDC_ARROW
         .hbrBackground = null,
         .lpszMenuName = null,
         .lpszClassName = @as([*:0]const u8, @ptrCast(&window_class_name)),
@@ -535,10 +530,7 @@ export fn surface_create(width: i32, height: i32, title: [*:0]const u8) callconv
     _ = UpdateWindow(hwnd);
     _ = SetForegroundWindow(hwnd);
     _ = SetFocus(hwnd);
-    
-    // Capture mouse input for the window
-    _ = SetCapture(hwnd);
-    std.debug.print("[WINDOW] Initial SetCapture called in surface_create\n", .{});
+    // Don't capture mouse by default - let Windows handle cursor normally
 
     return window_data;
 }

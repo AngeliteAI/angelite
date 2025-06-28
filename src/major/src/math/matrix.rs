@@ -92,19 +92,20 @@ impl<const R: usize, const C: usize> Matrix<f32, R, C> {
         Vector::new(result)
     }
     
-    /// Convert to flat array in column-major order
-    #[inline]
-    pub fn to_cols_array(&self) -> [f32; R * C] {
-        let mut result = [0.0; R * C];
-        let mut idx = 0;
-        for col in 0..C {
-            for row in 0..R {
-                result[idx] = self.0[col][row];
-                idx += 1;
-            }
-        }
-        result
-    }
+    // Commented out due to stable Rust limitations with const generics
+    // /// Convert to flat array in column-major order
+    // #[inline]
+    // pub fn to_cols_array(&self) -> [f32; R * C] {
+    //     let mut result = [0.0; R * C];
+    //     let mut idx = 0;
+    //     for col in 0..C {
+    //         for row in 0..R {
+    //             result[idx] = self.0[col][row];
+    //             idx += 1;
+    //         }
+    //     }
+    //     result
+    // }
 }
 
 // Square matrix operations
@@ -196,6 +197,12 @@ impl Mat4f {
         result.0[2][2] = v[2];
         result.0[3][3] = 1.0;
         result
+    }
+    
+    /// Get as raw array
+    #[inline]
+    pub fn to_array(&self) -> [[f32; 4]; 4] {
+        self.0
     }
     
     /// Create rotation matrix from quaternion

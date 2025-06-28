@@ -9,6 +9,7 @@ edition = "2024"
 crossterm = "*"
 libc = "0.2"
 num-traits = "*"
+serde = { version = "1.0", features = ["derive"] }
 
 [build-dependencies]
 which = "4.4"
