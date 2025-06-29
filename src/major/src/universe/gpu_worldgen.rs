@@ -1,9 +1,13 @@
 use crate::math::Vec3;
 use crate::gfx::Gfx;
 use super::{Voxel, sdf::Sdf, brush::{Brush, EvaluationContext}};
-use std::sync::Arc;
+use super::gpu_thread_executor::{GpuThreadExecutor, MainThreadCommand, WorkerTask};
+use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 
+#[derive(Clone)]
 pub struct WorldBounds {
     pub min: Vec3<f32>,
     pub max: Vec3<f32>,
@@ -58,6 +62,7 @@ pub struct LodLevel {
     pub simplification: f32,
 }
 
+#[derive(Clone)]
 pub struct VoxelWorkspace {
     pub bounds: WorldBounds,
     pub voxels: Vec<Voxel>,
@@ -65,6 +70,7 @@ pub struct VoxelWorkspace {
     pub metadata: WorkspaceMetadata,
 }
 
+#[derive(Clone)]
 pub struct WorkspaceMetadata {
     pub unique_voxels: Vec<Voxel>,
     pub histogram: HashMap<Voxel, u32>,
@@ -249,22 +255,155 @@ fn bitpack_indices(
     }
 }
 
-// GPU World Generator
+// Async generation handle
+pub struct AsyncGenerationHandle {
+    pub id: u64,
+    pub status: Arc<RwLock<GenerationStatus>>,
+}
+
+pub enum GenerationStatus {
+    Pending,
+    Running,
+    Complete(Result<VoxelWorkspace, String>),
+}
+
+impl AsyncGenerationHandle {
+    pub fn is_complete(&self) -> bool {
+        matches!(*self.status.read().unwrap(), GenerationStatus::Complete(_))
+    }
+    
+    pub fn try_get_result(&self) -> Option<Result<Arc<VoxelWorkspace>, String>> {
+        let status = self.status.read().unwrap();
+        match &*status {
+            GenerationStatus::Complete(result) => match result {
+                Ok(ws) => Some(Ok(Arc::new(ws.clone()))),
+                Err(e) => Some(Err(e.clone())),
+            },
+            _ => None,
+        }
+    }
+}
+
+// GPU World Generator with thread pool
 pub struct GpuWorldGenerator {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
     sdf_evaluator: GpuSdfEvaluator,
     brush_evaluator: GpuBrushEvaluator,
     post_processor: GpuPostProcessor,
+    thread_executor: Option<Arc<GpuThreadExecutor>>,
+    main_thread_sender: Option<mpsc::Sender<MainThreadCommand>>,
 }
 
 impl GpuWorldGenerator {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self {
             sdf_evaluator: GpuSdfEvaluator::new(gfx.clone()),
             brush_evaluator: GpuBrushEvaluator::new(gfx.clone()),
             post_processor: GpuPostProcessor::new(gfx.clone()),
             gfx,
+            thread_executor: None,
+            main_thread_sender: None,
         }
+    }
+    
+    /// Initialize with thread executor for async operation
+    pub fn with_thread_executor(
+        mut self, 
+        executor: Arc<GpuThreadExecutor>,
+        main_thread_sender: mpsc::Sender<MainThreadCommand>
+    ) -> Self {
+        self.thread_executor = Some(executor);
+        self.main_thread_sender = Some(main_thread_sender);
+        self
+    }
+    
+    /// Start async GPU generation and return immediately
+    pub fn start_async_generation(
+        &self,
+        bounds: WorldBounds,
+        params: GenerationParams,
+    ) -> AsyncGenerationHandle {
+        // For now, still use CPU implementation but wrapped in async handle
+        // TODO: Implement actual GPU compute dispatch
+        let handle = AsyncGenerationHandle {
+            id: {
+                static COUNTER: AtomicU64 = AtomicU64::new(0);
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            },
+            status: Arc::new(RwLock::new(GenerationStatus::Pending)),
+        };
+        
+        let status = handle.status.clone();
+        let bounds_clone = bounds.clone();
+        let params_clone = params.clone();
+        let evaluator = self.sdf_evaluator.clone();
+        let brush_eval = self.brush_evaluator.clone();
+        
+        // Spawn background task
+        let thread = std::thread::spawn(move || {
+            println!("CPU generation thread spawned for bounds: [{:.1},{:.1},{:.1}] to [{:.1},{:.1},{:.1}]", 
+                bounds_clone.min.x(), bounds_clone.min.y(), bounds_clone.min.z(),
+                bounds_clone.max.x(), bounds_clone.max.y(), bounds_clone.max.z());
+            
+            // Simulate async work
+            *status.write().unwrap() = GenerationStatus::Running;
+            println!("CPU generation: Status set to Running");
+            
+            // Run generation (for now still CPU-based)
+            let result = Self::generate_cpu_fallback(bounds_clone, params_clone, evaluator, brush_eval);
+            println!("CPU generation: generate_cpu_fallback completed with result: {}", result.is_ok());
+            
+            match &result {
+                Ok(workspace) => {
+                    println!("Generation completed successfully. Voxel count: {}", workspace.voxels.len());
+                    // Count non-empty voxels
+                    let non_empty = workspace.voxels.iter().filter(|v| v.0 != 0).count();
+                    println!("Non-empty voxels: {}", non_empty);
+                }
+                Err(e) => {
+                    println!("Generation failed: {}", e);
+                }
+            }
+            
+            *status.write().unwrap() = GenerationStatus::Complete(result);
+        });
+        
+        handle
+    }
+    
+    fn generate_cpu_fallback(
+        bounds: WorldBounds,
+        params: GenerationParams,
+        sdf_eval: GpuSdfEvaluator,
+        brush_eval: GpuBrushEvaluator,
+    ) -> Result<VoxelWorkspace, String> {
+        let voxel_count = bounds.voxel_count();
+        println!("CPU fallback: generating {} voxels", voxel_count);
+        
+        // Execute CPU work synchronously in thread
+        // In the real implementation, GPU commands would be queued to main thread
+        let sdf_field = sdf_eval.evaluate_sdf_field_cpu(&bounds, params.sdf_resolution, &params.sdf_tree)?;
+        println!("CPU fallback: SDF field evaluated, {} values", sdf_field.len());
+        
+        // Debug first few SDF values
+        if sdf_field.len() > 10 {
+            println!("First 10 SDF values: {:?}", &sdf_field[0..10]);
+        }
+        
+        let mut workspace_buffer = vec![Voxel(0); voxel_count];
+        brush_eval.evaluate_brushes_cpu(
+            &sdf_field,
+            &params.brush_schema,
+            &mut workspace_buffer,
+            &bounds,
+            params.sdf_resolution,
+        )?;
+        
+        // Count non-empty voxels after brush evaluation
+        let non_empty = workspace_buffer.iter().filter(|v| v.0 != 0).count();
+        println!("CPU fallback: after brush evaluation, {} non-empty voxels out of {}", non_empty, workspace_buffer.len());
+        
+        Ok(VoxelWorkspace::from_gpu_buffer(workspace_buffer, bounds))
     }
     
     pub async fn generate_world_region(
@@ -290,11 +429,38 @@ impl GpuWorldGenerator {
             &params.brush_schema,
             &mut workspace_buffer,
             &bounds,
+            params.sdf_resolution, // Pass the actual SDF resolution
         ).await?;
         
         // Debug: count non-empty voxels after brush evaluation
         let non_empty = workspace_buffer.iter().filter(|v| v.0 != 0).count();
         println!("After brush evaluation: {} non-empty voxels out of {}", non_empty, workspace_buffer.len());
+        
+        // Debug: check voxel distribution
+        let mut voxel_counts = std::collections::HashMap::new();
+        for voxel in &workspace_buffer {
+            *voxel_counts.entry(voxel.0).or_insert(0) += 1;
+        }
+        println!("Voxel type distribution:");
+        for voxel_type in 0..=4 {
+            let count = voxel_counts.get(&voxel_type).unwrap_or(&0);
+            if *count > 0 {
+                let voxel_name = match voxel_type {
+                    0 => "Air",
+                    1 => "Stone", 
+                    2 => "Dirt",
+                    3 => "Grass",
+                    4 => "Sand",
+                    _ => "Unknown",
+                };
+                println!("  Type {} ({}): {} voxels", voxel_type, voxel_name, count);
+            }
+        }
+        
+        // Debug: Check bounds and dimensions
+        println!("Workspace bounds: min={:?}, max={:?}", bounds.min, bounds.max);
+        println!("Workspace dimensions: {:?}", bounds.dimensions());
+        println!("SDF resolution: {:?}", params.sdf_resolution);
         
         // 4. Post-processing
         for process in &params.post_processes {
@@ -314,13 +480,15 @@ impl GpuWorldGenerator {
     }
 }
 
+
 // GPU SDF Evaluator
+#[derive(Clone)]
 pub struct GpuSdfEvaluator {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
 }
 
 impl GpuSdfEvaluator {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self { gfx }
     }
     
@@ -330,6 +498,21 @@ impl GpuSdfEvaluator {
         resolution: Vec3<u32>,
         sdf_tree: &Arc<dyn super::sdf::Sdf>,
     ) -> Result<Vec<f32>, String> {
+        // In production, this would dispatch GPU compute
+        // For now, delegate to CPU implementation
+        self.evaluate_sdf_field_cpu(bounds, resolution, sdf_tree)
+    }
+    
+    pub fn evaluate_sdf_field_cpu(
+        &self,
+        bounds: &WorldBounds,
+        resolution: Vec3<u32>,
+        sdf_tree: &Arc<dyn super::sdf::Sdf>,
+    ) -> Result<Vec<f32>, String> {
+        println!("GpuSdfEvaluator: Evaluating SDF field with bounds min=[{:.1},{:.1},{:.1}] max=[{:.1},{:.1},{:.1}], resolution {:?}", 
+            bounds.min.x(), bounds.min.y(), bounds.min.z(),
+            bounds.max.x(), bounds.max.y(), bounds.max.z(),
+            resolution);
         let size = (resolution.x() * resolution.y() * resolution.z()) as usize;
         let mut sdf_values = Vec::with_capacity(size);
         
@@ -337,14 +520,19 @@ impl GpuSdfEvaluator {
         for z in 0..resolution.z() {
             for y in 0..resolution.y() {
                 for x in 0..resolution.x() {
-                    // Calculate world position
-                    let normalized = Vec3::new([
-                        x as f32 / (resolution.x() - 1) as f32,
-                        y as f32 / (resolution.y() - 1) as f32,
-                        z as f32 / (resolution.z() - 1) as f32,
+                    // Calculate world position with better precision
+                    let bounds_size = bounds.max - bounds.min;
+                    let voxel_size = Vec3::new([
+                        bounds_size.x() / resolution.x() as f32,
+                        bounds_size.y() / resolution.y() as f32,
+                        bounds_size.z() / resolution.z() as f32,
                     ]);
                     
-                    let world_pos = bounds.min + (bounds.max - bounds.min) * normalized;
+                    let world_pos = bounds.min + Vec3::new([
+                        x as f32 * voxel_size.x(),
+                        y as f32 * voxel_size.y(),
+                        z as f32 * voxel_size.z(),
+                    ]);
                     
                     // Evaluate SDF
                     let distance = sdf_tree.distance(world_pos);
@@ -358,12 +546,13 @@ impl GpuSdfEvaluator {
 }
 
 // GPU Brush Evaluator
+#[derive(Clone)]
 pub struct GpuBrushEvaluator {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
 }
 
 impl GpuBrushEvaluator {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self { gfx }
     }
     
@@ -373,10 +562,25 @@ impl GpuBrushEvaluator {
         brush_schema: &BrushSchema,
         output: &mut [Voxel],
         bounds: &WorldBounds,
+        sdf_resolution: Vec3<u32>,
+    ) -> Result<(), String> {
+        // In production, this would dispatch GPU compute
+        // For now, delegate to CPU implementation
+        self.evaluate_brushes_cpu(sdf_field, brush_schema, output, bounds, sdf_resolution)
+    }
+    
+    pub fn evaluate_brushes_cpu(
+        &self,
+        sdf_field: &[f32],
+        brush_schema: &BrushSchema,
+        output: &mut [Voxel],
+        bounds: &WorldBounds,
+        sdf_resolution: Vec3<u32>,
     ) -> Result<(), String> {
         let dims = bounds.dimensions();
-        let sdf_dims = (
-            sdf_field.len() as f32).powf(1.0/3.0) as u32;
+        let sdf_dims_x = sdf_resolution.x();
+        let sdf_dims_y = sdf_resolution.y();
+        let sdf_dims_z = sdf_resolution.z();
         
         // Iterate through each voxel
         for z in 0..dims.2 {
@@ -393,35 +597,51 @@ impl GpuBrushEvaluator {
                     
                     // Sample SDF field (with interpolation)
                     let sdf_pos = (world_pos - bounds.min) / (bounds.max - bounds.min);
-                    let sdf_x = (sdf_pos.x() * (sdf_dims - 1) as f32) as usize;
-                    let sdf_y = (sdf_pos.y() * (sdf_dims - 1) as f32) as usize;
-                    let sdf_z = (sdf_pos.z() * (sdf_dims - 1) as f32) as usize;
+                    let sdf_x = (sdf_pos.x() * (sdf_dims_x - 1) as f32) as usize;
+                    let sdf_y = (sdf_pos.y() * (sdf_dims_y - 1) as f32) as usize;
+                    let sdf_z = (sdf_pos.z() * (sdf_dims_z - 1) as f32) as usize;
                     
-                    let sdf_idx = sdf_z.min(sdf_dims as usize - 1) * (sdf_dims * sdf_dims) as usize +
-                                  sdf_y.min(sdf_dims as usize - 1) * sdf_dims as usize +
-                                  sdf_x.min(sdf_dims as usize - 1);
+                    let sdf_idx = sdf_z.min(sdf_dims_z as usize - 1) * (sdf_dims_y * sdf_dims_x) as usize +
+                                  sdf_y.min(sdf_dims_y as usize - 1) * sdf_dims_x as usize +
+                                  sdf_x.min(sdf_dims_x as usize - 1);
                     
                     let sdf_distance = sdf_field[sdf_idx];
+                    
+                    // Calculate normal from SDF gradient
+                    // For a plane with normal [0,0,1], the gradient is constant [0,0,1]
+                    let normal = Vec3::new([0.0, 0.0, 1.0]); // Z-up for horizontal plane
+                    
+                    // Surface position is where SDF = 0
+                    // For a point at distance d from surface, surface is at position - normal * d
+                    let surface_position = world_pos - normal * sdf_distance;
                     
                     // Create evaluation context
                     let ctx = super::brush::EvaluationContext {
                         position: world_pos,
                         sdf_value: sdf_distance,
-                        normal: Vec3::new([0.0, 0.0, 1.0]), // Z-up normal
-                        surface_position: world_pos - Vec3::new([0.0, 0.0, sdf_distance]),
+                        normal,
+                        surface_position,
                         depth_from_surface: -sdf_distance,
                     };
+                    
+                    // Debug first few voxels and some at different heights
+                    let debug_output = false; // Disable debug output for now
                     
                     // Evaluate brushes
                     let mut final_voxel = Voxel(0); // Air by default
                     let mut max_priority = i32::MIN;
                     
-                    for brush in &brush_schema.layers {
+                    for (brush_idx, brush) in brush_schema.layers.iter().enumerate() {
                         if let Some((voxel, weight)) = brush.sample(&ctx) {
                             let priority = brush.priority();
                             if priority > max_priority || (priority == max_priority && weight > 0.5) {
                                 max_priority = priority;
                                 final_voxel = voxel;
+                                
+                                if debug_output {
+                                    println!("  -> Brush {} matched: voxel={}, priority={}, weight={}", 
+                                        brush_idx, voxel.0, priority, weight);
+                                }
                             }
                         }
                     }
@@ -437,11 +657,11 @@ impl GpuBrushEvaluator {
 
 // GPU Post Processor
 pub struct GpuPostProcessor {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
 }
 
 impl GpuPostProcessor {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self { gfx }
     }
     

@@ -1,7 +1,7 @@
 use major::{
     math::{Vec3, Mat4f},
     universe::{
-        GpuWorldGenerator, VoxelWorkspace, WorldBounds, GenerationParams,
+        GpuWorldGenerator, GpuWorldGenPipeline, VoxelWorkspace, WorldBounds, GenerationParams,
         PaletteCompressionSystem, CompressedVoxelData,
         VoxelPhysicsGenerator, PhysicsLodLevel,
         VertexPoolBatchRenderer, ViewParams,
@@ -14,11 +14,12 @@ use major::{
 };
 use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 
 // Complete voxel world system for Synthesis
 pub struct VoxelWorld {
     // Core systems
-    gpu_generator: GpuWorldGenerator,
+    gpu_pipeline: Arc<GpuWorldGenPipeline>,
     compression_system: PaletteCompressionSystem,
     physics_generator: VoxelPhysicsGenerator,
     renderer: VertexPoolBatchRenderer,
@@ -28,11 +29,16 @@ pub struct VoxelWorld {
     loaded_regions: HashMap<RegionId, LoadedRegion>,
     active_chunks: HashMap<ChunkId, ActiveChunk>,
     
+    // Generation tracking
+    pending_generations: HashMap<RegionId, tokio::time::Instant>,
+    generation_receiver: mpsc::Receiver<(RegionId, Result<Arc<VoxelWorkspace>, String>)>,
+    generation_sender: mpsc::Sender<(RegionId, Result<Arc<VoxelWorkspace>, String>)>,
+    
     // Configuration
     config: WorldConfig,
     
     // Context references
-    vulkan: Arc<dyn Gfx>,
+    vulkan: Arc<dyn Gfx + Send + Sync>,
     physics: Arc<RwLock<dyn Physx>>,
 }
 
@@ -71,6 +77,18 @@ pub struct WorldConfig {
     pub enable_compression: bool,
     pub enable_physics: bool,
     pub enable_lod: bool,
+    #[serde(default = "default_mesh_generator")]
+    pub mesh_generator: MeshGeneratorType,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub enum MeshGeneratorType {
+    BinaryGreedy,
+    SimpleCube,
+}
+
+fn default_mesh_generator() -> MeshGeneratorType {
+    MeshGeneratorType::BinaryGreedy
 }
 
 impl Default for WorldConfig {
@@ -78,38 +96,152 @@ impl Default for WorldConfig {
         Self {
             chunk_size: 64,
             region_size: 8,
-            view_distance: 512.0,
-            physics_distance: 256.0,
+            view_distance: 1024.0,
+            physics_distance: 512.0,
             voxel_size: 1.0,
             enable_compression: true,
             enable_physics: true,
             enable_lod: true,
+            mesh_generator: MeshGeneratorType::BinaryGreedy,
         }
     }
 }
 
 impl VoxelWorld {
+    /// Create a simple test terrain for immediate display
+    pub fn create_test_terrain(&mut self) {
+        let chunk_id = ChunkId(0, 0, 0);
+        let chunk_size = self.config.chunk_size as usize;
+        let mut voxels = vec![Voxel(0); chunk_size * chunk_size * chunk_size];
+        
+        // Create a simple flat terrain at z=0
+        for y in 0..chunk_size {
+            for x in 0..chunk_size {
+                for z in 0..chunk_size {
+                    let idx = z * chunk_size * chunk_size + y * chunk_size + x;
+                    
+                    let world_z = z as f32 - chunk_size as f32 / 2.0;
+                    
+                    if world_z < -2.0 {
+                        voxels[idx] = Voxel(1); // Stone
+                    } else if world_z < -0.5 {
+                        voxels[idx] = Voxel(2); // Dirt
+                    } else if world_z < 0.0 {
+                        voxels[idx] = Voxel(3); // Grass
+                    }
+                }
+            }
+        }
+        
+        // Compress the chunk
+        let compressed = self.compression_system.compress_workspace_sync(
+            &voxels,
+            (chunk_size as u32, chunk_size as u32, chunk_size as u32)
+        ).unwrap();
+        
+        // Create render data
+        let render_data = ChunkRenderData {
+            vertex_count: (chunk_size * chunk_size * chunk_size) as u32,
+            lod_distances: [64.0, 128.0, 256.0, 512.0, 1024.0],
+        };
+        
+        // Add to active chunks
+        self.active_chunks.insert(chunk_id, ActiveChunk {
+            id: chunk_id,
+            compressed_data: compressed,
+            physics_colliders: vec![],
+            render_data,
+            last_modified: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        });
+        
+        println!("Created test terrain chunk at {:?}", chunk_id);
+    }
+    
     pub fn new(
-        vulkan: Arc<dyn Gfx>,
+        vulkan: Arc<dyn Gfx + Send + Sync>,
         physics: Arc<RwLock<dyn Physx>>,
         config: WorldConfig,
     ) -> Self {
+        let pipeline = Arc::new(GpuWorldGenPipeline::new(vulkan.clone()));
+        pipeline.start();
+        
+        let renderer = match config.mesh_generator {
+            MeshGeneratorType::BinaryGreedy => {
+                VertexPoolBatchRenderer::new_with_generator(
+                    vulkan.clone(),
+                    Box::new(major::universe::BinaryGreedyMeshGenerator::new())
+                )
+            },
+            MeshGeneratorType::SimpleCube => {
+                VertexPoolBatchRenderer::new_with_generator(
+                    vulkan.clone(),
+                    Box::new(major::universe::SimpleCubeMeshGenerator::new())
+                )
+            },
+        };
+        
+        // Create async channel for generation results
+        let (generation_sender, generation_receiver) = mpsc::channel(10);
+        
         Self {
-            gpu_generator: GpuWorldGenerator::new(vulkan.clone()),
+            gpu_pipeline: pipeline,
             compression_system: PaletteCompressionSystem::new(vulkan.clone()),
             physics_generator: VoxelPhysicsGenerator::new(physics.clone()),
-            renderer: VertexPoolBatchRenderer::new(vulkan.clone()),
+            renderer,
             world: World::default(),
             loaded_regions: HashMap::new(),
             active_chunks: HashMap::new(),
+            pending_generations: HashMap::new(),
+            generation_receiver,
+            generation_sender,
             config,
             vulkan,
             physics,
         }
     }
     
+    /// Switch the mesh generator at runtime
+    pub fn set_mesh_generator(&mut self, generator_type: MeshGeneratorType) {
+        println!("Switching mesh generator to {:?}", generator_type);
+        self.config.mesh_generator = generator_type;
+        
+        let new_generator: Box<dyn major::universe::MeshGenerator> = match generator_type {
+            MeshGeneratorType::BinaryGreedy => {
+                Box::new(major::universe::BinaryGreedyMeshGenerator::new())
+            },
+            MeshGeneratorType::SimpleCube => {
+                Box::new(major::universe::SimpleCubeMeshGenerator::new())
+            },
+        };
+        
+        self.renderer.set_mesh_generator(new_generator);
+    }
+    
     pub fn voxel_size(&self) -> f32 {
         self.config.voxel_size
+    }
+    
+    /// Get the current mesh generator type
+    pub fn mesh_generator_type(&self) -> MeshGeneratorType {
+        self.config.mesh_generator
+    }
+    
+    /// Get GPU pipeline statistics
+    pub fn get_pipeline_stats(&self) -> major::universe::PipelineStats {
+        self.gpu_pipeline.get_stats()
+    }
+    
+    /// Wait for all pending GPU operations to complete
+    pub async fn flush_gpu_pipeline(&self) -> Result<(), String> {
+        let pipeline = self.gpu_pipeline.clone();
+        tokio::task::spawn_blocking(move || {
+            pipeline.flush()
+        })
+        .await
+        .map_err(|e| format!("Failed to spawn blocking task: {}", e))?
     }
     
     pub fn chunks_modified_since(&self, timestamp: &std::time::Instant) -> bool {
@@ -130,6 +262,9 @@ impl VoxelWorld {
     // Main update loop
     pub async fn update(&mut self, camera_pos: Vec3<f32>, delta_time: f32) -> Result<(), String> {
         
+        // IMPORTANT: Process GPU pipeline commands on main thread
+        self.gpu_pipeline.process_main_thread_commands();
+        
         // Update region loading
         self.update_region_loading(camera_pos).await?;
         
@@ -146,6 +281,8 @@ impl VoxelWorld {
     // Get individual chunk meshes for rendering  
     pub fn get_chunks_for_rendering(&self) -> Option<Vec<((i32, i32, i32), Vec<major::universe::VoxelVertex>)>> {
         use major::universe::vertex_pool_renderer::VoxelVertex;
+        
+        println!("get_chunks_for_rendering called with {} active chunks", self.active_chunks.len());
         
         if self.active_chunks.is_empty() {
             return None;
@@ -260,67 +397,130 @@ impl VoxelWorld {
         }
     }
     
-    // Generate a new region
-    pub async fn generate_region(&mut self, region_id: RegionId) -> Result<(), String> {
-        println!("Generating region {:?}", region_id);
+    // Start async generation of a region
+    pub fn start_region_generation(&mut self, region_id: RegionId) {
+        // Check if already pending
+        if self.pending_generations.contains_key(&region_id) {
+            return;
+        }
+        
+        println!("Starting async generation for region {:?}", region_id);
+        
+        // Mark as pending
+        self.pending_generations.insert(region_id, tokio::time::Instant::now());
         
         // Create generation parameters for this region
         let params = self.create_generation_params(region_id);
-        
-        // Calculate region bounds
         let region_bounds = self.calculate_region_bounds(region_id);
         
-        // Generate with GPU
-        let workspace = self.gpu_generator
-            .generate_world_region(region_bounds, params.clone())
-            .await?;
+        // Clone what we need for the async task
+        let pipeline = self.gpu_pipeline.clone();
+        let sender = self.generation_sender.clone();
         
-        // Extract and compress chunks
-        let compressed_chunks = self.extract_and_compress_chunks(&workspace, region_id).await?;
-        
-        // Create region data
-        let mut region = LoadedRegion {
-            id: region_id,
-            chunks: Vec::new(),
-            generation_params: params,
-        };
-        
-        // Process each chunk
-        for (chunk_id, compressed_data) in &compressed_chunks {
-            // Generate physics if enabled
-            let physics_colliders = if self.config.enable_physics {
-                self.generate_chunk_physics(&workspace, *chunk_id).await?
-            } else {
-                vec![]
+        // Spawn async generation task
+        tokio::spawn(async move {
+            println!("Async task started for region {:?}", region_id);
+            
+            // Generate in background thread
+            let workspace_result = tokio::task::spawn_blocking(move || {
+                println!("Calling queue_generation_blocking for region bounds: [{:.1},{:.1},{:.1}] to [{:.1},{:.1},{:.1}]",
+                    region_bounds.min.x(), region_bounds.min.y(), region_bounds.min.z(),
+                    region_bounds.max.x(), region_bounds.max.y(), region_bounds.max.z());
+                    
+                let result = pipeline.queue_generation_blocking(
+                    region_bounds, 
+                    params,
+                    0 // Normal priority
+                );
+                
+                println!("queue_generation_blocking returned: {:?}", result.is_ok());
+                result
+            })
+            .await;
+            
+            // Send result back through channel
+            let result = match workspace_result {
+                Ok(workspace) => {
+                    println!("Async generation completed for region {:?}", region_id);
+                    workspace
+                }
+                Err(e) => {
+                    println!("Task panicked for region {:?}: {}", region_id, e);
+                    Err(format!("Task panicked: {}", e))
+                }
             };
             
-            // Create render data
-            let render_data = ChunkRenderData {
-                vertex_count: compressed_data.dimensions.0 * 
-                             compressed_data.dimensions.1 * 
-                             compressed_data.dimensions.2,
-                lod_distances: [64.0, 128.0, 256.0, 512.0, 1024.0],
-            };
+            println!("Sending result for region {:?} through channel", region_id);
+            // Send result (ignore send errors if receiver dropped)
+            match sender.send((region_id, result)).await {
+                Ok(_) => println!("Result sent successfully for region {:?}", region_id),
+                Err(e) => println!("Failed to send result for region {:?}: {}", region_id, e),
+            }
+        });
+    }
+    
+    // Check and process completed generations
+    pub async fn check_pending_generations(&mut self) -> Result<(), String> {
+        // Check for completed generations from the channel
+        while let Ok((region_id, result)) = self.generation_receiver.try_recv() {
+            println!("Received generation result for region {:?}", region_id);
+            self.pending_generations.remove(&region_id);
             
-            // Add to active chunks
-            self.active_chunks.insert(*chunk_id, ActiveChunk {
-                id: *chunk_id,
-                compressed_data: compressed_data.clone(),
-                physics_colliders,
-                render_data,
-                last_modified: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
-            });
-            
-            region.chunks.push(*chunk_id);
+            match result {
+                Ok(workspace) => {
+                    // Extract and compress chunks
+                    let compressed_chunks = self.extract_and_compress_chunks(&workspace, region_id).await?;
+                    
+                    println!("Extracted {} chunks from region {:?}", compressed_chunks.len(), region_id);
+                    
+                    // Store chunks
+                    let mut chunk_ids = Vec::new();
+                    for (chunk_id, compressed_data) in compressed_chunks {
+                        chunk_ids.push(chunk_id);
+                        
+                        // Create render data
+                        let render_data = ChunkRenderData {
+                            vertex_count: (self.config.chunk_size * self.config.chunk_size * self.config.chunk_size),
+                            lod_distances: [64.0, 128.0, 256.0, 512.0, 1024.0],
+                        };
+                        
+                        self.active_chunks.insert(chunk_id, ActiveChunk {
+                            id: chunk_id,
+                            compressed_data,
+                            physics_colliders: vec![],
+                            render_data,
+                            last_modified: std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        });
+                    }
+                    
+                    // Mark region as loaded
+                    self.loaded_regions.insert(region_id, LoadedRegion {
+                        id: region_id,
+                        chunks: chunk_ids,
+                        generation_params: self.create_generation_params(region_id),
+                    });
+                }
+                Err(e) => {
+                    println!("Failed to generate region {:?}: {}", region_id, e);
+                }
+            }
         }
         
-        self.loaded_regions.insert(region_id, region);
+        // Remove timed-out generations
+        let mut timed_out = Vec::new();
+        for (region_id, start_time) in self.pending_generations.iter() {
+            if start_time.elapsed() > tokio::time::Duration::from_secs(30) {
+                timed_out.push(*region_id);
+            }
+        }
         
-        // Don't add chunks to renderer since we're using manual mesh management
-        println!("Generated {} chunks for region {:?}", compressed_chunks.len(), region_id);
+        for region_id in timed_out {
+            println!("Generation timed out for region {:?}", region_id);
+            self.pending_generations.remove(&region_id);
+        }
         
         Ok(())
     }
@@ -431,41 +631,45 @@ impl VoxelWorld {
     fn create_generation_params(&self, region_id: RegionId) -> GenerationParams {
         println!("Creating generation params for region {:?}", region_id);
         
-        // Create terrain SDF (Z is up)
+        // Create terrain SDF (Z is up!)
+        // Camera is at [0, -5, 5], so ground should be below Z=5
         let terrain_base = Plane {
-            normal: Vec3::new([0.0, 0.0, 1.0]),
-            distance: 0.0,
+            normal: Vec3::new([0.0, 0.0, 1.0]),  // Normal pointing up (Z-up)
+            distance: 0.0,  // Ground at Z = 0
         };
         
         // Add some interesting features
         let mountain = Sphere {
             center: Vec3::new([
-                region_id.0 as f32 * 512.0 + 256.0,
-                region_id.1 as f32 * 512.0 + 256.0,
-                -50.0,  // Below the terrain plane
+                region_id.0 as f32 * 256.0 + 128.0,  // Center X in region
+                region_id.1 as f32 * 256.0 + 128.0,  // Center Y in region
+                100.0,  // Z: above ground (mountain peak)
             ]),
-            radius: 200.0,
+            radius: 150.0,
         };
         
         let terrain_sdf = terrain_base.union(mountain);
         
         // Create brush layers
+        // For Z-up plane: SDF = z, depth = -SDF
+        // Above plane (z > 0): SDF > 0, depth < 0 (in air)
+        // Below plane (z < 0): SDF < 0, depth > 0 (underground)
         let stone_layer = BrushLayer {
-            condition: Condition::depth(2.0, 100.0),  // Deep below surface
+            condition: Condition::depth(2.0, 100.0),  // Deep below surface (positive depth)
             voxel: Voxel(1), // Stone
             blend_weight: 1.0,
             priority: 0,
         };
         
         let dirt_layer = BrushLayer {
-            condition: Condition::depth(0.5, 2.0),  // Near surface
+            condition: Condition::depth(0.5, 2.0),  // Near surface (positive depth)
             voxel: Voxel(2), // Dirt
             blend_weight: 1.0,
             priority: 1,
         };
         
         let grass_layer = BrushLayer {
-            condition: Condition::depth(-0.5, 0.5),  // At surface
+            condition: Condition::depth(0.0, 1.0),  // At surface (0 to 1.0 below)
             voxel: Voxel(3), // Grass
             blend_weight: 1.0,
             priority: 2,
@@ -478,7 +682,7 @@ impl VoxelWorld {
         };
         
         GenerationParams {
-            sdf_resolution: Vec3::new([128, 64, 128]),
+            sdf_resolution: Vec3::new([64, 64, 64]),  // Use uniform resolution to match chunk size
             sdf_tree: Arc::from(terrain_sdf),  // Convert Box<dyn Sdf> to Arc<dyn Sdf>
             brush_schema: major::universe::gpu_worldgen::BrushSchema {
                 layers: vec![Arc::new(brush)],
@@ -587,24 +791,83 @@ impl VoxelWorld {
     }
     
     async fn update_region_loading(&mut self, camera_pos: Vec3<f32>) -> Result<(), String> {
-        // Generate a single region that contains the terrain plane at Z=0
-        // Since our chunk size is 32 and region size is 4, each region is 128 voxels
-        // We want a region that spans from below to above Z=0
-        let region_id = RegionId(0, 0, 0);
+        let camera_region = self.world_pos_to_region_id(camera_pos);
+        let view_distance_regions = (self.config.view_distance / 
+            (self.config.region_size as f32 * self.config.chunk_size as f32 * self.config.voxel_size)).ceil() as i32;
         
-        if !self.loaded_regions.contains_key(&region_id) {
-            println!("Generating initial region at origin");
-            self.generate_region(region_id).await?;
+        // Debug output
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static LAST_DEBUG_SECS: AtomicU64 = AtomicU64::new(0);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let last_secs = LAST_DEBUG_SECS.load(Ordering::Relaxed);
+        
+        if now_secs > last_secs + 2 {
+            println!("\nRegion Loading Status:");
+            println!("  Camera region: {:?}", camera_region);
+            println!("  View distance: {} regions", view_distance_regions);
+            println!("  Loaded regions: {}", self.loaded_regions.len());
+            println!("  Pending generations: {}", self.pending_generations.len());
+            println!("  Active chunks: {}", self.active_chunks.len());
+            LAST_DEBUG_SECS.store(now_secs, Ordering::Relaxed);
         }
         
-        // Also generate neighboring regions for a 3x3 grid at Z=0
-        for x in -1..=1 {
-            for y in -1..=1 {
-                let region_id = RegionId(x, y, 0);
-                if !self.loaded_regions.contains_key(&region_id) {
-                    self.generate_region(region_id).await?;
+        // Check completed generations first
+        self.check_pending_generations().await?;
+        
+        // Queue regions by distance from camera with priority
+        let mut regions_to_load = Vec::new();
+        
+        for dx in -view_distance_regions..=view_distance_regions {
+            for dy in -view_distance_regions..=view_distance_regions {
+                for dz in -1..=1 {
+                    let region_id = RegionId(
+                        camera_region.0 + dx,
+                        camera_region.1 + dy,
+                        camera_region.2 + dz,
+                    );
+                    
+                    if !self.loaded_regions.contains_key(&region_id) && 
+                       !self.pending_generations.contains_key(&region_id) {
+                        let distance = ((dx * dx + dy * dy + dz * dz) as f32).sqrt();
+                        regions_to_load.push((distance, region_id));
+                    }
                 }
             }
+        }
+        
+        // Sort by distance (closest first)
+        regions_to_load.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        
+        // Start async generation for up to 8 regions at a time for faster loading
+        let current_pending = self.pending_generations.len();
+        let max_concurrent = 8;
+        let to_start = (max_concurrent - current_pending).min(regions_to_load.len());
+        
+        for (_, region_id) in regions_to_load.iter().take(to_start) {
+            self.start_region_generation(*region_id);
+        }
+        
+        // If no regions are being generated and we have regions to load, force start some
+        if current_pending == 0 && regions_to_load.len() > 0 {
+            println!("Starting initial region generation, {} regions in queue", regions_to_load.len());
+        }
+        
+        // Unload distant regions
+        let regions_to_unload: Vec<RegionId> = self.loaded_regions.keys()
+            .filter(|&&region_id| {
+                let dx = (region_id.0 - camera_region.0).abs();
+                let dy = (region_id.1 - camera_region.1).abs();
+                let dz = (region_id.2 - camera_region.2).abs();
+                dx > view_distance_regions + 2 || dy > view_distance_regions + 2 || dz > 2
+            })
+            .cloned()
+            .collect();
+            
+        for region_id in regions_to_unload {
+            self.unload_region(region_id);
         }
         
         Ok(())

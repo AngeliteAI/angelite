@@ -247,6 +247,8 @@ impl CameraController {
     }
     
     pub fn update(&mut self, engine: &dyn Engine, delta_time: f32) {
+        // Clamp delta time to prevent division by zero and extreme values
+        let delta_time = delta_time.max(0.0001).min(0.1);
         // Get raw input values
         let raw_move_h = unsafe { engine.input_binding_data(Binding::MoveHorizontal).scalar };
         let raw_move_v = unsafe { engine.input_binding_data(Binding::MoveVertical).scalar };
@@ -418,8 +420,21 @@ impl CameraController {
             if let Some(body) = self.physics_body {
                 // Get current velocities from physics for PID feedback
                 // IMPORTANT: Physics returns position/orientation differences, we need to divide by dt
-                let current_velocity = physx.rigidbody_get_linear_velocity(body) / delta_time;
-                let current_angular_velocity = physx.rigidbody_get_angular_velocity(body) / delta_time;
+                let raw_linear_vel = physx.rigidbody_get_linear_velocity(body);
+                let raw_angular_vel = physx.rigidbody_get_angular_velocity(body);
+                
+                // Only divide by delta_time if the velocities are non-zero
+                let current_velocity = if raw_linear_vel.length_squared() > 0.0 {
+                    raw_linear_vel / delta_time
+                } else {
+                    Vec3f::ZERO
+                };
+                
+                let current_angular_velocity = if raw_angular_vel.length_squared() > 0.0 {
+                    raw_angular_vel / delta_time
+                } else {
+                    Vec3f::ZERO
+                };
                 
                 // Update our cached velocities
                 self.velocity = current_velocity;
@@ -497,8 +512,20 @@ impl CameraController {
                 }
                 
                 // Update velocities from physics (divide by dt as per physics engine API)
-                self.velocity = physx.rigidbody_get_linear_velocity(body) / delta_time;
-                self.angular_velocity = physx.rigidbody_get_angular_velocity(body) / delta_time;
+                let raw_linear_vel = physx.rigidbody_get_linear_velocity(body);
+                let raw_angular_vel = physx.rigidbody_get_angular_velocity(body);
+                
+                self.velocity = if raw_linear_vel.length_squared() > 0.0 {
+                    raw_linear_vel / delta_time
+                } else {
+                    Vec3f::ZERO
+                };
+                
+                self.angular_velocity = if raw_angular_vel.length_squared() > 0.0 {
+                    raw_angular_vel / delta_time
+                } else {
+                    Vec3f::ZERO
+                };
                 
                 // Log collisions
                 let expected_position = old_position + self.target_velocity * delta_time;

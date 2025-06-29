@@ -1,6 +1,7 @@
 #version 460
 #extension GL_EXT_shader_atomic_float : enable
 #extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_scalar_block_layout : enable
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
@@ -34,22 +35,22 @@ struct SdfNode {
     uint type;
     vec4 params[4];    // Parameters based on type
     uvec2 children;    // Child indices for operations
-    uvec2 padding;
+    // No padding needed with scalar layout
 };
 
 // Input buffers
-layout(std430, binding = 0) readonly buffer SdfTree {
+layout(scalar, binding = 0) readonly buffer SdfTree {
     SdfNode nodes[];
 } sdf_tree;
 
-layout(std430, binding = 1) readonly buffer SdfParams {
+layout(scalar, binding = 1) readonly buffer SdfParams {
     vec4 bounds_min;
     vec4 bounds_max;
     uvec4 resolution;  // xyz = resolution, w = root node index
 } params;
 
 // Output buffer
-layout(std430, binding = 2) writeonly buffer OutputField {
+layout(scalar, binding = 2) writeonly buffer OutputField {
     float distances[];
 } output_field;
 
@@ -254,9 +255,12 @@ void main() {
         return;
     }
     
-    // Calculate world position
-    vec3 normalized = vec3(id) / vec3(params.resolution.xyz - 1);
-    vec3 position = mix(params.bounds_min.xyz, params.bounds_max.xyz, normalized);
+    // Calculate world position with better precision
+    // Avoid division by very large numbers which can cause precision loss
+    vec3 grid_size = vec3(params.resolution.xyz);
+    vec3 bounds_size = params.bounds_max.xyz - params.bounds_min.xyz;
+    vec3 voxel_size = bounds_size / grid_size;
+    vec3 position = params.bounds_min.xyz + vec3(id) * voxel_size;
     
     // Evaluate SDF at this position
     float distance = evaluateSdf(position);

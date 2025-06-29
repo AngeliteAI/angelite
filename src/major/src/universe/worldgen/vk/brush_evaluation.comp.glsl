@@ -1,6 +1,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_scalar_block_layout : enable
 
 layout(local_size_x = 64) in;
 
@@ -35,27 +36,27 @@ struct BrushLayer {
     uint voxel_id;
     float blend_weight;
     int priority;
-    uint padding[3];
+    // No padding needed with scalar layout
 };
 
 // Input buffers
-layout(std430, binding = 0) readonly buffer BrushProgram {
+layout(scalar, binding = 0) readonly buffer BrushProgram {
     BrushInstruction instructions[];
 } brush_program;
 
-layout(std430, binding = 1) readonly buffer BrushLayers {
+layout(scalar, binding = 1) readonly buffer BrushLayers {
     BrushLayer layers[];
 } brush_layers;
 
-layout(std430, binding = 2) readonly buffer SdfField {
+layout(scalar, binding = 2) readonly buffer SdfField {
     float distances[];
 } sdf_field;
 
-layout(std430, binding = 3) readonly buffer NoiseTextures {
+layout(scalar, binding = 3) readonly buffer NoiseTextures {
     float noise_data[];
 } noise_textures;
 
-layout(std430, binding = 4) readonly buffer WorldParams {
+layout(scalar, binding = 4) readonly buffer WorldParams {
     vec4 bounds_min;
     vec4 bounds_max;
     uvec4 dimensions; // xyz = dimensions, w = layer count
@@ -63,7 +64,7 @@ layout(std430, binding = 4) readonly buffer WorldParams {
 } world_params;
 
 // Output buffer
-layout(std430, binding = 5) writeonly buffer OutputVoxels {
+layout(scalar, binding = 5) writeonly buffer OutputVoxels {
     uint voxels[];
 } output_voxels;
 
@@ -190,7 +191,10 @@ bool evaluateCondition(uint instruction_idx, vec3 position, float sdf_value, vec
             return position.y >= inst.params[0].x && position.y <= inst.params[0].y;
             
         case COND_DEPTH:
-            return -sdf_value >= inst.params[0].x && -sdf_value <= inst.params[0].y;
+            // Depth is distance below surface (positive values)
+            // When sdf_value is negative, we're inside the surface
+            float depth = -sdf_value;
+            return depth >= inst.params[0].x && depth <= inst.params[0].y;
             
         case COND_DISTANCE:
             float dist = length(position - inst.params[0].xyz);
@@ -292,8 +296,11 @@ void main() {
     uint y = (idx / world_params.dimensions.x) % world_params.dimensions.y;
     uint z = idx / (world_params.dimensions.x * world_params.dimensions.y);
     
-    vec3 normalized = vec3(x, y, z) / vec3(world_params.dimensions.xyz - 1);
-    vec3 position = mix(world_params.bounds_min.xyz, world_params.bounds_max.xyz, normalized);
+    // Calculate world position with better precision
+    vec3 grid_size = vec3(world_params.dimensions.xyz);
+    vec3 bounds_size = world_params.bounds_max.xyz - world_params.bounds_min.xyz;
+    vec3 voxel_size = bounds_size / grid_size;
+    vec3 position = world_params.bounds_min.xyz + vec3(x, y, z) * voxel_size;
     
     // Get SDF value
     float sdf_value = sdf_field.distances[idx];

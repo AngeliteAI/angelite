@@ -4,14 +4,15 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 // Two-stage palette compression system
+#[derive(Clone)]
 pub struct PaletteCompressionSystem {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
     palette_counter: PaletteCounter,
     bitpack_compressor: BitpackCompressor,
 }
 
 impl PaletteCompressionSystem {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self {
             palette_counter: PaletteCounter::new(gfx.clone()),
             bitpack_compressor: BitpackCompressor::new(gfx.clone()),
@@ -33,6 +34,66 @@ impl PaletteCompressionSystem {
         let bitpacked_data = self.bitpack_compressor
             .compress_to_bitpacked(workspace, &palette)
             .await?;
+        
+        let compression_ratio = calculate_compression_ratio(workspace.len(), &bitpacked_data);
+        
+        Ok(CompressedVoxelData {
+            palette,
+            bitpacked_data,
+            dimensions,
+            compression_ratio,
+        })
+    }
+    
+    pub fn compress_workspace_sync(
+        &self,
+        workspace: &[Voxel],
+        dimensions: (u32, u32, u32),
+    ) -> Result<CompressedVoxelData, String> {
+        // Build palette synchronously
+        let mut palette_map = HashMap::new();
+        let mut palette = Vec::new();
+        
+        for voxel in workspace {
+            if !palette_map.contains_key(voxel) {
+                palette_map.insert(*voxel, palette.len() as u8);
+                palette.push(*voxel);
+            }
+        }
+        
+        // Calculate bits per index
+        let bits_per_index = if palette.len() <= 1 {
+            0
+        } else {
+            (palette.len() as f32).log2().ceil() as u8
+        };
+        
+        // Bitpack the data
+        let total_bits = workspace.len() * bits_per_index as usize;
+        let total_bytes = (total_bits + 7) / 8;
+        let mut packed_data = vec![0u8; total_bytes];
+        
+        if bits_per_index > 0 {
+            let mut bit_offset = 0;
+            for voxel in workspace {
+                let index = palette_map[voxel] as u32;
+                
+                for bit in 0..bits_per_index {
+                    if index & (1 << bit) != 0 {
+                        let byte_idx = bit_offset / 8;
+                        let bit_idx = bit_offset % 8;
+                        packed_data[byte_idx] |= 1 << bit_idx;
+                    }
+                    bit_offset += 1;
+                }
+            }
+        }
+        
+        let bitpacked_data = BitpackedData {
+            data: packed_data,
+            bits_per_index,
+            voxel_count: workspace.len(),
+        };
         
         let compression_ratio = calculate_compression_ratio(workspace.len(), &bitpacked_data);
         
@@ -133,12 +194,13 @@ impl BitpackedData {
 }
 
 // Stage 1: Palette Counter
-pub struct PaletteCounter {
-    gfx: Arc<dyn Gfx>,
+#[derive(Clone)]
+struct PaletteCounter {
+    gfx: Arc<dyn Gfx + Send + Sync>,
 }
 
 impl PaletteCounter {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self { gfx }
     }
     
@@ -168,12 +230,13 @@ impl PaletteCounter {
 }
 
 // Stage 2: Bitpack Compressor
-pub struct BitpackCompressor {
-    gfx: Arc<dyn Gfx>,
+#[derive(Clone)]
+struct BitpackCompressor {
+    gfx: Arc<dyn Gfx + Send + Sync>,
 }
 
 impl BitpackCompressor {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self { gfx }
     }
     

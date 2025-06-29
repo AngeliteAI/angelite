@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rg:*)",
+      "Bash(cargo check:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(cargo:*)",
+      "Bash(find:*)",
+      "Bash(mv:*)",
+      "Bash(sed:*)",
+      "Bash(rm:*)",
+      "Bash(git config:*)",
+      "Bash(/mnt/c/Users/$USER/.cargo/bin/cargo.exe build 2 >& 1)"
+    ],
+    "deny": []
+  }
+}

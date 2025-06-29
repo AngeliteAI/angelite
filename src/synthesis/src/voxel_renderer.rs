@@ -1,5 +1,5 @@
 use major::{
-    gfx::{Gfx, Mesh, Color},
+    gfx::{Gfx, Mesh, Color, Index},
     math::{Vec3f, Vec3},
     universe::{VoxelVertex, CompressedChunk, Voxel},
 };
@@ -62,11 +62,12 @@ impl VoxelChunkRenderer {
         // Convert VoxelVertex data to separate arrays
         let positions: Vec<Vec3f> = vertices.iter()
             .map(|v| {
-                // Add chunk offset to vertex position
+                // Add chunk offset to vertex position  
+                // Use 64 as chunk size to match the mesh generator expectations
                 let chunk_offset = Vec3f::xyz(
-                    chunk_id.0 as f32 * 32.0, // Assuming 32x32x32 chunks
-                    chunk_id.1 as f32 * 32.0,
-                    chunk_id.2 as f32 * 32.0,
+                    chunk_id.0 as f32 * 64.0, // Using 64x64x64 chunks to match mesh generator
+                    chunk_id.1 as f32 * 64.0,
+                    chunk_id.2 as f32 * 64.0,
                 );
                 Vec3f::xyz(v.position[0], v.position[1], v.position[2]) + chunk_offset
             })
@@ -89,6 +90,12 @@ impl VoxelChunkRenderer {
         self.gfx.mesh_update_normal_dirs(mesh, &normal_dirs);
         self.gfx.mesh_update_albedo(mesh, &colors);
         self.gfx.mesh_update_face_sizes(mesh, &sizes);
+        
+        // Create indices - one per vertex for point rendering that expands to quads
+        let indices: Vec<Index> = (0..vertices.len() as u32)
+            .map(|i| Index::U32(i))
+            .collect();
+        self.gfx.mesh_update_indices(mesh, &indices);
         
         // Update vertex count
         if let Some(chunk_mesh) = self.chunk_meshes.get_mut(&chunk_id) {

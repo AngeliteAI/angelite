@@ -6,13 +6,13 @@ use std::collections::HashMap;
 
 /// Bridge between the universe voxel system and the graphics system
 pub struct VoxelRendererBridge {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
     chunk_meshes: HashMap<u64, *const Mesh>,
     single_mesh: Option<*const Mesh>, // For combined mesh rendering
 }
 
 impl VoxelRendererBridge {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self {
             gfx,
             chunk_meshes: HashMap::new(),
@@ -85,7 +85,7 @@ impl VoxelRendererBridge {
         chunk: &CompressedChunk,
     ) -> Result<(Vec<VoxelVertex>, Vec<u32>), String> {
         // Decompress chunk
-        let chunk_size = 32; // Standard chunk size for this codebase
+        let chunk_size = 64; // Actual chunk size being used
         
         let voxel_count = chunk_size * chunk_size * chunk_size;
         let compressed_data = super::palette_compression::CompressedVoxelData {

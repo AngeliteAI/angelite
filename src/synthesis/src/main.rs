@@ -103,39 +103,62 @@ pub fn main() {
     let has_physics = engine.physx().is_some();
     
     // Initialize voxel world
-    let vulkan_context: std::sync::Arc<dyn major::gfx::Gfx> = std::sync::Arc::from(gfx);
+    // We can't directly convert Box<dyn Gfx> to Arc<dyn Gfx + Send + Sync>
+    // For now, create a wrapper that holds the gfx reference
+    // Note: This assumes the Gfx implementation is Send + Sync
+    let vulkan_context = unsafe {
+        std::sync::Arc::from_raw(std::mem::transmute::<*mut dyn major::gfx::Gfx, *const (dyn major::gfx::Gfx + Send + Sync)>(Box::into_raw(gfx)))
+    };
     // For now, we'll skip physics since we can't clone it
     // TODO: Properly handle physics context sharing
     let physics_context: std::sync::Arc<std::sync::RwLock<dyn major::physx::Physx>> = 
         std::sync::Arc::new(std::sync::RwLock::new(DummyPhysics {}));
     
     let world_config = WorldConfig {
-        chunk_size: 32,
+        chunk_size: 64, // Use 64x64x64 chunks to match mesh generator expectations
         region_size: 4,
-        view_distance: 256.0,
+        view_distance: 256.0,  // Full view distance
         physics_distance: 128.0,
         voxel_size: 1.0,
         enable_compression: true,
         enable_physics: has_physics,
         enable_lod: true,
+        mesh_generator: voxel_world::MeshGeneratorType::SimpleCube, // Start with Minecraft-style rendering
     };
     
-    // Create tokio runtime for async operations
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    // Create tokio runtime for async operations with multi-threading
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
         .enable_all()
         .build()
         .unwrap();
     
     let mut voxel_world = VoxelWorld::new(vulkan_context.clone(), physics_context, world_config);
     
-    // Generate initial world
+    // Create camera controller first
+    let mut camera_controller = CameraController::new();
+    
+    // Generate initial world with camera position
     println!("Generating initial voxel world...");
-    runtime.block_on(async {
-        voxel_world.update(math::Vec3f::xyz(0.0, 0.0, 5.0), 0.0).await.unwrap();
-    });
+    let initial_camera_pos = camera_controller.get_position();
+    
+    // Skip test terrain to allow actual world generation
+    // voxel_world.create_test_terrain();
+    
+    // Initial world generation with timeout
+    match runtime.block_on(async {
+        tokio::time::timeout(
+            tokio::time::Duration::from_secs(5),
+            voxel_world.update(initial_camera_pos, 0.0)
+        ).await
+    }) {
+        Ok(Ok(())) => println!("Initial world generation started"),
+        Ok(Err(e)) => println!("Initial world generation error: {}", e),
+        Err(_) => println!("Initial world generation timed out"),
+    }
 
-    // Create voxel chunk renderer
-    let mut voxel_renderer = VoxelChunkRenderer::new(vulkan_context.clone());
+    // Create voxel chunk renderer  
+    let mut voxel_renderer = VoxelChunkRenderer::new(vulkan_context.clone() as std::sync::Arc<dyn major::gfx::Gfx>);
     
     // Get initial chunk data and update renderer
     if let Some(chunks) = voxel_world.get_chunks_for_rendering() {
@@ -168,9 +191,6 @@ pub fn main() {
         }
     }
     vulkan_context.camera_set_projection(camera, &proj_flat);
-    
-    // Create camera controller
-    let mut camera_controller = CameraController::new();
     
     // Initialize physics for camera if available
     if has_physics {
@@ -231,9 +251,26 @@ pub fn main() {
         
         // Update voxel world
         let camera_pos = camera_controller.get_position();
-        runtime.block_on(async {
-            voxel_world.update(camera_pos, delta_time).await.unwrap();
-        });
+        
+        // Check for NaN
+        if camera_pos[0].is_nan() || camera_pos[1].is_nan() || camera_pos[2].is_nan() {
+            println!("ERROR: Camera position is NaN! [{}, {}, {}]", camera_pos[0], camera_pos[1], camera_pos[2]);
+            println!("Resetting camera to origin...");
+            camera_controller.set_position(math::Vec3f::xyz(0.0, -5.0, 5.0));
+            let camera_pos = camera_controller.get_position();
+        }
+        
+        // Update voxel world with timeout to allow spawned tasks to run
+        match runtime.block_on(async {
+            tokio::time::timeout(
+                tokio::time::Duration::from_millis(100),
+                voxel_world.update(camera_pos, delta_time)
+            ).await
+        }) {
+            Ok(Ok(())) => {}, // Success
+            Ok(Err(e)) => println!("Voxel world update error: {}", e),
+            Err(_) => println!("Voxel world update timed out"),
+        }
         
         // Only regenerate mesh when chunks have been modified
         let needs_mesh_update = voxel_world.chunks_modified_since(&last_chunk_update);
@@ -259,12 +296,19 @@ pub fn main() {
             if let Some(hit) = voxel_world.raycast(camera_pos, camera_forward, 100.0) {
                 // Place a voxel adjacent to the hit
                 let place_pos = hit.position + hit.normal * voxel_world.voxel_size();
-                runtime.block_on(async {
-                    voxel_world.modify_voxels(vec![VoxelModification {
-                        position: place_pos,
-                        new_voxel: major::universe::Voxel(4), // Some material
-                    }]).await.unwrap();
-                });
+                match runtime.block_on(async {
+                    tokio::time::timeout(
+                        tokio::time::Duration::from_millis(50),
+                        voxel_world.modify_voxels(vec![VoxelModification {
+                            position: place_pos,
+                            new_voxel: major::universe::Voxel(4), // Some material
+                        }])
+                    ).await
+                }) {
+                    Ok(Ok(())) => {},
+                    Ok(Err(e)) => println!("Failed to place voxel: {}", e),
+                    Err(_) => println!("Place voxel timed out"),
+                }
             }
         }
         
@@ -277,12 +321,19 @@ pub fn main() {
             let camera_forward = camera_controller.get_forward_vector();
             
             if let Some(hit) = voxel_world.raycast(camera_pos, camera_forward, 100.0) {
-                runtime.block_on(async {
-                    voxel_world.modify_voxels(vec![VoxelModification {
-                        position: hit.position,
-                        new_voxel: major::universe::Voxel(0), // Air
-                    }]).await.unwrap();
-                });
+                match runtime.block_on(async {
+                    tokio::time::timeout(
+                        tokio::time::Duration::from_millis(50),
+                        voxel_world.modify_voxels(vec![VoxelModification {
+                            position: hit.position,
+                            new_voxel: major::universe::Voxel(0), // Air
+                        }])
+                    ).await
+                }) {
+                    Ok(Ok(())) => {},
+                    Ok(Err(e)) => println!("Failed to remove voxel: {}", e),
+                    Err(_) => println!("Remove voxel timed out"),
+                }
             }
         }
         
@@ -318,6 +369,27 @@ pub fn main() {
         }
         menu_key_was_pressed = menu_pressed;
         
+        // Switch mesh generators using B button (crouch binding)
+        static mut MESH_GENERATOR_TOGGLE: bool = false;
+        let crouch_binding = unsafe { engine.input_binding_data(major::engine::Binding::Crouch) };
+        let crouch_pressed = unsafe { crouch_binding.activate };
+        
+        if crouch_pressed && !unsafe { MESH_GENERATOR_TOGGLE } {
+            // Toggle between mesh generators
+            static mut CURRENT_GENERATOR: bool = false; // false = BinaryGreedy, true = SimpleCube
+            unsafe {
+                CURRENT_GENERATOR = !CURRENT_GENERATOR;
+                if CURRENT_GENERATOR {
+                    println!("Switching to Simple Cube mesh generator");
+                    voxel_world.set_mesh_generator(voxel_world::MeshGeneratorType::SimpleCube);
+                } else {
+                    println!("Switching to Binary Greedy mesh generator");
+                    voxel_world.set_mesh_generator(voxel_world::MeshGeneratorType::BinaryGreedy);
+                }
+            }
+        }
+        unsafe { MESH_GENERATOR_TOGGLE = crouch_pressed; }
+        
         // Debug output every second
         static mut DEBUG_TIMER: f32 = 0.0;
         unsafe {
@@ -329,7 +401,15 @@ pub fn main() {
                 println!("\n=== Camera State ===");
                 println!("Position: [{:.2}, {:.2}, {:.2}]", pos[0], pos[1], pos[2]);
                 println!("Rotation: [Yaw: {:.1}°, Pitch: {:.1}°, Roll: {:.1}°]", euler.0, euler.1, euler.2);
-                println!("==================\n");
+                println!("Mesh Generator: {:?}", voxel_world.mesh_generator_type());
+                println!("==================");
+                println!("Controls:");
+                println!("  WASD/Left Stick: Move");
+                println!("  Mouse/Right Stick: Look");
+                println!("  Left Click/RT: Place voxel");
+                println!("  Right Click/LT: Remove voxel");
+                println!("  B/Circle: Toggle mesh generator");
+                println!("  Start/Menu: Save/Load world\n");
             }
         }
         

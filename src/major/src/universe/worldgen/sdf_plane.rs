@@ -14,9 +14,9 @@ pub struct SdfPlaneGenerator {
 
 impl SdfPlaneGenerator {
     pub fn new() -> Self {
-        // Create a plane at y=0
+        // Create a plane at z=0 (Z-up convention)
         let plane_sdf = Plane {
-            normal: Vec3::new([0.0, 1.0, 0.0]),
+            normal: Vec3::new([0.0, 0.0, 1.0]),
             distance: 0.0,
         };
         

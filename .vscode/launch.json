@@ -1,0 +1,120 @@
+{
+	// Use IntelliSense to learn about possible attributes.
+	// Hover to view descriptions of existing attributes.
+	// For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug executable 'biolab'",
+			"cargo": {
+				"args": [
+					"build",
+					"--bin=biolab",
+					"--package=biolab"
+				],
+				"filter": {
+					"name": "biolab",
+					"kind": "bin"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug unit tests in executable 'biolab'",
+			"cargo": {
+				"args": [
+					"test",
+					"--no-run",
+					"--bin=biolab",
+					"--package=biolab"
+				],
+				"filter": {
+					"name": "biolab",
+					"kind": "bin"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug unit tests in library 'major'",
+			"cargo": {
+				"args": [
+					"test",
+					"--no-run",
+					"--lib",
+					"--package=major"
+				],
+				"filter": {
+					"name": "major",
+					"kind": "lib"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug executable 'backend'",
+			"cargo": {
+				"args": [
+					"build",
+					"--bin=backend",
+					"--package=backend"
+				],
+				"filter": {
+					"name": "backend",
+					"kind": "bin"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug unit tests in executable 'backend'",
+			"cargo": {
+				"args": [
+					"test",
+					"--no-run",
+					"--bin=backend",
+					"--package=backend"
+				],
+				"filter": {
+					"name": "backend",
+					"kind": "bin"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		},
+		{
+			"type": "lldb",
+			"request": "launch",
+			"name": "Debug unit tests in library 'span'",
+			"cargo": {
+				"args": [
+					"test",
+					"--no-run",
+					"--lib",
+					"--package=span"
+				],
+				"filter": {
+					"name": "span",
+					"kind": "lib"
+				}
+			},
+			"args": [],
+			"cwd": "${workspaceFolder}"
+		}
+	]
+}

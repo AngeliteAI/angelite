@@ -147,6 +147,15 @@ export fn worldgen_free_workspace(workspace: *VoxelWorkspace) void {
     allocator.destroy(workspace);
 }
 
+// GPU SDF Node structure matching GLSL
+const GpuSdfNode = extern struct {
+    node_type: u32,
+    _padding1: [3]u32,
+    params: [4][4]f32,
+    children: [2]u32,
+    _padding2: [2]u32,
+};
+
 // Execute the GPU compute pipeline
 fn executeGpuPipeline(
     state: *GpuSdfWorldgen,
@@ -155,38 +164,78 @@ fn executeGpuPipeline(
     output: [*]u32,
     voxel_count: usize,
 ) bool {
-    // This would normally:
-    // 1. Upload SDF parameters to GPU
-    // 2. Upload brush conditions to GPU
-    // 3. Dispatch compute shaders for SDF evaluation
-    // 4. Dispatch compute shaders for brush evaluation
-    // 5. Apply palette compression
-    // 6. Read back results
+    // Create a simple SDF node for the plane
+    var sdf_nodes = [1]GpuSdfNode{
+        GpuSdfNode{
+            .node_type = 2, // SDF_PLANE
+            ._padding1 = .{0, 0, 0},
+            .params = .{
+                .{0.0, 0.0, 1.0, 0.0}, // normal = [0, 0, 1], distance = 0 (Z-up)
+                .{0.0, 0.0, 0.0, 0.0},
+                .{0.0, 0.0, 0.0, 0.0},
+                .{0.0, 0.0, 0.0, 0.0},
+            },
+            .children = .{0, 0},
+            ._padding2 = .{0, 0},
+        },
+    };
     
-    // For now, generate a simple plane on CPU as fallback
+    // For now, still use CPU implementation but with correct plane normal
     const dims = bounds.resolution;
     var idx: usize = 0;
     
+    // Allocate temporary SDF field
+    const sdf_count = dims[0] * dims[1] * dims[2];
+    const sdf_field = state.allocator.alloc(f32, sdf_count) catch return false;
+    defer state.allocator.free(sdf_field);
+    
+    // Evaluate SDF field
+    idx = 0;
     var z: u32 = 0;
     while (z < dims[2]) : (z += 1) {
         var y: u32 = 0;
         while (y < dims[1]) : (y += 1) {
             var x: u32 = 0;
             while (x < dims[0]) : (x += 1) {
+                // Calculate world position
+                const world_x = bounds.min[0] + @as(f32, @floatFromInt(x)) * bounds.voxel_size;
                 const world_y = bounds.min[1] + @as(f32, @floatFromInt(y)) * bounds.voxel_size;
+                const world_z = bounds.min[2] + @as(f32, @floatFromInt(z)) * bounds.voxel_size;
                 
-                // Simple plane at y=0 using SDF logic
-                const distance_to_plane = world_y; // Distance to y=0 plane
+                // Evaluate plane SDF: dot(p, normal) + distance
+                // For plane with normal [0,0,1] at z=0: distance = z
+                const distance = world_z;
+                sdf_field[idx] = distance;
+                idx += 1;
+            }
+        }
+    }
+    
+    // Apply brush evaluation
+    idx = 0;
+    z = 0;
+    while (z < dims[2]) : (z += 1) {
+        y = 0;
+        while (y < dims[1]) : (y += 1) {
+            x = 0;
+            while (x < dims[0]) : (x += 1) {
+                const sdf_value = sdf_field[idx];
                 
-                // Apply brush conditions based on depth
-                const voxel = if (distance_to_plane < -2.0) 
-                    1  // Stone (deep below surface)
-                else if (distance_to_plane < -0.5)
-                    2  // Dirt (near surface)
-                else if (distance_to_plane < 0.5)
-                    3  // Grass (at surface)
+                // Apply brush conditions based on SDF value
+                // For Z-up plane: SDF = z coordinate
+                // Positive SDF = above surface (z > 0)
+                // Negative SDF = below surface (z < 0)
+                // Depth = -SDF (positive underground, negative in air)
+                const depth = -sdf_value;
+                
+                const voxel = if (depth < 0.0)
+                    0  // Air (negative depth = above surface)
+                else if (depth >= 0.0 and depth < 1.0)
+                    3  // Grass (0-1.0 below surface)
+                else if (depth >= 1.0 and depth < 2.0)
+                    2  // Dirt (1.0-2.0 below surface)
                 else
-                    0; // Air (above surface)
+                    1; // Stone (2.0+ below surface)
                 
                 output[idx] = voxel;
                 idx += 1;
@@ -242,16 +291,19 @@ export fn worldgen_generate_plane(
         while (y < dims[1]) : (y += 1) {
             var x: u32 = 0;
             while (x < dims[0]) : (x += 1) {
-                const world_y = min_y + @as(f32, @floatFromInt(y)) * voxel_size;
+                const world_z = min_z + @as(f32, @floatFromInt(z)) * voxel_size;
                 
-                const voxel = if (world_y < -2.0)
-                    1  // Stone
-                else if (world_y < -0.5)
-                    2  // Dirt  
-                else if (world_y < 0.5)
-                    3  // Grass
+                // Plane SDF at z=0: distance = z (Z-up)
+                const sdf = world_z;
+                
+                const voxel = if (sdf > 0.5)
+                    0  // Air (above surface)
+                else if (sdf > -0.5)
+                    3  // Grass (at surface)
+                else if (sdf > -2.0)
+                    2  // Dirt (near surface)
                 else
-                    0; // Air
+                    1; // Stone (deep below surface)
                 
                 output_ptr[idx] = voxel;
                 idx += 1;

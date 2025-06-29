@@ -17,6 +17,7 @@ pub struct Mesh {
     normal_dirs: Option<Vec<u32>>,
     colors: Option<Vec<crate::gfx::Color>>,
     face_sizes: Option<Vec<[f32; 2]>>,
+    indices: Option<Vec<u32>>,
 }
 
 pub struct Batch {
@@ -145,9 +146,10 @@ impl super::Gfx for Vulkan {
         // Create Arc<Mutex<*mut zig::Renderer>> to store the pointer
         let renderer = Arc::new(Mutex::new(renderer_ptr));
 
-        // Initialize vertex pool with reasonable defaults
+        // Initialize vertex pool with larger capacity for voxel rendering
+        // Voxel chunks can have many vertices (up to 100k+ per chunk)
         let init_result = unsafe {
-            zig::renderer_init_vertex_pool(renderer_ptr, 100, 1024, 1000)
+            zig::renderer_init_vertex_pool(renderer_ptr, 200, 100000, 10000)
         };
         println!("Vertex pool initialization result: {}", init_result);
 
@@ -182,6 +184,7 @@ impl super::Gfx for Vulkan {
             normal_dirs: None,
             colors: None,
             face_sizes: None,
+            indices: None,
         };
 
         let mesh_ptr = Box::into_raw(Box::new(mesh)) as *const super::Mesh;
@@ -242,8 +245,21 @@ impl super::Gfx for Vulkan {
     }
 
     fn mesh_update_indices(&self, mesh: *const super::Mesh, indices: &[super::Index]) {
-        // Our vertex pooling implementation handles indices automatically
-        // This function is kept for API compatibility
+        let mesh_ptr = mesh as *mut Mesh;
+        let mesh = unsafe { &mut *mesh_ptr };
+        
+        // Convert indices to u32 format
+        let indices_u32: Vec<u32> = indices.iter().map(|idx| match idx {
+            super::Index::U8(val) => *val as u32,
+            super::Index::U16(val) => *val as u32,
+            super::Index::U32(val) => *val,
+        }).collect();
+        
+        // Store indices for later use
+        mesh.indices = Some(indices_u32);
+        
+        // Try to create/update the mesh
+        self.try_update_mesh(mesh);
     }
 
     fn mesh_update_face_sizes(&self, mesh: *const super::Mesh, sizes: &[[f32; 2]]) {

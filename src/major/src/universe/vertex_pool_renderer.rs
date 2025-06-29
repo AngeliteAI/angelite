@@ -1,6 +1,7 @@
 use crate::math::{Vec3, Vec4, Mat4f};
 use crate::gfx::{Gfx, Camera};
 use super::{Voxel, gpu_worldgen::CompressedChunk, palette_compression::VoxelDecompressor};
+use super::mesh_generator::{MeshGenerator, BinaryGreedyMeshGenerator};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -287,14 +288,23 @@ impl BatchBuilder {
     }
 }
 
+// Helper struct for greedy meshing
+struct GreedyQuad {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
 // Main vertex pool batch renderer
 pub struct VertexPoolBatchRenderer {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
     vertex_pools: [VertexPool; MAX_LOD_LEVELS],
     index_pools: [IndexPool; MAX_LOD_LEVELS],
     instance_manager: InstanceDataManager,
     culling_system: GpuCullingSystem,
     chunk_meshes: HashMap<u64, ChunkMeshData>,
+    mesh_generator: Box<dyn MeshGenerator>,
 }
 
 #[derive(Clone)]
@@ -318,7 +328,11 @@ pub struct ChunkBounds {
 }
 
 impl VertexPoolBatchRenderer {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
+        Self::new_with_generator(gfx, Box::new(BinaryGreedyMeshGenerator::new()))
+    }
+    
+    pub fn new_with_generator(gfx: Arc<dyn Gfx + Send + Sync>, mesh_generator: Box<dyn MeshGenerator>) -> Self {
         Self {
             vertex_pools: [
                 VertexPool::new(VERTEX_POOL_SIZE),
@@ -337,8 +351,17 @@ impl VertexPoolBatchRenderer {
             instance_manager: InstanceDataManager::new(),
             culling_system: GpuCullingSystem::new(gfx.clone()),
             chunk_meshes: HashMap::new(),
+            mesh_generator,
             gfx,
         }
+    }
+    
+    /// Set a new mesh generator
+    pub fn set_mesh_generator(&mut self, mesh_generator: Box<dyn MeshGenerator>) {
+        println!("Switching mesh generator to: {}", mesh_generator.name());
+        self.mesh_generator = mesh_generator;
+        // Clear existing meshes to force regeneration with new generator
+        self.chunk_meshes.clear();
     }
     
     pub async fn add_chunks(
@@ -489,7 +512,7 @@ impl VertexPoolBatchRenderer {
         let decompressed = VoxelDecompressor::decompress_chunk(&compressed_data);
         
         // Generate LOD 0 (full resolution)
-        lod_meshes[0] = Some(self.generate_greedy_mesh(&decompressed, chunk_size)?);
+        lod_meshes[0] = Some(self.mesh_generator.generate_mesh(&decompressed, chunk_size)?);
         
         // Generate other LODs
         for lod in 1..MAX_LOD_LEVELS {
@@ -505,202 +528,297 @@ impl VertexPoolBatchRenderer {
         voxels: &[Voxel],
         size: usize,
     ) -> Result<(Vec<VoxelVertex>, Vec<u32>), String> {
+        // Use the configured mesh generator
+        self.mesh_generator.generate_mesh(voxels, size)
+    }
+    
+    // Legacy method for backwards compatibility - delegates to mesh generator
+    fn generate_greedy_mesh_legacy(
+        &self,
+        voxels: &[Voxel],
+        size: usize,
+    ) -> Result<(Vec<VoxelVertex>, Vec<u32>), String> {
+        if voxels.is_empty() || size == 0 || size > 64 {
+            return Ok((vec![], vec![]));
+        }
+        
+        // Count non-air voxels
+        let non_air_count = voxels.iter().filter(|v| v.0 != 0).count();
+        println!("Starting binary greedy mesh for {} voxels ({} non-air)", voxels.len(), non_air_count);
+        
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         
-        // Count non-empty voxels for debugging
-        let non_empty = voxels.iter().filter(|v| v.0 != 0).count();
-        println!("Greedy meshing {} non-empty voxels in {}x{}x{} chunk", non_empty, size, size, size);
+        // Build binary columns for each axis
+        let mut axis_cols = vec![vec![vec![0u64; size]; size]; 3];
         
-        // Process each axis and direction for greedy meshing
-        // For Z-axis faces (top/bottom)
-        self.greedy_mesh_axis(voxels, size, 2, &mut vertices, &mut indices)?;
-        // For Y-axis faces (front/back)
-        self.greedy_mesh_axis(voxels, size, 1, &mut vertices, &mut indices)?;
-        // For X-axis faces (left/right)
-        self.greedy_mesh_axis(voxels, size, 0, &mut vertices, &mut indices)?;
+        // Fill binary columns with correct indexing
+        for z in 0..size {
+            for y in 0..size {
+                for x in 0..size {
+                    // Standard voxel indexing: idx = x + y * size + z * size * size
+                    let idx = x + y * size + z * size * size;
+                    if idx < voxels.len() && voxels[idx].0 != 0 {
+                        // For each axis, we store bits representing position along that axis
+                        // X axis (0): YZ planes, bit position represents X coordinate
+                        axis_cols[0][z][y] |= 1u64 << x;
+                        // Y axis (1): XZ planes, bit position represents Y coordinate  
+                        axis_cols[1][z][x] |= 1u64 << y;
+                        // Z axis (2): XY planes, bit position represents Z coordinate
+                        axis_cols[2][y][x] |= 1u64 << z;
+                    }
+                }
+            }
+        }
         
-        println!("Greedy mesh generated {} vertices and {} indices", vertices.len(), indices.len());
+        // Simple test: check if we have a full plane of voxels at any Z level
+        for z in 0..size {
+            let mut all_solid = true;
+            for y in 0..size {
+                for x in 0..size {
+                    let idx = x + y * size + z * size * size;
+                    if idx >= voxels.len() || voxels[idx].0 == 0 {
+                        all_solid = false;
+                        break;
+                    }
+                }
+                if !all_solid { break; }
+            }
+            if all_solid {
+                println!("Z level {} is completely solid - should merge to 1 face!", z);
+            }
+        }
+        
+        // Process each axis
+        for axis in 0..3 {
+            self.greedy_mesh_binary_axis(
+                voxels, size, axis, &axis_cols[axis],
+                &mut vertices, &mut indices
+            )?;
+        }
+        
+        println!("Binary greedy mesh generated {} vertices and {} indices", vertices.len(), indices.len());
         Ok((vertices, indices))
     }
     
-    fn greedy_mesh_axis(
+    fn greedy_mesh_binary_axis(
         &self,
         voxels: &[Voxel],
         size: usize,
         axis: usize,
+        axis_cols: &Vec<Vec<u64>>,
         vertices: &mut Vec<VoxelVertex>,
         indices: &mut Vec<u32>,
     ) -> Result<(), String> {
-        let mut mask = vec![None; size * size];
-        
-        // u, v are the axes perpendicular to the face normal
         let u = (axis + 1) % 3;
         let v = (axis + 2) % 3;
         
-        // Process both directions (positive and negative)
-        for direction in [true, false] {
-            let mut total_faces_this_dir = 0;
-            // Iterate through slices along the axis
-            for slice_pos in 0..size {
-                // Clear mask
-                mask.fill(None);
-                let mut faces_in_slice = 0;
-                
-                // Build mask for this slice
-                for v_pos in 0..size {
-                    for u_pos in 0..size {
-                        let mut pos = [0; 3];
-                        pos[axis] = slice_pos;
-                        pos[u] = u_pos;
-                        pos[v] = v_pos;
-                        
-                        let idx = pos[2] * size * size + pos[1] * size + pos[0];
-                        let current_voxel = voxels[idx];
-                        
-                        // Check if face is visible
-                        let neighbor_idx = if direction {
-                            // Positive direction
-                            if slice_pos < size - 1 {
-                                let mut neighbor_pos = pos;
-                                neighbor_pos[axis] += 1;
-                                Some(neighbor_pos[2] * size * size + neighbor_pos[1] * size + neighbor_pos[0])
-                            } else {
-                                None
-                            }
-                        } else {
-                            // Negative direction
-                            if slice_pos > 0 {
-                                let mut neighbor_pos = pos;
-                                neighbor_pos[axis] -= 1;
-                                Some(neighbor_pos[2] * size * size + neighbor_pos[1] * size + neighbor_pos[0])
-                            } else {
-                                None
-                            }
-                        };
-                        
-                        let neighbor_voxel = neighbor_idx
-                            .and_then(|idx| voxels.get(idx))
-                            .copied()
-                            .unwrap_or(Voxel(0));
-                        
-                        // Add face to mask if current is solid and neighbor is air
-                        if current_voxel.0 != 0 && neighbor_voxel.0 == 0 {
-                            mask[v_pos * size + u_pos] = Some(current_voxel);
+        // For each face direction (negative and positive)
+        for forward in [false, true] {
+            // Create face masks by detecting solid->air transitions
+            let mut face_masks = vec![vec![0u64; size]; size];
+            
+            for b in 0..size {
+                for a in 0..size {
+                    let col = axis_cols[a][b];
+                    
+                    if forward {
+                        // Positive direction: current is solid AND next is air
+                        // Shift left to check the next position
+                        face_masks[a][b] = col & !(col << 1);
+                        // Also add faces at the boundary (last solid voxel)
+                        if size < 64 {
+                            face_masks[a][b] |= col & (1u64 << (size - 1));
                         }
+                    } else {
+                        // Negative direction: current is solid AND previous is air
+                        // Shift right to check the previous position
+                        face_masks[a][b] = col & !(col >> 1);
+                        // Also add faces at the boundary (first solid voxel)
+                        face_masks[a][b] |= col & 1u64;
                     }
                 }
-                
-                // Generate merged quads from mask
-                let mut processed = vec![false; size * size];
-                
-                for start_v in 0..size {
-                    for start_u in 0..size {
-                        let mask_idx = start_v * size + start_u;
+            }
+            
+            // Group faces by voxel type
+            let mut type_masks: HashMap<u16, Vec<Vec<u64>>> = HashMap::new();
+            
+            for b in 0..size {
+                for a in 0..size {
+                    let mut col = face_masks[a][b];
+                    
+                    while col != 0 {
+                        let bit_pos = col.trailing_zeros() as usize;
+                        col &= col - 1; // Clear lowest bit
                         
-                        if processed[mask_idx] || mask[mask_idx].is_none() {
+                        // Get voxel position
+                        let mut pos = [0; 3];
+                        pos[axis] = bit_pos;
+                        pos[u] = a;
+                        pos[v] = b;
+                        
+                        let voxel_idx = pos[0] + pos[1] * size + pos[2] * size * size;
+                        if voxel_idx >= voxels.len() {
                             continue;
                         }
                         
-                        let voxel_type = mask[mask_idx].unwrap();
+                        let voxel_type = voxels[voxel_idx].0;
                         
-                        // Find width (along u axis)
-                        let mut width = 1;
-                        while start_u + width < size {
-                            let idx = start_v * size + start_u + width;
-                            if idx >= mask.len() || mask[idx] != Some(voxel_type) || processed[idx] {
-                                break;
-                            }
-                            width += 1;
-                        }
+                        // Get or create mask for this voxel type
+                        let type_mask = type_masks.entry(voxel_type as u16).or_insert_with(|| {
+                            vec![vec![0u64; size]; size]
+                        });
                         
-                        // Find height (along v axis)
-                        let mut height = 1;
-                        'height_loop: while start_v + height < size {
-                            // Check if entire row matches
-                            let mut row_matches = true;
-                            for u_offset in 0..width {
-                                let idx = (start_v + height) * size + start_u + u_offset;
-                                if idx >= mask.len() || mask[idx] != Some(voxel_type) || processed[idx] {
-                                    row_matches = false;
-                                    break;
-                                }
-                            }
-                            if !row_matches {
-                                break 'height_loop;
-                            }
-                            height += 1;
-                        }
-                        
-                        // Safety check - width and height should never be 0
-                        debug_assert!(width >= 1, "Width should never be less than 1");
-                        debug_assert!(height >= 1, "Height should never be less than 1");
-                        
-                        // Mark area as processed
-                        for v_offset in 0..height {
-                            for u_offset in 0..width {
-                                processed[(start_v + v_offset) * size + start_u + u_offset] = true;
+                        // Set bit in the appropriate mask
+                        type_mask[a][b] |= 1u64 << bit_pos;
+                    }
+                }
+            }
+            
+            // Process each voxel type separately
+            for (voxel_type, type_mask) in type_masks {
+                // Process each layer along the axis
+                for layer in 0..size {
+                    let mut plane = vec![0u32; size];
+                    
+                    // Build binary plane for this layer
+                    for b in 0..size {
+                        for a in 0..size {
+                            if (type_mask[a][b] >> layer) & 1 == 1 {
+                                plane[a] |= 1u32 << b;
                             }
                         }
-                        
-                        // Create face
-                        // For negative faces, position is at the slice position
-                        // For positive faces, position is at slice position + 1
-                        let mut face_pos = [0.0; 3];
-                        face_pos[axis] = if direction {
-                            (slice_pos + 1) as f32
+                    }
+                    
+                    // Skip empty planes
+                    if plane.iter().all(|&row| row == 0) {
+                        continue;
+                    }
+                    
+                    // Greedy mesh this binary plane
+                    let quads = self.greedy_mesh_binary_plane(&mut plane, size);
+                    
+                    // Debug output for large quads
+                    if quads.len() > 0 {
+                        let total_area: u32 = quads.iter().map(|q| q.w * q.h).sum();
+                        let avg_area = total_area as f32 / quads.len() as f32;
+                        if avg_area < 2.0 {
+                            println!("WARNING: Axis {} dir {} layer {} type {}: {} quads, avg area {:.1} (too many strips!)", 
+                                axis, forward, layer, voxel_type, quads.len(), avg_area);
+                        }
+                    }
+                    
+                    // Convert quads to vertices
+                    for quad in quads {
+                        let mut position = [0.0; 3];
+                        position[axis] = if forward {
+                            (layer + 1) as f32
                         } else {
-                            slice_pos as f32
+                            layer as f32
                         };
-                        face_pos[u] = start_u as f32;
-                        face_pos[v] = start_v as f32;
+                        position[u] = quad.x as f32;
+                        position[v] = quad.y as f32;
                         
-                        let face_size = [width as f32, height as f32];
-                        
-                        
-                        let normal_dir = match (axis, direction) {
-                            (0, true) => 0,  // +X
-                            (0, false) => 1, // -X
-                            (1, true) => 2,  // +Y
-                            (1, false) => 3, // -Y
-                            (2, true) => 4,  // +Z
-                            (2, false) => 5, // -Z
+                        let face_size = [quad.w as f32, quad.h as f32];
+                        // Normal direction mapping:
+                        // axis 0 (X): forward = +X (0), backward = -X (1)
+                        // axis 1 (Y): forward = +Y (2), backward = -Y (3)
+                        // axis 2 (Z): forward = +Z (4), backward = -Z (5)
+                        let normal_dir = match (axis, forward) {
+                            (0, true) => 0,   // +X
+                            (0, false) => 1,  // -X
+                            (1, true) => 2,   // +Y
+                            (1, false) => 3,  // -Y
+                            (2, true) => 4,   // +Z
+                            (2, false) => 5,  // -Z
                             _ => unreachable!(),
                         };
                         
-                        // Map voxel type to color
-                        let color = match voxel_type.0 {
-                            1 => [0.5, 0.5, 0.5, 1.0], // Stone - gray
-                            2 => [0.4, 0.3, 0.2, 1.0], // Dirt - brown
-                            3 => [0.2, 0.7, 0.3, 1.0], // Grass - green
-                            _ => [1.0, 0.0, 1.0, 1.0], // Unknown - magenta
+                        let color = match voxel_type as usize {
+                            1 => [0.5, 0.5, 0.5, 1.0], // Stone
+                            2 => [0.4, 0.3, 0.2, 1.0], // Dirt
+                            3 => [0.2, 0.7, 0.3, 1.0], // Grass
+                            _ => [1.0, 0.0, 1.0, 1.0], // Unknown
                         };
                         
-                        // Add vertex (geometry shader will expand to quad)
-                        let vertex = VoxelVertex {
-                            position: face_pos,
+                        vertices.push(VoxelVertex {
+                            position,
                             size: face_size,
-                            normal_dir,
+                            normal_dir: normal_dir as u32,
                             color,
-                        };
+                        });
                         
-                        vertices.push(vertex);
-                        
-                        // Since we're using points with geometry shader, each face is one index
                         indices.push(vertices.len() as u32 - 1);
-                        faces_in_slice += 1;
                     }
                 }
-                if faces_in_slice > 0 {
-                    total_faces_this_dir += faces_in_slice;
-                }
-            }
-            if total_faces_this_dir > 0 {
-                println!("Axis {} direction {}: generated {} faces", axis, direction, total_faces_this_dir);
             }
         }
         
         Ok(())
+    }
+    
+    
+    fn greedy_mesh_binary_plane(&self, plane: &mut [u32], size: usize) -> Vec<GreedyQuad> {
+        let mut quads = Vec::new();
+        
+        // Debug: print the plane
+        let mut solid_count = 0;
+        for row in 0..size {
+            solid_count += plane[row].count_ones();
+        }
+        if solid_count > 0 {
+            println!("Binary plane has {} solid cells in {}x{} grid", solid_count, size, size);
+        }
+        
+        for row in 0..size {
+            let mut y = 0;
+            
+            while y < size as u32 {
+                // Skip zeros to find start of solid run
+                y += (plane[row] >> y).trailing_zeros();
+                if y >= size as u32 {
+                    break;
+                }
+                
+                // Find height of solid run
+                let h = (plane[row] >> y).trailing_ones();
+                
+                // Create mask for this height at this y position
+                let h_mask = if h >= 32 { !0u32 } else { (1u32 << h) - 1 };
+                let mask = h_mask << y;
+                
+                // Try to expand horizontally
+                let mut w = 1;
+                while row + w < size {
+                    // Check if next row has the same pattern
+                    let next_row_bits = (plane[row + w] >> y) & h_mask;
+                    if next_row_bits != h_mask {
+                        break;
+                    }
+                    w += 1;
+                }
+                
+                // Clear the bits we've merged in ALL rows (including the first one)
+                for r in 0..w {
+                    plane[row + r] &= !mask;
+                }
+                
+                if w > 1 || h > 1 {
+                    println!("Created quad at ({}, {}) size {}x{}", row, y, w, h);
+                }
+                
+                quads.push(GreedyQuad {
+                    x: row as u32,
+                    y,
+                    w: w as u32,
+                    h,
+                });
+                
+                y += h;
+            }
+        }
+        
+        quads
     }
     
     fn generate_lod_mesh(
@@ -757,11 +875,11 @@ impl VertexPoolBatchRenderer {
 
 // GPU culling system
 pub struct GpuCullingSystem {
-    gfx: Arc<dyn Gfx>,
+    gfx: Arc<dyn Gfx + Send + Sync>,
 }
 
 impl GpuCullingSystem {
-    pub fn new(gfx: Arc<dyn Gfx>) -> Self {
+    pub fn new(gfx: Arc<dyn Gfx + Send + Sync>) -> Self {
         Self { gfx }
     }
     

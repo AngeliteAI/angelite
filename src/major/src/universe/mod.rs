@@ -6,11 +6,15 @@ pub mod worldgen;
 pub mod sdf;
 pub mod brush;
 pub mod gpu_worldgen;
+pub mod gpu_worldgen_pipeline;
 pub mod palette_compression;
 pub mod physics_integration;
 pub mod vertex_pool_renderer;
 pub mod performance;
 pub mod voxel_renderer_bridge;
+pub mod mesh_generator;
+pub mod sdf_serialization;
+pub mod gpu_thread_executor;
 
 #[cfg(test)]
 mod tests;
@@ -20,11 +24,13 @@ pub use vox::{Voxel, Chunk, Volume, Condition as VoxCondition};
 pub use sdf::{Sdf, SdfOps};
 pub use brush::{Brush, BrushLayer, LayeredBrush, Condition, EvaluationContext};
 pub use gpu_worldgen::{GpuWorldGenerator, VoxelWorkspace, WorldBounds, GenerationParams, BrushSchema, CompressedChunk};
+pub use gpu_worldgen_pipeline::{GpuWorldGenPipeline, GenerationRequest, GenerationResult, PipelineStats};
 pub use palette_compression::{PaletteCompressionSystem, CompressedVoxelData};
 pub use physics_integration::{VoxelPhysicsGenerator, VoxelPhysicsCollider, PhysicsLodLevel};
 pub use vertex_pool_renderer::{VertexPoolBatchRenderer, ViewParams, VoxelVertex};
 pub use performance::{VoxelPerformanceProfiler, PerformanceReport};
 pub use voxel_renderer_bridge::VoxelRendererBridge;
+pub use mesh_generator::{MeshGenerator, SimpleCubeMeshGenerator, BinaryGreedyMeshGenerator};
 
 use crate::{engine, gfx, math};
 
