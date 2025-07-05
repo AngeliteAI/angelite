@@ -4,3 +4,6 @@
 [submodule "vendor/shaderc"]
 	path = vendor/shaderc
 	url = https://github.com/google/shaderc
+[submodule "vendor/tracy"]
+	path = vendor/tracy
+	url = https://github.com/wolfpld/tracy
