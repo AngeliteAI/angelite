@@ -1,5 +1,5 @@
 [workspace]
-members = [ "src/synthesis", "src/backend", "src/span", "src/major", "src/steam", "src/pyx", "src/pyxd"]
+members = [ "src/synthesis", "src/backend", "src/span", "src/major", "src/steam", "src/foxbox", "src/foxboxd"]
 resolver = "2"
 
 [profile.release]

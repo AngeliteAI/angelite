@@ -19,6 +19,11 @@ enum Args {
     },
 }
 
+pub trait Vpn {
+    
+}
+
 fn main() {
     let args = Args::parse();
+
 }

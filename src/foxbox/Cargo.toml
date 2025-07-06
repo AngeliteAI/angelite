@@ -1,5 +1,5 @@
 [package]
-name = "pyx"
+name = "foxbox"
 version = "0.0.1"
 edition = "2021"
 description = "WIP CLI for VPN proxy based on Wireguard mesh routing"
