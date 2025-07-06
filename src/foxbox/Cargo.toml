@@ -1,0 +1,15 @@
+[package]
+name = "pyx"
+version = "0.0.1"
+edition = "2021"
+description = "WIP CLI for VPN proxy based on Wireguard mesh routing"
+license = "MIT"
+repository = "https://github.com/angeliteai/angelite"
+authors = ["Sol Midnight <sol@synthesis.game>"]
+
+[[bin]]
+name = "pyx"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version  = "4.5.40", features = ["derive"] }

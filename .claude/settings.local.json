@@ -11,7 +11,12 @@
       "Bash(sed:*)",
       "Bash(rm:*)",
       "Bash(git config:*)",
-      "Bash(/mnt/c/Users/$USER/.cargo/bin/cargo.exe build 2 >& 1)"
+      "Bash(/mnt/c/Users/$USER/.cargo/bin/cargo.exe build 2 >& 1)",
+      "Bash(awk:*)",
+      "Bash(spirv-dis:*)",
+      "Bash(echo:*)",
+      "Bash(git submodule:*)",
+      "Bash(git clone:*)"
     ],
     "deny": []
   }
