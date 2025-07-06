@@ -1,6 +1,6 @@
 use super::Node;
-use crate::error::Failure;
 use bimap::BiMap;
+use crate::error::*;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::random::{DefaultRng, Random, RngCore};
 use std::{
@@ -338,7 +338,7 @@ where
         self.inner.process(commands)
     }
 
-    fn tick(&self) -> Result<(), <Req as super::State<Cmd>>::Error> {
+    fn tick(&self) -> Result<Vec<(Node, Cmd)>, <Req as super::State<Cmd>>::Error> {
         <Req as super::State<Cmd>>::tick(self.inner.as_ref())
     }
 }
@@ -1576,7 +1576,7 @@ impl<Cmd: Serialize + DeserializeOwned + Clone, Ser: Serializer> super::State<Re
         Ok(responses)
     }
 
-    fn tick(&self) -> Result<(), Self::Error> {
+    fn tick(&self) -> Result<Vec<(Node, Req<Cmd>)>, Self::Error> {
         let mut state = self
             .state
             .write()
@@ -1689,9 +1689,8 @@ impl<Cmd: Serialize + DeserializeOwned + Clone, Ser: Serializer> super::State<Re
 
         // Apply all collected actions
         drop(state);
-        let action_messages = self.apply_tick_actions(actions)?;
-        outgoing_messages.extend(action_messages);
+        let  action_messages = self.apply_tick_actions(actions)?;
 
-        Ok(outgoing_messages)
+        Ok(action_messages)
     }
 }

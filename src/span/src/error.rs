@@ -1,3 +1,7 @@
+use std::net::IpAddr;
+use crate::Node;
+use serde::{Deserialize, Serialize};
+
 use crate::raft::*;
 #[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
 pub enum Failure {

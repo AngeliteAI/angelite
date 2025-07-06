@@ -4,10 +4,7 @@ use crate::{
     interface::Interface,
 };
 use bimap::BiMap;
-use quinn_proto::{
-    Datagram, DatagramError, DatagramReceiver, DatagramSender, RecvStream, SendStream, StreamId,
-    StreamType,
-};
+
 use std::{cell::RefCell, marker::PhantomData, net::{IpAddr, SocketAddr, UdpSocket}, };
 
 pub struct Quic<T> {
@@ -15,9 +12,9 @@ pub struct Quic<T> {
 }
 
 impl<T> Interface for Quic<T> {
-    fn new(inspector: impl Inspector<T>) -> Self {
+    fn new() -> Self {
         Self {
-            udp: Udp::new(inspector),
+            udp: Udp::new(),
         }
     }
 

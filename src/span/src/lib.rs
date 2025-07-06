@@ -14,5 +14,5 @@ pub trait State<Cmd> {
     /// Note: This method takes reference, not mutable, to self; this allows for
     /// easier composition of state.
     fn process(&self, command: &[(Node, Cmd)]) -> Result<Self::Output, Self::Error>;
-    fn tick(&self) -> Result<(), Self::Error>;
+    fn tick(&self) -> Result<Vec<(Node, Cmd)>, Self::Error>;
 }
