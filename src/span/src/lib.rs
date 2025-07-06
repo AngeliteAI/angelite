@@ -4,6 +4,7 @@ pub use serde::{Deserialize, Serialize};
 pub mod error;
 pub mod interface;
 pub mod raft;
+pub mod rng;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Node(pub u128);

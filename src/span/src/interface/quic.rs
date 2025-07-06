@@ -50,7 +50,9 @@ pub struct Udp<T> {
 
 impl<T> Interface for Udp<T> {
     fn send(&self, data: &[u8], to: Node) -> Result<(), Failure> {
-        let Some(addr) = self.mapping.borrow().get_by_left(&to) else {
+        let mapping = self.mapping.borrow();
+        // Check if the mapping exists for the given Node
+        let Some(addr) = mapping.get_by_left(&to) else {
             return Err(Failure::Network(Network::Send { to }));
         }; 
         self.socket

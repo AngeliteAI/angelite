@@ -1,8 +1,7 @@
 use super::Node;
 use bimap::BiMap;
-use crate::error::*;
+use crate::{error::*, rng::{Rng, Time}};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::random::{DefaultRng, Random, RngCore};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
@@ -552,9 +551,10 @@ enum TickAction {
     CleanupSnapshot { id: Snapshot },
 }
 
-pub struct FineGrained<Cmd: Serialize, Ser> {
+pub struct FineGrained<Cmd: Serialize, Ser, R: Rng = Time> {
     pub inner: Arc<dyn super::State<Cmd, Output = Vec<(Node, Cmd)>, Error = Failure>>,
     pub state: Arc<RwLock<State<Cmd>>>,
+    pub rng: Arc<R>,
     pub ser: PhantomData<Ser>,
 }
 
@@ -563,14 +563,16 @@ pub trait Serializer {
     fn deserialize<'de, T: Deserialize<'de>>(bytes: &[u8]) -> Result<T, Failure>;
 }
 
-impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer> FineGrained<Cmd, Ser> {
+impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer, R: Rng> FineGrained<Cmd, Ser, R> {
     pub fn new(
         inner: Arc<dyn super::State<Cmd, Output = Vec<(Node, Cmd)>, Error = Failure>>,
         state: Arc<RwLock<State<Cmd>>>,
+        rng: Arc<R>,
     ) -> Self {
         Self {
             inner,
             state,
+            rng,
             ser: PhantomData,
         }
     }
@@ -1120,7 +1122,7 @@ impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer> FineGrained<Cmd
         state.persistent.voted_for = Some(state.volatile.id);
 
         // Transition to candidate
-        let election_timeout = Duration::from_millis(150 + DefaultRng.gen_range(0..150));
+        let election_timeout = Duration::from_millis(150 + self.rng.random() as u8 as u64);
 
         state.role = Role::Candidate(CandidateState {
             votes_received: {
