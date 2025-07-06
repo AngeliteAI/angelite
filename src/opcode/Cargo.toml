@@ -1,0 +1,9 @@
+[package]
+name = "opcode"
+version = "0.0.1"
+edition = "2024"
+description = "⚡ opcode - Zero-copy binary serialization with compile-time guarantees 🎩"
+license = "MIT"
+repository = "https://github.com/boxblocks/opcode"
+
+[dependencies]
