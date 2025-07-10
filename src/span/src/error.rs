@@ -1,9 +1,8 @@
 use std::net::IpAddr;
 use crate::Node;
-use serde::{Deserialize, Serialize};
 
 use crate::raft::*;
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Failure {
     #[error("Storage failure")]
     Storage(Storage),
@@ -20,7 +19,7 @@ pub enum Failure {
     #[error("System error")]
     System(System),
 }
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Storage {
     #[error("Failed to read from storage at '{path}'")]
     Read { path: String },
@@ -40,7 +39,7 @@ pub enum Storage {
     Corrupted { offset: u64 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Network {
     #[error("Failed to connect to {addr}")]
     Connect { addr: IpAddr },
@@ -82,7 +81,7 @@ pub enum Network {
     Other,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Corrupt {
     #[error("Log corruption detected at index {index}")]
     Log { index: u64 },
@@ -96,7 +95,7 @@ pub enum Corrupt {
     Version { expected: u32, found: u32 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Resource {
     #[error("Insufficient memory")]
     Memory,
@@ -110,7 +109,7 @@ pub enum Resource {
     Queue { size: usize },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum BadConfig {
     #[error("No nodes specified in configuration")]
     NoNodes,
@@ -124,7 +123,7 @@ pub enum BadConfig {
     InvalidAddr { addr: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Serde {
     #[error("Failed to encode {type_name}")]
     Encode { type_name: String },
@@ -136,7 +135,7 @@ pub enum Serde {
     Format,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum System {
     #[error("System clock error")]
     Clock,

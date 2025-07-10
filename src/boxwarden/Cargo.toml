@@ -1,14 +1,13 @@
 [package]
-name = "foxboxd"
+name = "boxblocksd"
 version = "0.0.1"
 edition = "2021"
 description = "WIP daemon for VPN proxy based on Wireguard mesh routing"
 license = "MIT"
-repository = "https://github.com/angeliteai/angelite"
 authors = ["Sol Midnight <sol@synthesis.game>"]
 
 [[bin]]
-name = "pyxd"
+name = "boxblocksd"
 path = "src/main.rs"
 
 [dependencies]

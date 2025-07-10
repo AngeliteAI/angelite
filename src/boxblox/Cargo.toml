@@ -1,15 +1,18 @@
 [package]
-name = "foxbox"
+name = "boxblox"
 version = "0.0.1"
 edition = "2021"
 description = "WIP CLI for VPN proxy based on Wireguard mesh routing"
 license = "MIT"
-repository = "https://github.com/angeliteai/angelite"
 authors = ["Sol Midnight <sol@synthesis.game>"]
 
 [[bin]]
-name = "pyx"
+name = "bb"
 path = "src/main.rs"
+
+[lib]
+name = "boxblox"
+path = "src/lib.rs"
 
 [dependencies]
 clap = { version  = "4.5.40", features = ["derive"] }

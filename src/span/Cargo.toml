@@ -6,6 +6,10 @@ description = "Raft consensus library"
 license = "MIT"
 
 [dependencies]
-serde = { version = "1.0.219", features = ["derive"]}
 thiserror = "2.0.12"
 bimap = "0.6.3"
+span-macro = { path = "../span-macro" }
+
+[features]
+default = ["compact"]
+compact = []

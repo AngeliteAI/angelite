@@ -1,5 +1,6 @@
 [workspace]
-members = [ "src/synthesis", "src/backend", "src/span", "src/major", "src/steam", "src/foxbox", "src/foxboxd"]
+members = [ "src/synthesis", "src/backend", "src/span", "src/major", "src/steam", "src/boxblox", "src/boxwarden", "src/span-macro", "src/opcode", "src/opcode-registry", "src/opcode-macro"]
+
 resolver = "2"
 
 [profile.release]

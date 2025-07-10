@@ -16,6 +16,7 @@ enum Args {
     Join {
         /// The IP address to connect to, including the port
         addr: IpAddr,
+        port: u16,
     },
 }
 

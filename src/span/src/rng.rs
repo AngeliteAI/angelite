@@ -4,6 +4,7 @@ pub trait Rng {
     fn random(& self) -> u128;
 }
 
+#[derive(Default)]
 pub struct Time {
     state: Cell<Option<u128>>,
 }

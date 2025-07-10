@@ -1,6 +1,6 @@
 [package]
-name = "opcode"
-version = "0.0.2"
+name = "opcode-registry"
+version = "0.1.0"
 edition = "2024"
 description = "⚡ opcode - Zero-copy binary serialization with compile-time guarantees 🎩"
 license = "MIT"

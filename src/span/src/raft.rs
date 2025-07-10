@@ -1,7 +1,7 @@
 use super::Node;
 use bimap::BiMap;
-use crate::{error::*, rng::{Rng, Time}};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use crate::{error::*, rng::{Rng, Time}, serde::*, Decode, Encode};
+use crate::serde::compact::{Encodable, Op, Code};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
@@ -13,61 +13,19 @@ use std::{
     time::*,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Request(pub u128);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Client(pub u128);
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Snapshot(pub u128);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Log {
     pub term: u64,
     pub index: u64,
 }
 
-#[derive(Clone)]
-pub struct Entry<C> {
-    pub term: u64,
-    pub index: u64,
-    pub command: C,
-}
-
-// ===== REQUESTS =====
-
-#[derive(Clone)]
-pub enum Req<C> {
-    Vote(VoteReq),
-    Lead(LeadReq),
-    Repl(ReplReq<C>),
-    Snap(SnapReq<C>),
-    Health(HealthReq),
-    Mgmt(MgmtReq),
-    Client(ClientReq<C>),
-}
-
-#[derive(Clone)]
-pub enum VoteReq {
-    Ask { candidate: Node, last: Log },
-    Pre { candidate: Node, last: Log },
-}
-
-#[derive(Clone)]
-pub enum LeadReq {
-    Elect {
-        node: Node,
-        votes: Vec<Node>,
-    },
-    Step {
-        node: Node,
-        reason: StepReason,
-    },
-    Pulse {
-        leader: Node,
-        epoch: u64,
-        commit: u64,
-    },
-}
 
 #[derive(Clone)]
 pub enum ReplReq<C> {
@@ -124,7 +82,7 @@ pub enum MgmtReq {
     Config(Config),
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone)]
 pub struct ClientReq<C> {
     pub id: Request,
     pub client: Client,
@@ -187,7 +145,7 @@ pub enum MgmtResp {
     Updated,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub enum ClientResp<R> {
     Ok { id: Request, result: R },
     Err { id: Request, reason: ClientErr },
@@ -225,7 +183,7 @@ pub enum RejectSnap {
     Space,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub enum ClientErr {
     NotLeader { hint: Option<Node> },
     Timeout,
@@ -370,8 +328,8 @@ pub struct PreVoteState {
     pub already_voted: bool,
 }
 
-pub struct PersistentState<Cmd: Serialize> {
-    pub log: Vec<Entry<Cmd>>, // Serialized commands
+pub struct PersistentState<Cmd: Encode> {
+    pub log: Vec<Entry<Cmd>>, // Encoded commands
     pub snapshot_last: Log,
 
     pub current_term: u64,
@@ -383,14 +341,14 @@ pub struct PersistentState<Cmd: Serialize> {
 
 pub struct Processor<Cmd, S, R>
 where
-    Cmd: Serialize + for<'de> Deserialize<'de>,
+    Cmd: Encode + Decode,
     S: super::State<Cmd, Output = R, Error = Failure>,
 {
     pub state: Arc<RwLock<State<Cmd>>>,
     pub machine: S,
 }
 
-pub struct State<Cmd: Serialize> {
+pub struct State<Cmd: Encode> {
     pub persistent: PersistentState<Cmd>,
 
     pub role: Role<Cmd>,
@@ -518,7 +476,7 @@ pub struct BatchBuffer {
 
 #[derive(Clone, Debug)]
 pub struct PendingEntry {
-    pub command: Vec<u8>, // Serialized command
+    pub command: Vec<u8>, // Encoded command
     pub client_id: Client,
     pub request_id: Request,
     pub received_at: Instant,
@@ -551,29 +509,22 @@ enum TickAction {
     CleanupSnapshot { id: Snapshot },
 }
 
-pub struct FineGrained<Cmd: Serialize, Ser, R: Rng = Time> {
+pub struct FineGrained<Cmd: Encodee> {
     pub inner: Arc<dyn super::State<Cmd, Output = Vec<(Node, Cmd)>, Error = Failure>>,
     pub state: Arc<RwLock<State<Cmd>>>,
-    pub rng: Arc<R>,
-    pub ser: PhantomData<Ser>,
+    pub rng: Arc<dyn Rng>,
 }
 
-pub trait Serializer {
-    fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>, Failure>;
-    fn deserialize<'de, T: Deserialize<'de>>(bytes: &[u8]) -> Result<T, Failure>;
-}
-
-impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer, R: Rng> FineGrained<Cmd, Ser, R> {
+impl<Cmd: Clone + Encode + Decode> FineGrained<Cmd> {
     pub fn new(
         inner: Arc<dyn super::State<Cmd, Output = Vec<(Node, Cmd)>, Error = Failure>>,
         state: Arc<RwLock<State<Cmd>>>,
-        rng: Arc<R>,
+        rng: Arc<dyn Rng>,
     ) -> Self {
         Self {
             inner,
             state,
             rng,
-            ser: PhantomData,
         }
     }
 
@@ -829,7 +780,7 @@ impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer, R: Rng> FineGra
         }
 
         // Store chunk
-        let chunk_data = Ser::serialize(&req.chunk.data).unwrap_or_default();
+        let chunk_data = req.chunk.data.clone();
         builder.chunks.insert(req.chunk.index, chunk_data);
 
         // Check if snapshot is complete
@@ -1222,7 +1173,7 @@ impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer, R: Rng> FineGra
                 // Process batch entries
                 let mut new_entries = Vec::new();
                 for (i, pending) in leader_state.batch_buffer.entries.drain(..).enumerate() {
-                    if let Ok(client_req) = Ser::deserialize::<ClientReq<Cmd>>(&pending.command) {
+                    if let Ok(client_req) = Cmd::decode::<ClientReq<Cmd>>(&pending.command) {
                         let entry = Entry {
                             term: current_term,
                             index: last_index + i as u64 + 1,
@@ -1495,8 +1446,8 @@ impl<Cmd: Clone + Serialize + DeserializeOwned, Ser: Serializer, R: Rng> FineGra
     }
 }
 
-impl<Cmd: Serialize + DeserializeOwned + Clone, Ser: Serializer> super::State<Req<Cmd>>
-    for FineGrained<Cmd, Ser>
+impl<Cmd: Encode + Decode + Clone> super::State<Req<Cmd>>
+    for FineGrained<Cmd>
 {
     type Output = Vec<(Node, Resp<Cmd>)>;
     type Error = Failure;
